@@ -1,5 +1,7 @@
 //! Immutable shared asset store for the rig framework.
 
+pub mod mesh_factory;
+
 use std::sync::Arc;
 
 use rig_math::BoundingSphere;
