@@ -1,445 +1,502 @@
-# Milestone 3+ Implementation Plan
+# Milestone 3+ Implementation Plan: Multiple Objects & Offscreen Passes
 
-Four sequential commits that bring the framework from "spinning triangle" to a lit,
-textured, culled scene with proper camera management.
+Two features that share a critical prerequisite (the depth buffer) and
+together bring the framework from "single spinning triangle" to a scene
+renderer capable of displaying many objects with correct depth and rendering
+to offscreen targets.
 
-Each commit is self-contained: tests pass, clippy is clean, the example still runs.
+Each commit is self-contained: tests pass, clippy is clean, the example
+still runs.
 
 ---
 
-## Commit 1 — Active Camera Selection from Scene
+## Commit 1 — Depth Buffer and Pipeline Depth State
 
 ### Goal
 
-Promote the active-camera concept from an opaque `Option<NodeId>` managed entirely
-by application code into a first-class scene-graph query, so the renderer and app
-layer can discover cameras by convention rather than manual bookkeeping.
+Add a depth texture to the main render pass so overlapping geometry is
+drawn correctly. This is the single biggest blocker for rendering multiple
+objects and the foundation for offscreen passes.
 
 ### What exists today
 
 | Item | Location | Status |
 |------|----------|--------|
-| `CameraComponent` (projection only) | `rig-scene/src/lib.rs:29` | Done |
-| `cameras` component map | `SceneGraph` field | Done |
-| `set_camera()` / `camera()` | `SceneGraph` methods | Done |
-| `active_camera: Option<NodeId>` | `UpdateContext` / `RenderContext` in `rig-app` | Done |
-| `CameraRig` utility | `rig-app/src/lib.rs:62` | Done |
+| Single render pass per frame | `render/src/lib.rs:413` | Color-only |
+| `depth_stencil_attachment: None` | `render/src/lib.rs:429` | No depth |
+| `depth_stencil: None` in pipeline | `render/src/lib.rs:568` | No depth test |
+| `PipelineKey { shader, vertex_layout }` | `render/src/lib.rs:51-55` | Missing depth format |
+| `Renderer::resize()` | `render/src/lib.rs:321` | No depth texture resize |
 
 ### What to add
 
-#### rig-scene
-
-1. **`SceneGraph::camera_nodes() -> Vec<NodeId>`** — return all nodes that have a
-   `CameraComponent` attached. O(cameras) scan of the `cameras` HashMap keys.
-
-2. **`SceneGraph::first_camera() -> Option<NodeId>`** — convenience: returns the
-   first camera node found (useful for single-camera apps that want to skip
-   manual `active_camera` wiring).
-
-3. **`SceneGraph::camera_with_name(name: &str) -> Option<NodeId>`** — look up a
-   camera by its node name. Enables named-camera selection ("main", "debug",
-   "minimap") without application code tracking handles.
-
-4. **`ExtractedCamera` struct:**
-   ```rust
-   pub struct ExtractedCamera {
-       pub node: NodeId,
-       pub projection: Projection,
-       pub world_transform: Mat4,
-   }
-   ```
-
-5. **`SceneGraph::extract_active_camera(id: NodeId) -> Result<ExtractedCamera>`** —
-   given a camera NodeId, extract its projection + world transform in one call.
-   The renderer currently does this inline; move the logic to rig-scene so it is
-   testable.
-
 #### rig-render
 
-6. **Refactor `render_draw_list`** to accept `ExtractedCamera` instead of raw
-   `Option<NodeId>` + internal scene queries. This removes the renderer's direct
-   coupling to `SceneGraph` for camera lookup.
+1. **`depth_texture` and `depth_view` fields on `Renderer`** — created at
+   init with `TextureFormat::Depth32Float`, sized to match the surface. Usage
+   flag: `RENDER_ATTACHMENT`.
 
-#### rig-app
+2. **Recreate depth texture on resize** — `Renderer::resize()` must create a
+   new depth texture at the new dimensions. Extract a
+   `create_depth_texture(device, width, height)` helper.
 
-7. **Auto-select camera on startup**: if the application's `init()` leaves
-   `active_camera` as `None`, the runner calls `scene.first_camera()` as a
-   fallback before the first render frame. Explicit selection always wins.
+3. **Attach depth in the render pass** — set `depth_stencil_attachment` to
+   the depth view with `depth_ops: LoadOp::Clear(1.0)`, `stencil_ops: None`,
+   `store: StoreOp::Store`.
+
+4. **Add `DepthStencilState` to pipeline creation** — `depth_write_enabled:
+   true`, `depth_compare: Less`, `format: Depth32Float`.
+
+5. **Extend `PipelineKey` with `depth_format: Option<wgpu::TextureFormat>`**
+   — pipelines created without depth are incompatible with passes that have
+   depth. Including the depth format in the key invalidates stale pipelines.
+   Also add `color_format: wgpu::TextureFormat` to the key for forward
+   compatibility with offscreen passes that use different formats.
+
+6. **Invalidate the pipeline cache** — since the existing pipelines were
+   created without depth state, the cache will naturally create new pipelines
+   with the updated key after the depth format is added.
 
 ### Tests
 
-- `camera_nodes_returns_all_cameras` — create 3 nodes, attach cameras to 2,
-  verify `camera_nodes()` returns exactly 2.
-- `first_camera_returns_none_for_empty_scene` — no cameras → `None`.
-- `first_camera_returns_some_for_scene_with_camera` — one camera → `Some`.
-- `camera_with_name_finds_matching_camera` — create "main" and "debug" cameras,
-  look up each by name.
-- `camera_with_name_returns_none_for_non_camera` — node exists but has no camera
-  component → `None`.
-- `extract_active_camera_computes_world_transform` — attach camera to child node,
-  update transforms, extract, verify world transform is parent * local.
-- `extract_active_camera_errors_for_non_camera` — non-camera node → error.
+- `create_depth_texture_returns_correct_dimensions` — unit test for the
+  helper that creates the depth texture.
+- `pipeline_key_differs_with_depth_format` — two PipelineKeys that are
+  identical except for depth format should not be equal.
+- Existing `triangle_shader_mentions_expected_entry_points` test still passes
+  (shader itself is unchanged).
+
+### Example
+
+- **Update `examples/triangle_scenegraph/`** so the existing triangle
+  renders with correct depth testing enabled. No visual change (single
+  object), but confirms the depth pipeline path works and does not regress
+  the existing example.
 
 ### Inspiration from GeometricTools
 
-GTE does not have engine-level camera selection; `Window3` just owns a single
-`shared_ptr<Camera>` and passes it everywhere. Our approach is better: cameras
-live in the scene graph and can be queried/swapped at runtime.
+GTE's `DrawTarget` always optionally bundles a `TextureDS` (depth-stencil).
+The engine's `Enable(DrawTarget)` attaches both color and depth at the same
+time. Our `wgpu` approach is simpler: the depth texture is just another
+field on `Renderer`, attached to every main pass. Offscreen passes will get
+their own depth textures later (Commit 6).
 
 ---
 
-## Commit 2 — Lights and Material Models
+## Commit 2 — Generalize Vertex Validation and Extend VertexFormat
 
 ### Goal
 
-Extend `MaterialAsset` with Blinn-Phong color properties, extract lights from the
-scene, upload light + material uniforms, and write a directional lighting shader.
+Remove the hardcoded triangle-shader validation that blocks new vertex
+layouts, and add missing vertex format variants so MeshFactory can output
+meshes with normals, UVs, and other attributes.
 
 ### What exists today
 
 | Item | Location | Status |
 |------|----------|--------|
-| `LightComponent` / `LightKind` | `rig-scene/src/lib.rs:33-49` | Done |
-| `lights` component map | `SceneGraph` field | Done |
-| `set_light()` / `light()` | `SceneGraph` methods | Done |
-| `MaterialAsset { shader }` | `rig-assets/src/lib.rs:71` | Shader only |
-| `VertexFormat::Float32x3` | `rig-assets/src/lib.rs:58` | No normals yet |
+| `validate_triangle_shader_layout()` | `render/src/lib.rs:591-629` | Requires position@0 + color@1 |
+| `mesh_vertex_attributes()` calls the validator | `render/src/lib.rs:579` | Blocks non-triangle shaders |
+| `VertexFormat { Float32x2, Float32x3 }` | `assets/src/lib.rs:67-70` | Missing Float32x4, Float32 |
+| `vertex_format_size()` / `wgpu_vertex_format()` | `render/src/lib.rs:632-644` | 2 variants only |
+| `validate_triangle_layout()` (public) | `render/src/lib.rs:700-702` | Used by nobody externally |
 
 ### What to add
 
 #### rig-assets
 
-1. **`MaterialParams` struct:**
-   ```rust
-   pub struct MaterialParams {
-       pub ambient: [f32; 4],    // default [0.2, 0.2, 0.2, 1.0]
-       pub diffuse: [f32; 4],    // default [0.8, 0.8, 0.8, 1.0]
-       pub specular: [f32; 4],   // xyz = color, w = shininess power
-       pub emissive: [f32; 4],   // default [0.0, 0.0, 0.0, 1.0]
-   }
-   ```
-   Stored as `[f32; 4]` arrays (not glam types) so it can derive `Pod`/`Zeroable`
-   for direct GPU upload.
-
-2. **Extend `MaterialAsset`:**
-   ```rust
-   pub struct MaterialAsset {
-       pub shader: ShaderHandle,
-       pub parameters: MaterialParams,
-   }
-   ```
-   `textures` field deferred to Commit 4.
-
-3. **`VertexFormat::Float32x2`** — needed later for UVs but cheap to add now for
-   completeness.
-
-#### rig-scene
-
-4. **`ExtractedLight` struct:**
-   ```rust
-   pub struct ExtractedLight {
-       pub kind: LightKind,
-       pub world_position: Vec3,
-       pub world_direction: Vec3,
-   }
-   ```
-
-5. **`SceneGraph::extract_lights() -> Vec<ExtractedLight>`** — iterate the `lights`
-   component map, read each node's world transform, compute position/direction
-   from the transform's translation and forward vector.
+1. **Extend `VertexFormat`** with `Float32`, `Float32x4` at minimum. These
+   cover scalar attributes (ao factor), normals (vec3), colours with alpha
+   (vec4), and tangent frames (vec4). The `Float32x2` added earlier covers
+   UVs.
 
 #### rig-render
 
-6. **`LightUniforms` / `MaterialUniforms` GPU structs:**
-   ```rust
-   #[repr(C)]
-   struct LightUniforms {
-       direction: [f32; 4],    // world-space, w=0 for directional
-       color: [f32; 4],        // rgb + intensity
-       ambient: [f32; 4],      // scene ambient
-   }
+2. **Replace `validate_triangle_shader_layout()` with a generic
+   `validate_vertex_layout()`** — checks:
+   - `array_stride > 0`
+   - No duplicate `shader_location` values
+   - Each attribute fits within the stride (offset + format_size ≤ stride)
+   - At least one attribute exists
+   - Does NOT require specific locations like 0 and 1.
 
-   #[repr(C)]
-   struct MaterialUniforms {
-       ambient: [f32; 4],
-       diffuse: [f32; 4],
-       specular: [f32; 4],
-       emissive: [f32; 4],
-   }
-   ```
+3. **Update `vertex_format_size()` and `wgpu_vertex_format()`** with the new
+   variants.
 
-7. **New bind group (group 1)** for scene-wide uniforms (camera + light data).
-   The current group 0 remains for per-object data (world matrix). Layout:
-   - binding 0: view uniform buffer (camera matrices — view, proj, camera position)
-   - binding 1: light uniform buffer (first directional light)
-
-8. **New bind group (group 2)** for per-material uniforms:
-   - binding 0: material properties buffer
-
-9. **Update `PipelineKey`** — no changes needed yet; shader handle + vertex layout
-   is still sufficient since we are adding bind groups to the same pipeline layout.
-
-10. **Update `pipeline_layout`** to include groups 0, 1, 2.
-
-11. **Write `BLINN_PHONG_SHADER` (WGSL)** — embedded via `include_str!` or as a
-    constant. Vertex stage: transform position by world matrix, pass world-space
-    normal. Fragment stage: Blinn-Phong with one directional light.
-
-12. **`FrameResources` additions**: `view_uniforms` buffer, `light_uniforms` buffer
-    (both per-frame, uploaded each render call).
-
-#### example
-
-13. **Update `triangle_scenegraph`** to use `MaterialParams` with visible diffuse
-    color, add a directional light node to the scene. Vertex data gains normals
-    (already has position + color; replace color attribute with normal, or add a
-    third attribute).
-
-### Tests
-
-- `material_params_default_is_sensible` — default should have non-zero diffuse.
-- `extract_lights_returns_empty_for_no_lights` — clean scene → empty vec.
-- `extract_lights_computes_world_direction` — rotated light node → rotated forward
-  vector in extracted direction.
-- `extract_lights_includes_point_position` — point light → world position from
-  transform translation.
-- Existing asset store tests extended for the new `parameters` field.
-
-### Inspiration from GeometricTools
-
-GTE uses three separate constant buffers (Material, Lighting, LightCameraGeometry)
-per draw call. We simplify: one scene-wide light buffer (bind group 1) and one
-per-material buffer (bind group 2). GTE computes lighting in model space; we
-compute in world space (simpler, GPU handles the extra work).
-
-GTE's `Material` packs shininess into `specular.w` — we adopt the same convention.
-
----
-
-## Commit 3 — Frustum Culling
-
-### Goal
-
-Skip rendering objects whose bounding spheres are entirely outside the camera
-frustum. Integrate the existing `frustum_planes_from_projection_view()` with a
-sphere-vs-plane test and hook it into `extract_renderables()`.
-
-### What exists today
-
-| Item | Location | Status |
-|------|----------|--------|
-| `frustum_planes_from_projection_view()` | `rig-scene/src/lib.rs:415` | Done |
-| `BoundingSphere` with transform/union | `rig-math/src/lib.rs` | Done |
-| `ExtractedRenderable.world_bound` | `rig-scene/src/lib.rs:412` | Populated |
-| `VisibilityMode` enum | `rig-scene/src/lib.rs:16` | Inherit/AlwaysVisible/Hidden |
-| `update_world_bounds()` | `SceneGraph` method | Done |
-| `world_bound` per node | `SceneNode` field | Done |
-
-### What to add
-
-#### rig-math
-
-1. **`BoundingSphere::is_outside_plane(plane: Vec4) -> bool`** — signed distance
-   test: `dot(center, plane.xyz) + plane.w < -radius`. Returns `true` if the
-   sphere is entirely on the negative side of the plane.
-
-2. **`BoundingSphere::is_outside_frustum(planes: &[Vec4; 6]) -> bool`** —
-   convenience: returns `true` if the sphere is outside any of the 6 planes.
-
-#### rig-scene
-
-3. **`SceneGraph::extract_renderables_culled(frustum_planes: &[Vec4; 6]) -> Vec<ExtractedRenderable>`**
-   — like `extract_renderables()` but skips nodes whose `world_bound` fails the
-   frustum test. Respects `VisibilityMode`:
-   - `Hidden` → always culled (existing behavior)
-   - `AlwaysVisible` → skip frustum test, always included
-   - `Inherit` → normal frustum test
-
-4. **Hierarchical early-out (stretch):** If a parent's world bound is entirely
-   inside the frustum, skip testing children. If entirely outside, cull the entire
-   subtree. This matches GTE's `mPlaneState` bitmask approach but can be deferred
-   to a follow-up if the flat renderable iteration is fast enough.
-
-#### rig-render
-
-5. **Call `extract_renderables_culled`** in `render_scene()` instead of
-   `extract_renderables()`. Compute frustum planes from the camera's
-   projection-view matrix and pass them through.
-
-### Tests
-
-- `sphere_outside_plane_detects_negative_halfspace` — sphere at (0,0,-10) with
-  radius 1, near plane at z=0 → outside.
-- `sphere_inside_plane_returns_false` — sphere at (0,0,5) → not outside.
-- `sphere_straddling_plane_returns_false` — sphere at (0,0,0) with radius 2,
-  plane at z=1 → straddles, not outside.
-- `sphere_outside_frustum_any_plane` — outside one plane → outside frustum.
-- `sphere_inside_all_planes` — inside all 6 → not outside frustum.
-- `extract_renderables_culled_excludes_outside_objects` — place one object inside
-  and one outside, verify only the inside one is extracted.
-- `extract_renderables_culled_always_includes_always_visible` — object outside
-  frustum but `AlwaysVisible` → still extracted.
-- `extract_renderables_culled_always_excludes_hidden` — object inside frustum but
-  `Hidden` → not extracted.
-
-### Inspiration from GeometricTools
-
-GTE's `Culler` extracts frustum planes geometrically from the camera frame
-(position, axes, near/far/fov). We use the equivalent matrix-extraction method
-(`frustum_planes_from_projection_view`), which is already implemented. Both
-produce the same 6 oriented planes.
-
-GTE propagates a `mPlaneState` bitmask through the tree: when a parent is fully
-inside a plane, children skip that plane's test. We note this as a stretch goal
-but start with the simpler flat-iteration approach since the renderable count
-is small in early milestones.
-
----
-
-## Commit 4 — Texture Support
-
-### Goal
-
-Load RGBA8 textures into the asset store, cache them as GPU textures, create
-samplers, add a texture bind group, and write a textured (or lit+textured) shader.
-
-### What exists today
-
-| Item | Location | Status |
-|------|----------|--------|
-| `TextureAsset { width, height, data }` | `rig-assets/src/lib.rs:81` | No format field |
-| `TextureHandle` | `rig-assets/src/lib.rs:17` | Done |
-| `AssetStore::add_texture()` / `texture()` | `rig-assets/src/lib.rs:130` | Done |
-| `ImmutableResourceCache` | `rig-render/src/lib.rs:166` | Shaders + meshes only |
-
-### What to add
+4. **Deprecate / remove `validate_triangle_layout()`** public function — it
+   was a convenience for the single-shader era. If external callers need it,
+   provide a more generic version.
 
 #### rig-assets
 
-1. **`TextureFormat` enum:**
+5. **Add `IndexFormat` enum** to `rig-assets`:
    ```rust
-   pub enum TextureFormat {
-       Rgba8Unorm,
-       Rgba8UnormSrgb,
+   pub enum IndexFormat {
+       Uint16,
+       Uint32,
    }
    ```
-   Start with just two formats. Map to `wgpu::TextureFormat` in the renderer.
 
-2. **Extend `TextureAsset`:**
+6. **Add `index_format` field to `MeshAsset`** — defaults to `Uint16` for
+   backward compatibility but allows large meshes.
+
+7. **Update `rig-render`** to use the declared index format when computing
+   `index_count` and calling `set_index_buffer()`.
+
+### Tests
+
+- `validate_vertex_layout_accepts_normals_only` — layout with location 2
+  (normals) but no color@1 should pass.
+- `validate_vertex_layout_rejects_empty_layout` — no attributes → error.
+- `validate_vertex_layout_rejects_zero_stride` — stride 0 → error.
+- `validate_vertex_layout_rejects_duplicates` — same location twice → error.
+- `vertex_format_size_float32x4` — verify size is 16 bytes.
+- `wgpu_vertex_format_maps_float32x4` — verify correct wgpu mapping.
+- `index_count_uses_declared_format` — u32 index format divides by 4, not 2.
+- Existing triangle-layout tests updated to use generic validator.
+
+### Example
+
+- **Update `examples/triangle_scenegraph/`** to exercise the new vertex
+  format variants. Confirm the existing triangle (position + color) still
+  renders correctly through the generic validator path. No visual change,
+  but the code path now goes through `validate_vertex_layout()` instead of
+  the old triangle-specific validation.
+
+---
+
+## Commit 3 — MeshFactory: Procedural Mesh Generation
+
+### Goal
+
+Create a procedural mesh generation module so multi-object scenes can be
+populated without hand-coded vertex arrays.
+
+### What exists today
+
+Nothing — meshes are created manually with raw byte arrays (see
+`examples/triangle_scenegraph/src/main.rs:51-73`). The AGENTS.md milestone
+list explicitly mentions "MeshFactory".
+
+### What to add
+
+#### rig-assets (new module: `mesh_factory`)
+
+1. **`MeshFactory` module** in `rig-assets/src/mesh_factory.rs` — public
+   functions that return `MeshAsset` values. Each function takes parameters
+   (dimensions, subdivisions) and returns a mesh with a standard vertex
+   layout:
+
+   ```
+   Position: Float32x3  @ location 0, offset 0
+   Normal:   Float32x3  @ location 1, offset 12
+   UV:       Float32x2  @ location 2, offset 24
+   stride = 32
+   ```
+
+   Index format: `Uint16` for small meshes, `Uint32` when vertex count
+   exceeds 65535.
+
+2. **`create_box(width, height, depth) -> MeshAsset`** — axis-aligned box
+   centred at origin. 24 vertices (4 per face, for unique normals), 36
+   indices. BoundingSphere from half-diagonal.
+
+3. **`create_sphere(radius, slices, stacks) -> MeshAsset`** — UV sphere.
+   `(slices + 1) * (stacks + 1)` vertices, `6 * slices * stacks` indices.
+   BoundingSphere = `{ center: ZERO, radius }`.
+
+4. **`create_plane(width, depth) -> MeshAsset`** — a single quad (2
+   triangles) centred at origin in the XZ plane, normal = +Y. 4 vertices, 6
+   indices. UVs span [0, 1].
+
+5. **Re-export from `rig-assets/src/lib.rs`** as `pub mod mesh_factory`.
+
+### Tests
+
+- `create_box_produces_24_vertices_36_indices` — check data sizes.
+- `create_box_bounds_are_half_diagonal` — verify bounding sphere.
+- `create_sphere_vertex_normals_are_unit_length` — decode first few normals,
+  check length ≈ 1.0.
+- `create_sphere_indices_stay_in_range` — all indices < vertex count.
+- `create_plane_is_a_quad` — 4 vertices, 6 indices, correct stride.
+- All meshes pass `validate_vertex_layout()`.
+
+### Example
+
+- **Create `examples/mesh_showcase/`** — a minimal example that uses
+  `MeshFactory::create_box()`, `create_sphere()`, and `create_plane()` to
+  populate a scene with three objects at different positions. Uses a
+  position + normal + UV shader (solid colour from normals for now,
+  lighting comes later). Demonstrates that procedural meshes render
+  correctly with depth testing. This is the first example using
+  MeshFactory-generated geometry instead of hand-coded vertex arrays.
+
+### Inspiration from GeometricTools
+
+GTE's `MeshFactory` (in `GTE/Mathematics/MeshFactory.h`) creates
+rectangles, disks, spheres, boxes, cylinders, tori, Platonic solids, etc.
+We start with the three most useful shapes (box, sphere, plane) and add
+more later. GTE uses a "standard vertex" with position, normal, tangent,
+binormal, and texcoord — we use a simpler layout (position + normal + UV)
+that still supports Blinn-Phong lighting and texture mapping.
+
+---
+
+## Commit 4 — Public Visibility API and Draw-Call Sorting
+
+### Goal
+
+Expose visibility control to application code and sort the draw list to
+reduce GPU state changes when rendering many objects.
+
+### What exists today
+
+| Item | Location | Status |
+|------|----------|--------|
+| `VisibilityMode` enum | `scene/src/lib.rs:16-20` | Public |
+| `SceneNode.visibility` field | `scene/src/lib.rs:60` | Private |
+| `node_mut()` | `scene/src/lib.rs:476` | `fn` (crate-private) |
+| Draw list iteration | `render/src/lib.rs:435-458` | Unordered |
+
+### What to add
+
+#### rig-scene
+
+1. **`SceneGraph::set_visibility(node, mode) -> Result<()>`** — public
+   setter for the visibility mode. Also add **`SceneGraph::visibility(node)
+   -> Result<VisibilityMode>`** as a getter.
+
+#### rig-render
+
+2. **Sort `draw_list` by `(ShaderHandle, MeshHandle)`** before issuing draw
+   calls. This groups objects by pipeline and mesh, minimising:
+   - Pipeline switches (most expensive GPU state change)
+   - Vertex/index buffer rebinds
+
+3. **Track "current pipeline" and "current mesh" in the draw loop** — only
+   call `set_pipeline()` when the pipeline changes, only call
+   `set_vertex_buffer()`/`set_index_buffer()` when the mesh changes.
+
+### Tests
+
+- `set_visibility_changes_node_visibility` — set to Hidden, read back.
+- `set_visibility_errors_for_invalid_node` — invalid NodeId → error.
+- `draw_list_sorted_by_shader_then_mesh` — construct a draw list with mixed
+  shaders/meshes, verify the sorted order groups by shader first.
+- `sorted_draw_list_reduces_state_changes` — count hypothetical pipeline
+  switches for sorted vs unsorted lists.
+
+### Example
+
+- **Update `examples/mesh_showcase/`** (from Commit 3) to toggle visibility
+  of one object with a key press. Add a console log or on-screen counter
+  showing how many draw calls are issued per frame vs how many objects
+  exist in the scene, demonstrating that frustum culling and visibility
+  filtering reduce the draw list.
+
+---
+
+## Commit 5 — Multi-Object Example
+
+### Goal
+
+Create a new example (or significantly extend `triangle_scenegraph`) that
+renders multiple objects using shared assets, demonstrating that the
+framework handles many objects with correct depth, shared meshes/materials,
+and frustum culling.
+
+### What to add
+
+1. **New example: `examples/multi_object/`** — renders a scene with:
+   - A ground plane (MeshFactory::create_plane)
+   - Several boxes at different positions (shared box MeshAsset, different
+     transforms)
+   - A sphere (MeshFactory::create_sphere)
+   - A camera with CameraRig controls
+   - At least one object behind the camera (verify frustum culling)
+   - Objects at different depths (verify depth buffer works)
+
+2. **Wire up Cargo.toml** — add `multi_object` to workspace members.
+
+3. **Use shared assets** — one box MeshAsset shared by multiple Renderable
+   nodes (different world transforms, same mesh handle).
+
+4. **Use visibility toggling** — pressing a key toggles one object's
+   visibility to demonstrate `set_visibility()`.
+
+### Tests
+
+No new library tests — this is an integration example. Manual verification:
+- Objects render with correct depth ordering
+- Shared meshes display at different positions
+- Frustum culling hides off-screen objects (check with logging or debug
+  counter)
+- Visibility toggle works at runtime
+
+---
+
+## Commit 6 — Offscreen Pass Infrastructure
+
+### Goal
+
+Add a `RenderTarget` abstraction so the renderer can draw to offscreen
+textures, not just the swapchain. This is the foundation for shadow maps,
+post-processing, reflection probes, etc.
+
+### What exists today
+
+| Item | Location | Status |
+|------|----------|--------|
+| Single render pass to surface | `render/src/lib.rs:413-458` | No offscreen |
+| `PipelineKey { shader, vertex_layout, color_format, depth_format }` | Commit 1 | Has format keys |
+| `create_pipeline()` takes format params | Commit 1 | Parameterised |
+| `RenderTargets` in RESOURCES.md | `docs/RESOURCES.md:357-363` | Design only |
+
+### What to add
+
+#### rig-render
+
+1. **`RenderTarget` struct**:
    ```rust
-   pub struct TextureAsset {
+   pub struct RenderTarget {
+       pub color_texture: wgpu::Texture,
+       pub color_view: wgpu::TextureView,
+       pub depth_texture: Option<wgpu::Texture>,
+       pub depth_view: Option<wgpu::TextureView>,
        pub width: u32,
        pub height: u32,
-       pub format: TextureFormat,
-       pub data: Arc<[u8]>,
+       pub color_format: wgpu::TextureFormat,
+       pub depth_format: Option<wgpu::TextureFormat>,
    }
    ```
 
-3. **`SamplerDescriptor` struct:**
+2. **`RenderTargetDescriptor` struct**:
    ```rust
-   pub struct SamplerDescriptor {
-       pub address_mode_u: AddressMode,
-       pub address_mode_v: AddressMode,
-       pub mag_filter: FilterMode,
-       pub min_filter: FilterMode,
-   }
-
-   pub enum AddressMode { ClampToEdge, Repeat, MirrorRepeat }
-   pub enum FilterMode { Nearest, Linear }
-   ```
-   A renderer-agnostic sampler description. Mapped to `wgpu::SamplerDescriptor`
-   in rig-render.
-
-4. **`SamplerHandle` + `AssetStore::add_sampler()` / `sampler()`** — sampler
-   assets are immutable descriptions, not GPU objects.
-
-5. **Extend `MaterialAsset`:**
-   ```rust
-   pub struct MaterialAsset {
-       pub shader: ShaderHandle,
-       pub parameters: MaterialParams,
-       pub textures: Vec<(TextureHandle, SamplerHandle)>,
+   pub struct RenderTargetDescriptor {
+       pub width: u32,
+       pub height: u32,
+       pub color_format: wgpu::TextureFormat,
+       pub depth_format: Option<wgpu::TextureFormat>,
+       pub label: &'static str,
    }
    ```
-   Each texture slot is a (texture, sampler) pair. Most materials will have 0 or 1
-   entries.
 
-6. **`VertexFormat::Float32x2`** — for UV coordinates (may already exist from
-   Commit 2).
+3. **`Renderer::create_render_target(desc) -> RenderTarget`** — allocates
+   GPU textures with `RENDER_ATTACHMENT | TEXTURE_BINDING` usage so the
+   output can be sampled in subsequent passes.
 
-#### rig-render
+4. **Extract pass recording helper** — factor out the inner render pass
+   recording (begin pass, iterate draw list, end pass) into a function that
+   accepts:
+   - `color_view: &TextureView`
+   - `depth_view: Option<&TextureView>`
+   - `clear_color: Option<Color>`
+   - `clear_depth: Option<f32>`
+   - `draw_list` + `assets` + extracted camera
 
-7. **Extend `ImmutableResourceCache`:**
-   ```rust
-   textures: HashMap<u64, wgpu::Texture>,
-   texture_views: HashMap<u64, wgpu::TextureView>,
-   samplers: HashMap<u64, wgpu::Sampler>,
-   ```
-   Add `gpu_texture()`, `texture_view()`, `sampler()` cache methods that create
-   on first access and return cloned handles.
+   The current `render_draw_list` becomes a thin wrapper that passes the
+   surface texture view + main depth view.
 
-8. **New bind group (group 3)** for textures:
-   - binding 0: texture view
-   - binding 1: sampler
+5. **`Renderer::render_to_target(target, scene, assets, camera) ->
+   Result<()>`** — renders the scene into the given `RenderTarget` instead
+   of the swapchain. Uses the same extracted pass recording helper.
 
-   For materials with no textures, bind a 1x1 white fallback texture (avoids
-   pipeline permutations for textured vs untextured).
-
-9. **Update `pipeline_layout`** to include group 3.
-
-10. **Write `TEXTURED_SHADER` (WGSL)** — samples texture at UV, multiplies with
-    material diffuse color. Optionally a `LIT_TEXTURED_SHADER` that combines
-    Blinn-Phong lighting with texture sampling.
-
-11. **`texture_format_to_wgpu()`** helper — maps `rig_assets::TextureFormat` to
-    `wgpu::TextureFormat`.
-
-#### example
-
-12. **New example or update existing** — render a textured quad (two triangles)
-    with a checkerboard pattern generated procedurally (no image loading
-    dependency yet). Demonstrates UV mapping, texture upload, and sampling.
+6. **No changes to rig-app yet** — `RenderContext` already exposes
+   `&mut Renderer`, so applications can call `create_render_target` and
+   `render_to_target` directly.
 
 ### Tests
 
-- `texture_format_maps_correctly` — verify Rgba8Unorm → wgpu::TextureFormat::Rgba8Unorm.
-- `sampler_descriptor_default` — default sampler uses linear filtering and clamp.
-- `material_with_textures_stores_pairs` — add a material with one texture+sampler
-  pair, retrieve it, verify the pair.
-- `sampler_handle_round_trips` — add sampler to store, retrieve by handle.
-- `texture_asset_with_format_round_trips` — add texture with format field, verify.
-- Existing tests updated wherever `MaterialAsset` or `TextureAsset` constructors
-  changed.
+- `render_target_descriptor_creates_correct_dimensions` — create a target,
+  verify width/height/format.
+- `render_target_color_view_is_valid` — the returned color view should be
+  usable (basic sanity check on the texture descriptor).
+- `pipeline_key_differs_by_color_format` — pipelines specialised for
+  `Rgba16Float` should differ from `Bgra8UnormSrgb`.
+
+### Example
+
+- **No new example in this commit** — the offscreen infrastructure is
+  exercised by unit tests and by Commit 7's dedicated example. Keeping
+  this commit focused on the library API.
 
 ### Inspiration from GeometricTools
 
-GTE's textures are effect-owned, not material-owned. We diverge: textures are
-referenced from `MaterialAsset` via handles, which is more data-driven and
-avoids the deep `Effect` class hierarchy.
+GTE's `DrawTarget` bundles N color textures + optional depth texture, with
+an imperative `Enable`/`Disable` API that saves and restores engine state.
+wgpu's per-pass descriptor model is cleaner: no global state mutation, each
+`begin_render_pass` is self-contained. Our `render_to_target` maps directly
+to recording a render pass against a `RenderTarget`'s views.
 
-GTE's `SamplerState` is a first-class object with filter/wrap/LOD/anisotropy —
-we adopt the same idea with our `SamplerDescriptor`, but keep it minimal (no LOD
-or anisotropy fields yet).
+GTE supports MRT (multiple render targets). Our `RenderTarget` starts with
+a single color attachment — MRT can be added later by extending to
+`color_textures: Vec<(Texture, TextureView)>`.
 
-GTE's `Texture2Effect` pairs one texture with one sampler and binds them together.
-Our bind group 3 does the same thing, but extends naturally to multi-texture
-materials by adding more bindings.
+---
+
+## Commit 7 — Offscreen Pass Example
+
+### Goal
+
+Create a new example that demonstrates offscreen rendering by rendering a
+scene to an offscreen `RenderTarget` and then displaying the result as a
+textured quad on the main pass. This proves the offscreen infrastructure
+works end-to-end.
+
+### What to add
+
+1. **New example: `examples/offscreen_demo/`** — renders a small scene
+   (e.g., a spinning box from MeshFactory) into an offscreen
+   `RenderTarget`, then renders a fullscreen quad on the main pass that
+   samples the offscreen colour texture.
+
+2. **Fullscreen-quad shader** — a WGSL shader that takes a texture and
+   sampler as bind group inputs and draws a screen-filling triangle or
+   quad. Vertex positions are generated in the vertex shader (no vertex
+   buffer needed).
+
+3. **Wire up Cargo.toml** — add `offscreen_demo` to workspace members.
+
+4. **Demonstrates**:
+   - `Renderer::create_render_target()` to allocate an offscreen target
+   - `Renderer::render_to_target()` to render the scene offscreen
+   - Sampling the offscreen colour texture in a subsequent main pass
+   - Pipeline specialisation for different colour formats (offscreen may
+     use `Rgba8UnormSrgb` while swapchain uses `Bgra8UnormSrgb`)
+
+### Tests
+
+No new library tests — this is an integration example. Manual verification:
+- The offscreen scene is visible on-screen via the textured quad
+- Resizing the window does not crash (offscreen target stays fixed or
+  resizes appropriately)
+- Depth works correctly in the offscreen pass
 
 ---
 
 ## Dependency Order
 
 ```
-Commit 1 (Camera)  ←  independent
-Commit 2 (Lights)  ←  independent of Commit 1 (but applied after)
-Commit 3 (Culling)  ←  uses camera from Commit 1 for frustum planes
-Commit 4 (Textures) ←  extends MaterialAsset from Commit 2
+Commit 1 (Depth buffer)     ← independent, prerequisite for everything
+Commit 2 (Vertex/format)    ← independent of Commit 1 (but applied after)
+Commit 3 (MeshFactory)      ← depends on Commit 2 for new vertex formats
+Commit 4 (Visibility/sort)  ← independent
+Commit 5 (Multi-object ex)  ← depends on Commits 1-4
+Commit 6 (Offscreen passes) ← depends on Commit 1 (depth + PipelineKey)
+Commit 7 (Offscreen example)← depends on Commits 3 + 6
 ```
 
-Commits 1 and 2 are logically independent but ordered so the renderer
-refactoring in Commit 1 (ExtractedCamera) simplifies Commit 2's bind group
-changes. Commit 3 depends on camera extraction. Commit 4 depends on the
-material model from Commit 2.
+```
+    ┌── Commit 1 (depth) ──────┬── Commit 6 (offscreen) ─┐
+    │                           │                          │
+    ├── Commit 2 (vertex) ──┐  │                          │
+    │                        ├──┤                          │
+    ├── Commit 3 (mesh)  ───┘  │                    Commit 7 (offscreen ex)
+    │                           │
+    ├── Commit 4 (vis/sort) ────┤
+    │                           │
+    └── Commit 5 (multi-obj) ───┘
+```
 
 ## Verification
 
