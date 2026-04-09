@@ -1,0 +1,15 @@
+[package]
+name = "hello_triangle"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Milestone 1: minimal colored triangle using wgpu + winit directly"
+
+[dependencies]
+wgpu.workspace = true
+winit.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+env_logger.workspace = true
+log.workspace = true

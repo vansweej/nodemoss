@@ -1,0 +1,17 @@
+[package]
+name = "rig-app"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Application runner and runtime shell for the rig framework"
+
+[dependencies]
+rig-math.workspace = true
+rig-assets.workspace = true
+rig-render.workspace = true
+rig-scene.workspace = true
+winit.workspace = true
+log.workspace = true
+anyhow.workspace = true
+pollster.workspace = true

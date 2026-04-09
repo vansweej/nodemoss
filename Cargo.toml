@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/math",
+    "crates/scene",
+    "crates/assets",
+    "crates/render",
+    "crates/app",
+    "examples/hello_triangle",
+    "examples/triangle_scenegraph",
+]
+exclude = ["GeometricTools"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Internal crates
+rig-math = { path = "crates/math" }
+rig-assets = { path = "crates/assets" }
+rig-scene = { path = "crates/scene" }
+rig-render = { path = "crates/render" }
+rig-app = { path = "crates/app" }
+
+# External dependencies
+wgpu = "29.0.1"
+winit = "0.30.8"
+glam = { version = "0.32.1", features = ["bytemuck"] }
+bytemuck = { version = "1.25.0", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+pollster = "0.4"
+thiserror = "2.0"
+anyhow = "1.0"
