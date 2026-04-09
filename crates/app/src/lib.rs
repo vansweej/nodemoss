@@ -6,6 +6,7 @@ use anyhow::Result;
 pub use rig_assets;
 use rig_assets::AssetStore;
 pub use rig_math;
+use rig_math::{Quat, Vec3};
 pub use rig_render;
 use rig_render::{Renderer, TRIANGLE_SHADER};
 pub use rig_scene;
@@ -57,6 +58,60 @@ pub struct RenderContext<'a> {
     pub active_camera: Option<NodeId>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct CameraRig {
+    pub translation_speed: f32,
+    pub rotation_speed: f32,
+}
+
+impl CameraRig {
+    pub fn update(
+        &self,
+        ctx: &mut UpdateContext<'_>,
+        node: NodeId,
+        dt: f32,
+    ) -> rig_scene::Result<()> {
+        let mut transform = ctx.scene.local_transform(node)?;
+
+        let yaw =
+            key_axis(ctx.input, KeyCode::ArrowLeft, KeyCode::ArrowRight) * self.rotation_speed * dt;
+        if yaw != 0.0 {
+            transform.rotation = Quat::from_rotation_y(-yaw) * transform.rotation;
+        }
+
+        let right = transform.rotation * Vec3::X;
+        let pitch =
+            key_axis(ctx.input, KeyCode::ArrowDown, KeyCode::ArrowUp) * self.rotation_speed * dt;
+        if pitch != 0.0 {
+            transform.rotation = Quat::from_axis_angle(right, pitch) * transform.rotation;
+        }
+        transform.rotation = transform.rotation.normalize();
+
+        let forward = -(transform.rotation * Vec3::Z);
+        let up = transform.rotation * Vec3::Y;
+        let translation = (forward * key_axis(ctx.input, KeyCode::KeyS, KeyCode::KeyW)
+            + right * key_axis(ctx.input, KeyCode::KeyA, KeyCode::KeyD)
+            + up * key_axis(ctx.input, KeyCode::KeyQ, KeyCode::KeyE))
+            * self.translation_speed
+            * dt;
+
+        if translation != Vec3::ZERO {
+            transform.translation += translation;
+        }
+
+        ctx.scene.set_local_transform(node, transform)
+    }
+}
+
+impl Default for CameraRig {
+    fn default() -> Self {
+        Self {
+            translation_speed: 2.5,
+            rotation_speed: 1.5,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct InputState {
     keys: HashSet<KeyCode>,
@@ -83,6 +138,12 @@ impl InputState {
             }
         }
     }
+}
+
+fn key_axis(input: &InputState, negative: KeyCode, positive: KeyCode) -> f32 {
+    let negative = input.is_key_pressed(negative) as i8;
+    let positive = input.is_key_pressed(positive) as i8;
+    (positive - negative) as f32
 }
 
 pub struct FrameTimer {
@@ -331,6 +392,88 @@ mod tests {
         input.update_key(KeyCode::KeyW, ElementState::Released);
 
         assert!(!input.is_key_pressed(KeyCode::KeyW));
+    }
+
+    #[test]
+    fn key_axis_tracks_positive_and_negative_input() {
+        let mut input = InputState::default();
+
+        input.update_key(KeyCode::KeyA, ElementState::Pressed);
+        assert_eq!(key_axis(&input, KeyCode::KeyA, KeyCode::KeyD), -1.0);
+
+        input.update_key(KeyCode::KeyA, ElementState::Released);
+        input.update_key(KeyCode::KeyD, ElementState::Pressed);
+        assert_eq!(key_axis(&input, KeyCode::KeyA, KeyCode::KeyD), 1.0);
+    }
+
+    #[test]
+    fn camera_rig_moves_camera_forward() {
+        let mut scene = SceneGraph::new();
+        let camera = scene.create_node("camera");
+        let assets = AssetStore::new();
+        let input = {
+            let mut input = InputState::default();
+            input.update_key(KeyCode::KeyW, ElementState::Pressed);
+            input
+        };
+        let timer = FrameTimer::new();
+        let mut active_camera = None;
+        let mut ctx = UpdateContext {
+            scene: &mut scene,
+            assets: &assets,
+            input: &input,
+            timer: &timer,
+            active_camera: &mut active_camera,
+        };
+
+        CameraRig {
+            translation_speed: 4.0,
+            rotation_speed: 1.0,
+        }
+        .update(&mut ctx, camera, 0.5)
+        .unwrap();
+
+        let transform = scene.local_transform(camera).unwrap();
+        assert!(
+            transform
+                .translation
+                .abs_diff_eq(Vec3::new(0.0, 0.0, -2.0), 1e-5)
+        );
+    }
+
+    #[test]
+    fn camera_rig_rotates_camera_with_arrow_keys() {
+        let mut scene = SceneGraph::new();
+        let camera = scene.create_node("camera");
+        let assets = AssetStore::new();
+        let input = {
+            let mut input = InputState::default();
+            input.update_key(KeyCode::ArrowRight, ElementState::Pressed);
+            input
+        };
+        let timer = FrameTimer::new();
+        let mut active_camera = None;
+        let mut ctx = UpdateContext {
+            scene: &mut scene,
+            assets: &assets,
+            input: &input,
+            timer: &timer,
+            active_camera: &mut active_camera,
+        };
+
+        CameraRig {
+            translation_speed: 1.0,
+            rotation_speed: 2.0,
+        }
+        .update(&mut ctx, camera, 0.25)
+        .unwrap();
+
+        let transform = scene.local_transform(camera).unwrap();
+        assert!(
+            transform
+                .rotation
+                .abs_diff_eq(Quat::from_rotation_y(-0.5), 1e-5)
+        );
     }
 
     #[test]

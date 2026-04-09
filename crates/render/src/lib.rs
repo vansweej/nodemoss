@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
+    num::NonZeroU64,
     sync::Arc,
 };
 
@@ -47,6 +48,114 @@ struct CachedMeshBuffers {
     index_count: u32,
 }
 
+struct ObjectUniformBuffer {
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    stride: u64,
+    capacity: usize,
+}
+
+impl ObjectUniformBuffer {
+    fn new(
+        device: &wgpu::Device,
+        object_bind_group_layout: &wgpu::BindGroupLayout,
+        stride: u64,
+        capacity: usize,
+    ) -> Self {
+        let capacity = capacity.max(1);
+        let size = stride * capacity as u64;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("object uniform buffer"),
+            size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("object uniform bind group"),
+            layout: object_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer,
+                    offset: 0,
+                    size: NonZeroU64::new(std::mem::size_of::<ObjectUniforms>() as u64),
+                }),
+            }],
+        });
+
+        Self {
+            buffer,
+            bind_group,
+            stride,
+            capacity,
+        }
+    }
+
+    fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        object_bind_group_layout: &wgpu::BindGroupLayout,
+        required_capacity: usize,
+    ) {
+        if required_capacity <= self.capacity {
+            return;
+        }
+
+        *self = Self::new(
+            device,
+            object_bind_group_layout,
+            self.stride,
+            required_capacity.next_power_of_two(),
+        );
+    }
+
+    fn write(&mut self, queue: &wgpu::Queue, uniforms: &[ObjectUniforms]) {
+        if uniforms.is_empty() {
+            return;
+        }
+
+        let bytes = encode_object_uniforms(uniforms, self.stride);
+        queue.write_buffer(&self.buffer, 0, &bytes);
+    }
+
+    fn dynamic_offset(&self, index: usize) -> Result<u32> {
+        object_uniform_offset(index, self.stride)
+    }
+}
+
+struct FrameResources {
+    object_uniforms: ObjectUniformBuffer,
+}
+
+impl FrameResources {
+    fn new(
+        device: &wgpu::Device,
+        object_bind_group_layout: &wgpu::BindGroupLayout,
+        object_uniform_alignment: u64,
+    ) -> Self {
+        let stride = aligned_uniform_size(
+            std::mem::size_of::<ObjectUniforms>() as u64,
+            object_uniform_alignment,
+        );
+
+        Self {
+            object_uniforms: ObjectUniformBuffer::new(device, object_bind_group_layout, stride, 1),
+        }
+    }
+
+    fn prepare_object_uniforms(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        object_bind_group_layout: &wgpu::BindGroupLayout,
+        uniforms: &[ObjectUniforms],
+    ) {
+        self.object_uniforms
+            .ensure_capacity(device, object_bind_group_layout, uniforms.len());
+        self.object_uniforms.write(queue, uniforms);
+    }
+}
+
 #[derive(Default)]
 struct ImmutableResourceCache {
     meshes: HashMap<u64, CachedMeshBuffers>,
@@ -89,6 +198,7 @@ pub struct Renderer {
     pipeline_layout: wgpu::PipelineLayout,
     pipelines: HashMap<VertexLayout, wgpu::RenderPipeline>,
     object_bind_group_layout: wgpu::BindGroupLayout,
+    frame_resources: FrameResources,
     window: Arc<Window>,
     cache: ImmutableResourceCache,
 }
@@ -157,12 +267,20 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: NonZeroU64::new(
+                            std::mem::size_of::<ObjectUniforms>() as u64
+                        ),
                     },
                     count: None,
                 }],
             });
+
+        let frame_resources = FrameResources::new(
+            &device,
+            &object_bind_group_layout,
+            adapter.limits().min_uniform_buffer_offset_alignment as u64,
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rig render pipeline layout"),
@@ -179,6 +297,7 @@ impl Renderer {
             pipeline_layout,
             pipelines: HashMap::new(),
             object_bind_group_layout,
+            frame_resources,
             window,
             cache: ImmutableResourceCache::default(),
         })
@@ -253,6 +372,18 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let object_uniforms: Vec<_> = draw_list
+            .iter()
+            .map(|object| ObjectUniforms {
+                world: (pv * object.world_transform).to_cols_array_2d(),
+            })
+            .collect();
+        self.frame_resources.prepare_object_uniforms(
+            &self.device,
+            &self.queue,
+            &self.object_bind_group_layout,
+            &object_uniforms,
+        );
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -282,7 +413,7 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            for object in draw_list {
+            for (index, object) in draw_list.iter().enumerate() {
                 let material = assets
                     .material(object.material)
                     .map_err(|err| RenderError::Asset(err.to_string()))?;
@@ -295,27 +426,12 @@ impl Renderer {
                 let buffers = self.cache.mesh_buffers(&self.device, mesh);
                 let pipeline = self.pipeline_for_layout(&mesh.vertex_layout)?;
 
-                let object_uniforms = ObjectUniforms {
-                    world: (pv * object.world_transform).to_cols_array_2d(),
-                };
-                let uniform_buffer =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("object uniforms"),
-                            contents: bytemuck::bytes_of(&object_uniforms),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-                let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("object bind group"),
-                    layout: &self.object_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buffer.as_entire_binding(),
-                    }],
-                });
-
                 pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
+                pass.set_bind_group(
+                    0,
+                    &self.frame_resources.object_uniforms.bind_group,
+                    &[self.frame_resources.object_uniforms.dynamic_offset(index)?],
+                );
                 pass.set_vertex_buffer(0, buffers.vertex.slice(..));
                 pass.set_index_buffer(buffers.index.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..buffers.index_count, 0, 0..1);
@@ -346,6 +462,38 @@ impl Renderer {
             .insert(vertex_layout.clone(), pipeline.clone());
         Ok(pipeline)
     }
+}
+
+fn aligned_uniform_size(size: u64, alignment: u64) -> u64 {
+    if alignment <= 1 {
+        return size;
+    }
+
+    let remainder = size % alignment;
+    if remainder == 0 {
+        size
+    } else {
+        size + (alignment - remainder)
+    }
+}
+
+fn object_uniform_offset(index: usize, stride: u64) -> Result<u32> {
+    let offset = index as u64 * stride;
+    u32::try_from(offset)
+        .map_err(|_| RenderError::Asset("object uniform offset exceeds u32 range".into()))
+}
+
+fn encode_object_uniforms(uniforms: &[ObjectUniforms], stride: u64) -> Vec<u8> {
+    let object_size = std::mem::size_of::<ObjectUniforms>();
+    let stride = stride as usize;
+    let mut bytes = vec![0_u8; stride * uniforms.len()];
+
+    for (index, uniform) in uniforms.iter().enumerate() {
+        let offset = index * stride;
+        bytes[offset..offset + object_size].copy_from_slice(bytemuck::bytes_of(uniform));
+    }
+
+    bytes
 }
 
 fn create_pipeline(
@@ -616,6 +764,42 @@ mod tests {
         mesh.vertex_layout.attributes[1].shader_location = 0;
 
         assert!(mesh_vertex_attributes(&mesh.vertex_layout).is_err());
+    }
+
+    #[test]
+    fn aligned_uniform_size_rounds_up_to_alignment() {
+        assert_eq!(aligned_uniform_size(64, 256), 256);
+        assert_eq!(aligned_uniform_size(256, 256), 256);
+        assert_eq!(aligned_uniform_size(65, 16), 80);
+    }
+
+    #[test]
+    fn object_uniform_offset_uses_stride() {
+        assert_eq!(object_uniform_offset(2, 256).unwrap(), 512);
+    }
+
+    #[test]
+    fn encode_object_uniforms_respects_stride_padding() {
+        let uniforms = [
+            ObjectUniforms {
+                world: Mat4::IDENTITY.to_cols_array_2d(),
+            },
+            ObjectUniforms {
+                world: Mat4::from_translation(rig_math::Vec3::new(1.0, 2.0, 3.0))
+                    .to_cols_array_2d(),
+            },
+        ];
+
+        let bytes = encode_object_uniforms(&uniforms, 256);
+        let object_size = std::mem::size_of::<ObjectUniforms>();
+
+        assert_eq!(bytes.len(), 512);
+        assert_eq!(&bytes[..object_size], bytemuck::bytes_of(&uniforms[0]));
+        assert_eq!(
+            &bytes[256..256 + object_size],
+            bytemuck::bytes_of(&uniforms[1])
+        );
+        assert!(bytes[object_size..256].iter().all(|byte| *byte == 0));
     }
 
     #[test]

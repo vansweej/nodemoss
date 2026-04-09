@@ -200,6 +200,10 @@ impl SceneGraph {
         Ok(())
     }
 
+    pub fn local_transform(&self, node: NodeId) -> Result<Transform> {
+        Ok(self.node(node)?.local_transform)
+    }
+
     pub fn set_renderable(&mut self, node: NodeId, renderable: Renderable) -> Result<()> {
         self.node(node)?;
         self.renderables.insert(node, renderable);

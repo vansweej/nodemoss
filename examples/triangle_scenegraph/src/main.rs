@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use rig_app::{
-    Application, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, RenderContext, StartupContext, UpdateContext,
     rig_assets::{
         MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
     },
@@ -37,6 +37,7 @@ const INDICES: [u16; 3] = [0, 1, 2];
 
 struct TriangleSceneApp {
     camera: NodeId,
+    camera_rig: CameraRig,
 }
 
 impl Application for TriangleSceneApp {
@@ -93,11 +94,15 @@ impl Application for TriangleSceneApp {
             },
         )?;
 
-        Ok(Self { camera })
+        Ok(Self {
+            camera,
+            camera_rig: CameraRig::default(),
+        })
     }
 
-    fn update(&mut self, ctx: &mut UpdateContext<'_>, _dt: f32) -> Result<()> {
+    fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> Result<()> {
         *ctx.active_camera = Some(self.camera);
+        self.camera_rig.update(ctx, self.camera, dt)?;
         Ok(())
     }
 
