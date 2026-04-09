@@ -383,6 +383,23 @@ impl Renderer {
         &self.window
     }
 
+    /// Borrow the wgpu device. Useful for examples that need to create custom
+    /// GPU resources (pipelines, bind groups, buffers) alongside the renderer.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// Borrow the wgpu queue. Useful for examples that need to submit their
+    /// own command encoders.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// The texture format of the swapchain surface.
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.surface_config.format
+    }
+
     #[cfg(not(tarpaulin_include))]
     pub fn render_scene(
         &mut self,
@@ -791,6 +808,75 @@ impl Renderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    /// Blit an offscreen texture onto the swapchain surface using a
+    /// caller-supplied fullscreen-quad pipeline and bind group.
+    ///
+    /// This is the final step of an offscreen rendering workflow:
+    /// 1. Call [`render_to_target`] to render the scene into a [`RenderTarget`].
+    /// 2. Build a blit `RenderPipeline` and `BindGroup` that sample the
+    ///    offscreen colour texture (using [`surface_format`] as the colour
+    ///    target format).
+    /// 3. Call this method to present the result.
+    ///
+    /// The method acquires the current swapchain frame, records a single
+    /// render pass with `draw(0..3, 0..1)` (no vertex buffer — positions are
+    /// generated inside the vertex shader), and presents the frame.
+    #[cfg(not(tarpaulin_include))]
+    pub fn blit_texture_to_screen(
+        &mut self,
+        pipeline: &wgpu::RenderPipeline,
+        bind_group: &wgpu::BindGroup,
+    ) -> Result<()> {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Timeout => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.surface_config);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => return Ok(()),
+        };
+
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("blit encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("blit pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
         Ok(())
     }
 }
@@ -1443,7 +1529,7 @@ mod tests {
 
     #[test]
     fn draw_list_sorted_by_shader_then_mesh() {
-        use rig_assets::{AssetStore, MaterialAsset, MaterialParams, MeshHandle, ShaderAsset};
+        use rig_assets::{AssetStore, MaterialAsset, MaterialParams, ShaderAsset};
         use rig_math::BoundingSphere;
         use rig_scene::ExtractedRenderable;
 

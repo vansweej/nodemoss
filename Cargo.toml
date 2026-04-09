@@ -9,6 +9,7 @@ members = [
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
     "examples/multi_object",
+    "examples/offscreen_demo",
 ]
 exclude = ["GeometricTools"]
 
