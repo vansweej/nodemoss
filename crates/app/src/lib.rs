@@ -257,6 +257,9 @@ impl<A: Application> ApplicationHandler for Runner<A> {
         };
         let app = A::init(&mut startup).expect("failed to initialize application");
 
+        // If init() did not select a camera, fall back to the first camera in the scene.
+        let active_camera = scene.first_camera();
+
         self.window = Some(window);
         self.state = Some(RunnerState {
             app,
@@ -265,7 +268,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             renderer,
             input,
             timer,
-            active_camera: None,
+            active_camera,
         });
     }
 

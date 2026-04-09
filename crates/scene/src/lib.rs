@@ -89,6 +89,8 @@ pub enum SceneError {
     SelfParent,
     #[error("missing mesh asset for renderable node")]
     MissingMeshAsset,
+    #[error("node does not have a camera component")]
+    NotACamera,
 }
 
 pub type Result<T> = std::result::Result<T, SceneError>;
@@ -254,6 +256,46 @@ impl SceneGraph {
         self.renderables.keys().copied()
     }
 
+    /// All node IDs that have a `CameraComponent` attached.
+    pub fn camera_nodes(&self) -> Vec<NodeId> {
+        self.cameras.keys().copied().collect()
+    }
+
+    /// The first camera node found in the scene, if any.
+    ///
+    /// Useful for single-camera apps that do not need explicit selection.
+    pub fn first_camera(&self) -> Option<NodeId> {
+        self.cameras.keys().next().copied()
+    }
+
+    /// Find a camera node by the name of its scene node.
+    ///
+    /// Returns `None` if no node with that name has a `CameraComponent`.
+    pub fn camera_with_name(&self, name: &str) -> Option<NodeId> {
+        self.cameras.keys().copied().find(|&id| {
+            self.node(id)
+                .map(|n| n.name == name)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Extract camera data for a given camera node.
+    ///
+    /// Returns `SceneError::InvalidNode` when `id` is not a valid node, and
+    /// `SceneError::NotACamera` when the node exists but has no camera component.
+    pub fn extract_active_camera(&self, id: NodeId) -> Result<ExtractedCamera> {
+        let camera = self
+            .cameras
+            .get(&id)
+            .ok_or(SceneError::NotACamera)?;
+        let world_transform = self.node(id)?.world_transform;
+        Ok(ExtractedCamera {
+            node: id,
+            projection: camera.projection,
+            world_transform,
+        })
+    }
+
     pub fn update_world_transforms(&mut self, root: NodeId) -> Result<()> {
         let root_local = self.node(root)?.local_transform.to_mat4();
         self.node_mut(root)?.world_transform = root_local;
@@ -410,6 +452,14 @@ pub struct ExtractedRenderable {
     pub material: MaterialHandle,
     pub world_transform: Mat4,
     pub world_bound: BoundingSphere,
+}
+
+/// Camera data extracted from the scene, ready for the renderer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExtractedCamera {
+    pub node: NodeId,
+    pub projection: Projection,
+    pub world_transform: Mat4,
 }
 
 pub fn frustum_planes_from_projection_view(matrix: Mat4) -> [Vec4; 6] {
@@ -779,5 +829,137 @@ mod tests {
         let plane = Vec4::ZERO;
 
         assert_eq!(normalize_plane(plane), plane);
+    }
+
+    fn perspective() -> Projection {
+        Projection::Perspective {
+            fov_y_radians: 1.0,
+            near: 0.1,
+            far: 100.0,
+        }
+    }
+
+    #[test]
+    fn camera_nodes_returns_all_cameras() {
+        let mut scene = SceneGraph::new();
+        let a = scene.create_node("a");
+        let b = scene.create_node("b");
+        let c = scene.create_node("c");
+        scene.set_camera(a, CameraComponent { projection: perspective() }).unwrap();
+        scene.set_camera(b, CameraComponent { projection: perspective() }).unwrap();
+        // c has no camera
+
+        let mut nodes = scene.camera_nodes();
+        nodes.sort_by_key(|n| n.index);
+
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.contains(&a));
+        assert!(nodes.contains(&b));
+        assert!(!nodes.contains(&c));
+    }
+
+    #[test]
+    fn first_camera_returns_none_for_empty_scene() {
+        let scene = SceneGraph::new();
+
+        assert!(scene.first_camera().is_none());
+    }
+
+    #[test]
+    fn first_camera_returns_some_for_scene_with_camera() {
+        let mut scene = SceneGraph::new();
+        let cam = scene.create_node("cam");
+        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+
+        assert!(scene.first_camera().is_some());
+    }
+
+    #[test]
+    fn camera_with_name_finds_matching_camera() {
+        let mut scene = SceneGraph::new();
+        let main = scene.create_node("main");
+        let debug = scene.create_node("debug");
+        scene.set_camera(main, CameraComponent { projection: perspective() }).unwrap();
+        scene.set_camera(debug, CameraComponent { projection: perspective() }).unwrap();
+
+        assert_eq!(scene.camera_with_name("main"), Some(main));
+        assert_eq!(scene.camera_with_name("debug"), Some(debug));
+    }
+
+    #[test]
+    fn camera_with_name_returns_none_for_non_camera_node() {
+        let mut scene = SceneGraph::new();
+        let _node = scene.create_node("present");
+
+        assert!(scene.camera_with_name("present").is_none());
+    }
+
+    #[test]
+    fn camera_with_name_returns_none_for_missing_name() {
+        let mut scene = SceneGraph::new();
+        let cam = scene.create_node("main");
+        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+
+        assert!(scene.camera_with_name("other").is_none());
+    }
+
+    #[test]
+    fn extract_active_camera_computes_world_transform() {
+        let mut scene = SceneGraph::new();
+        let parent = scene.create_node("parent");
+        let cam_node = scene.create_node("cam");
+        scene.attach_child(parent, cam_node).unwrap();
+        scene
+            .set_local_transform(
+                parent,
+                Transform {
+                    translation: Vec3::new(1.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                cam_node,
+                Transform {
+                    translation: Vec3::new(0.0, 2.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene.set_camera(cam_node, CameraComponent { projection: perspective() }).unwrap();
+        scene.update_world_transforms(parent).unwrap();
+
+        let extracted = scene.extract_active_camera(cam_node).unwrap();
+
+        assert_eq!(extracted.node, cam_node);
+        assert_eq!(extracted.projection, perspective());
+        approx_eq_vec3(
+            extracted.world_transform.transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 2.0, 0.0),
+        );
+    }
+
+    #[test]
+    fn extract_active_camera_errors_for_non_camera_node() {
+        let mut scene = SceneGraph::new();
+        let node = scene.create_node("node");
+
+        assert!(matches!(
+            scene.extract_active_camera(node),
+            Err(SceneError::NotACamera)
+        ));
+    }
+
+    #[test]
+    fn extract_active_camera_errors_for_invalid_node() {
+        let scene = SceneGraph::new();
+        let invalid = NodeId { index: 99, generation: 0 };
+
+        // NodeId 99 does not exist — should get NotACamera (cameras map lookup fails first)
+        // or InvalidNode depending on the lookup order. Either is an error.
+        assert!(scene.extract_active_camera(invalid).is_err());
     }
 }

@@ -10,7 +10,7 @@ use std::{
 use bytemuck::{Pod, Zeroable};
 use rig_assets::{AssetStore, MeshAsset, ShaderAsset, ShaderHandle, VertexFormat, VertexLayout};
 use rig_math::{Camera, Mat4};
-use rig_scene::{ExtractedRenderable, NodeId, SceneGraph};
+use rig_scene::{ExtractedCamera, ExtractedRenderable, NodeId, SceneGraph};
 use thiserror::Error;
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -339,37 +339,29 @@ impl Renderer {
         active_camera: Option<NodeId>,
     ) -> Result<()> {
         let draw_list = scene.extract_renderables();
-        self.render_draw_list(scene, assets, active_camera, &draw_list)
+        let extracted_camera = active_camera
+            .and_then(|id| scene.extract_active_camera(id).ok());
+        self.render_draw_list(assets, extracted_camera, &draw_list)
     }
 
     #[cfg(not(tarpaulin_include))]
     fn render_draw_list(
         &mut self,
-        scene: &SceneGraph,
         assets: &AssetStore,
-        active_camera: Option<NodeId>,
+        camera: Option<ExtractedCamera>,
         draw_list: &[ExtractedRenderable],
     ) -> Result<()> {
-        let Some(active_camera) = active_camera else {
+        let Some(camera) = camera else {
             return Ok(());
         };
 
-        let camera_component = scene
-            .camera(active_camera)
-            .map_err(|_| RenderError::InvalidCamera)?
-            .copied()
-            .ok_or(RenderError::InvalidCamera)?;
-        let pose = decompose_pose(
-            scene
-                .world_transform(active_camera)
-                .map_err(|_| RenderError::InvalidCamera)?,
-        );
-        let camera = Camera {
+        let pose = decompose_pose(camera.world_transform);
+        let camera_value = Camera {
             pose,
-            projection: camera_component.projection,
+            projection: camera.projection,
         };
         let aspect = self.surface_config.width as f32 / self.surface_config.height as f32;
-        let pv = camera.projection_view_matrix(aspect);
+        let pv = camera_value.projection_view_matrix(aspect);
 
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
