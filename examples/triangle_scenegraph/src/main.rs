@@ -34,8 +34,10 @@ const VERTICES: [Vertex; 3] = [
 ];
 
 const INDICES: [u16; 3] = [0, 1, 2];
+const TRIANGLE_ROTATION_SPEED: f32 = std::f32::consts::FRAC_PI_2;
 
 struct TriangleSceneApp {
+    triangle: NodeId,
     camera: NodeId,
     camera_rig: CameraRig,
 }
@@ -95,6 +97,7 @@ impl Application for TriangleSceneApp {
         )?;
 
         Ok(Self {
+            triangle,
             camera,
             camera_rig: CameraRig::default(),
         })
@@ -102,6 +105,14 @@ impl Application for TriangleSceneApp {
 
     fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> Result<()> {
         *ctx.active_camera = Some(self.camera);
+
+        let mut triangle_transform = ctx.scene.local_transform(self.triangle)?;
+        triangle_transform.rotation = (Quat::from_rotation_z(TRIANGLE_ROTATION_SPEED * dt)
+            * triangle_transform.rotation)
+            .normalize();
+        ctx.scene
+            .set_local_transform(self.triangle, triangle_transform)?;
+
         self.camera_rig.update(ctx, self.camera, dt)?;
         Ok(())
     }
