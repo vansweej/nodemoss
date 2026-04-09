@@ -8,7 +8,7 @@ use rig_assets::AssetStore;
 pub use rig_math;
 use rig_math::{Quat, Vec3};
 pub use rig_render;
-use rig_render::{Renderer, TRIANGLE_SHADER};
+use rig_render::Renderer;
 pub use rig_scene;
 use rig_scene::{NodeId, SceneGraph};
 pub use winit;
@@ -243,7 +243,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                 .expect("failed to create window"),
         );
 
-        let mut renderer = pollster::block_on(Renderer::new(window.clone(), TRIANGLE_SHADER))
+        let mut renderer = pollster::block_on(Renderer::new(window.clone()))
             .expect("failed to initialize renderer");
         let mut scene = SceneGraph::new();
         let mut assets = AssetStore::new();

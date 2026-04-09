@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use rig_assets::{AssetStore, MeshAsset, VertexFormat, VertexLayout};
+use rig_assets::{AssetStore, MeshAsset, ShaderAsset, ShaderHandle, VertexFormat, VertexLayout};
 use rig_math::{Camera, Mat4};
 use rig_scene::{ExtractedRenderable, NodeId, SceneGraph};
 use thiserror::Error;
@@ -46,6 +46,12 @@ struct CachedMeshBuffers {
     vertex: wgpu::Buffer,
     index: wgpu::Buffer,
     index_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    shader: ShaderHandle,
+    vertex_layout: VertexLayout,
 }
 
 struct ObjectUniformBuffer {
@@ -158,10 +164,25 @@ impl FrameResources {
 
 #[derive(Default)]
 struct ImmutableResourceCache {
+    shaders: HashMap<u64, wgpu::ShaderModule>,
     meshes: HashMap<u64, CachedMeshBuffers>,
 }
 
 impl ImmutableResourceCache {
+    fn shader_module(&mut self, device: &wgpu::Device, shader: &ShaderAsset) -> wgpu::ShaderModule {
+        let key = hash_shader(shader);
+        if let Some(module) = self.shaders.get(&key) {
+            return module.clone();
+        }
+
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rig render shader"),
+            source: wgpu::ShaderSource::Wgsl(shader.source.as_ref().into()),
+        });
+        self.shaders.insert(key, module.clone());
+        module
+    }
+
     fn mesh_buffers(&mut self, device: &wgpu::Device, mesh: &MeshAsset) -> CachedMeshBuffers {
         let key = hash_mesh(mesh);
         if let Some(buffers) = self.meshes.get(&key) {
@@ -194,9 +215,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    shader: wgpu::ShaderModule,
     pipeline_layout: wgpu::PipelineLayout,
-    pipelines: HashMap<VertexLayout, wgpu::RenderPipeline>,
+    pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     object_bind_group_layout: wgpu::BindGroupLayout,
     frame_resources: FrameResources,
     window: Arc<Window>,
@@ -205,7 +225,7 @@ pub struct Renderer {
 
 impl Renderer {
     #[cfg(not(tarpaulin_include))]
-    pub async fn new(window: Arc<Window>, shader_source: &str) -> Result<Self> {
+    pub async fn new(window: Arc<Window>) -> Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance.create_surface(window.clone())?;
@@ -254,11 +274,6 @@ impl Renderer {
         };
         surface.configure(&device, &surface_config);
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rig render shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        });
-
         let object_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("object bind group layout"),
@@ -293,7 +308,6 @@ impl Renderer {
             device,
             queue,
             surface_config,
-            shader,
             pipeline_layout,
             pipelines: HashMap::new(),
             object_bind_group_layout,
@@ -417,14 +431,15 @@ impl Renderer {
                 let material = assets
                     .material(object.material)
                     .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let _shader = assets
+                let shader = assets
                     .shader(material.shader)
                     .map_err(|err| RenderError::Asset(err.to_string()))?;
                 let mesh = assets
                     .mesh(object.mesh)
                     .map_err(|err| RenderError::Asset(err.to_string()))?;
                 let buffers = self.cache.mesh_buffers(&self.device, mesh);
-                let pipeline = self.pipeline_for_layout(&mesh.vertex_layout)?;
+                let pipeline =
+                    self.pipeline_for_shader(material.shader, shader, &mesh.vertex_layout)?;
 
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(
@@ -443,23 +458,29 @@ impl Renderer {
         Ok(())
     }
 
-    fn pipeline_for_layout(
+    fn pipeline_for_shader(
         &mut self,
+        shader_handle: ShaderHandle,
+        shader: &ShaderAsset,
         vertex_layout: &VertexLayout,
     ) -> Result<wgpu::RenderPipeline> {
-        if let Some(pipeline) = self.pipelines.get(vertex_layout) {
+        let key = PipelineKey {
+            shader: shader_handle,
+            vertex_layout: vertex_layout.clone(),
+        };
+        if let Some(pipeline) = self.pipelines.get(&key) {
             return Ok(pipeline.clone());
         }
 
+        let shader_module = self.cache.shader_module(&self.device, shader);
         let pipeline = create_pipeline(
             &self.device,
-            &self.shader,
+            &shader_module,
             &self.pipeline_layout,
             self.surface_config.format,
             vertex_layout,
         )?;
-        self.pipelines
-            .insert(vertex_layout.clone(), pipeline.clone());
+        self.pipelines.insert(key, pipeline.clone());
         Ok(pipeline)
     }
 }
@@ -615,6 +636,12 @@ fn wgpu_vertex_format(format: VertexFormat) -> wgpu::VertexFormat {
     }
 }
 
+fn hash_shader(shader: &ShaderAsset) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    shader.source.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn hash_mesh(mesh: &MeshAsset) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     mesh.vertex_layout.hash(&mut hasher);
@@ -672,7 +699,7 @@ pub fn validate_triangle_layout(mesh: &MeshAsset) -> bool {
 mod tests {
     use std::sync::Arc;
 
-    use rig_assets::{VertexAttribute, VertexLayout};
+    use rig_assets::{ShaderAsset, VertexAttribute, VertexLayout};
     use rig_math::{Quat, Transform, Vec3};
 
     use super::*;
@@ -817,6 +844,30 @@ mod tests {
         mesh_b.index_data = Arc::from([0_u8, 1, 2]);
 
         assert_ne!(hash_mesh(&mesh_a), hash_mesh(&mesh_b));
+    }
+
+    #[test]
+    fn hash_shader_is_stable_for_identical_source() {
+        let shader_a = ShaderAsset {
+            source: Arc::from("shader"),
+        };
+        let shader_b = ShaderAsset {
+            source: Arc::from("shader"),
+        };
+
+        assert_eq!(hash_shader(&shader_a), hash_shader(&shader_b));
+    }
+
+    #[test]
+    fn hash_shader_changes_when_source_changes() {
+        let shader_a = ShaderAsset {
+            source: Arc::from("shader_a"),
+        };
+        let shader_b = ShaderAsset {
+            source: Arc::from("shader_b"),
+        };
+
+        assert_ne!(hash_shader(&shader_a), hash_shader(&shader_b));
     }
 
     #[test]
