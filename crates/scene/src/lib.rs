@@ -397,8 +397,7 @@ impl SceneGraph {
     ///
     /// For each node that has a `LightComponent`, reads the world transform
     /// and derives world-space position and forward direction (−Z in local space).
-    pub fn extract_lights(&self) -> Vec<ExtractedLight> {
-        self.lights
+    pub fn extract_lights(&self) -> Vec<ExtractedLight> {        self.lights
             .iter()
             .filter_map(|(&node, &light)| {
                 let world = self.node(node).ok()?.world_transform;
@@ -409,6 +408,40 @@ impl SceneGraph {
                     kind: light.kind,
                     world_position,
                     world_direction,
+                })
+            })
+            .collect()
+    }
+
+    /// Like [`extract_renderables`] but skips objects whose world bounding
+    /// sphere is entirely outside the given frustum planes.
+    ///
+    /// - `VisibilityMode::Hidden`       → always culled.
+    /// - `VisibilityMode::AlwaysVisible` → skip frustum test, always included.
+    /// - `VisibilityMode::Inherit`       → normal frustum test.
+    pub fn extract_renderables_culled(
+        &self,
+        frustum_planes: &[Vec4; 6],
+    ) -> Vec<ExtractedRenderable> {
+        self.renderables
+            .iter()
+            .filter_map(|(&node, &renderable)| {
+                let node_data = self.node(node).ok()?;
+                match node_data.visibility {
+                    VisibilityMode::Hidden => return None,
+                    VisibilityMode::AlwaysVisible => {}
+                    VisibilityMode::Inherit => {
+                        if node_data.world_bound.is_outside_frustum(frustum_planes) {
+                            return None;
+                        }
+                    }
+                }
+                Some(ExtractedRenderable {
+                    node,
+                    mesh: renderable.mesh,
+                    material: renderable.material,
+                    world_transform: node_data.world_transform,
+                    world_bound: node_data.world_bound,
                 })
             })
             .collect()
@@ -1090,5 +1123,95 @@ mod tests {
         }
 
         assert_eq!(scene.extract_lights().len(), 3);
+    }
+
+    /// Build 6 frustum planes for a box [−half, +half]³ centred at the origin.
+    /// Signed distance convention: `dot(p, normal) + w ≥ 0` means inside.
+    fn box_frustum(half: f32) -> [Vec4; 6] {
+        [
+            Vec4::new( 1.0,  0.0,  0.0,  half),  // x ≥ −half
+            Vec4::new(-1.0,  0.0,  0.0,  half),  // x ≤  half
+            Vec4::new( 0.0,  1.0,  0.0,  half),  // y ≥ −half
+            Vec4::new( 0.0, -1.0,  0.0,  half),  // y ≤  half
+            Vec4::new( 0.0,  0.0,  1.0,  half),  // z ≥ −half
+            Vec4::new( 0.0,  0.0, -1.0,  half),  // z ≤  half
+        ]
+    }
+
+    #[test]
+    fn extract_renderables_culled_excludes_outside_objects() {
+        let mut scene = SceneGraph::new();
+        let (assets, mesh, material) = sample_assets();
+
+        let inside = scene.create_node("inside");
+        scene.set_renderable(inside, Renderable { mesh, material }).unwrap();
+        // Default position is origin — inside [-10,10]³
+
+        let outside = scene.create_node("outside");
+        scene.set_renderable(outside, Renderable { mesh, material }).unwrap();
+        scene
+            .set_local_transform(
+                outside,
+                Transform {
+                    translation: Vec3::new(50.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+
+        scene.update_all_world_transforms().unwrap();
+        scene.update_all_world_bounds(&assets).unwrap();
+
+        let planes = box_frustum(10.0);
+        let extracted = scene.extract_renderables_culled(&planes);
+
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted[0].node, inside);
+    }
+
+    #[test]
+    fn extract_renderables_culled_always_includes_always_visible() {
+        let mut scene = SceneGraph::new();
+        let (assets, mesh, material) = sample_assets();
+
+        let node = scene.create_node("always");
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_local_transform(
+                node,
+                Transform {
+                    translation: Vec3::new(50.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene.node_mut(node).unwrap().visibility = VisibilityMode::AlwaysVisible;
+        scene.update_all_world_transforms().unwrap();
+        scene.update_all_world_bounds(&assets).unwrap();
+
+        let planes = box_frustum(10.0);
+        let extracted = scene.extract_renderables_culled(&planes);
+
+        assert_eq!(extracted.len(), 1);
+    }
+
+    #[test]
+    fn extract_renderables_culled_always_excludes_hidden() {
+        let mut scene = SceneGraph::new();
+        let (assets, mesh, material) = sample_assets();
+
+        let node = scene.create_node("hidden");
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        // Inside frustum but explicitly hidden
+        scene.node_mut(node).unwrap().visibility = VisibilityMode::Hidden;
+        scene.update_all_world_transforms().unwrap();
+        scene.update_all_world_bounds(&assets).unwrap();
+
+        let planes = box_frustum(10.0);
+        let extracted = scene.extract_renderables_culled(&planes);
+
+        assert!(extracted.is_empty());
     }
 }

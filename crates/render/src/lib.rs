@@ -338,9 +338,22 @@ impl Renderer {
         assets: &AssetStore,
         active_camera: Option<NodeId>,
     ) -> Result<()> {
-        let draw_list = scene.extract_renderables();
         let extracted_camera = active_camera
             .and_then(|id| scene.extract_active_camera(id).ok());
+
+        let draw_list = if let Some(cam) = extracted_camera {
+            // Compute frustum planes from the camera's projection-view matrix and
+            // cull objects that are entirely outside it.
+            let aspect = self.surface_config.width as f32 / self.surface_config.height as f32;
+            let pose = decompose_pose(cam.world_transform);
+            let camera_value = rig_math::Camera { pose, projection: cam.projection };
+            let pv = camera_value.projection_view_matrix(aspect);
+            let planes = rig_scene::frustum_planes_from_projection_view(pv);
+            scene.extract_renderables_culled(&planes)
+        } else {
+            scene.extract_renderables()
+        };
+
         self.render_draw_list(assets, extracted_camera, &draw_list)
     }
 

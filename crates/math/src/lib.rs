@@ -82,6 +82,23 @@ impl BoundingSphere {
 
         Self { center, radius }
     }
+
+    /// Returns `true` when the sphere lies entirely on the negative side of
+    /// `plane` (i.e. the sphere is outside the half-space).
+    ///
+    /// `plane` is a `Vec4` where `.xyz` is the (already normalised) outward
+    /// normal and `.w` is the plane distance so that the signed distance of a
+    /// point `p` from the plane is `dot(p, plane.xyz) + plane.w`.
+    pub fn is_outside_plane(self, plane: Vec4) -> bool {
+        let signed_dist = self.center.dot(plane.truncate()) + plane.w;
+        signed_dist < -self.radius
+    }
+
+    /// Returns `true` when the sphere is outside **any** of the six frustum
+    /// planes, meaning it can be safely culled.
+    pub fn is_outside_frustum(self, planes: &[Vec4; 6]) -> bool {
+        planes.iter().any(|&p| self.is_outside_plane(p))
+    }
 }
 
 impl Default for BoundingSphere {
@@ -323,5 +340,58 @@ mod tests {
         let expected = camera.projection_matrix(4.0 / 3.0) * camera.view_matrix();
 
         approx_eq_mat4(actual, expected);
+    }
+
+    /// A plane with normal +Z at distance 0 (the XY-plane, positive side is +Z).
+    fn z_plane(dist: f32) -> Vec4 {
+        Vec4::new(0.0, 0.0, 1.0, -dist)
+    }
+
+    #[test]
+    fn sphere_outside_plane_when_entirely_on_negative_side() {
+        // Sphere at z = -5, radius 1. Plane is z=0 (normal +Z, w=0).
+        // Signed dist = -5 + 0 = -5, which is < -radius (-1), so outside.
+        let sphere = BoundingSphere { center: Vec3::new(0.0, 0.0, -5.0), radius: 1.0 };
+        assert!(sphere.is_outside_plane(z_plane(0.0)));
+    }
+
+    #[test]
+    fn sphere_inside_plane_returns_false() {
+        // Sphere at z = +5, radius 1. Signed dist = 5 > -1, so inside.
+        let sphere = BoundingSphere { center: Vec3::new(0.0, 0.0, 5.0), radius: 1.0 };
+        assert!(!sphere.is_outside_plane(z_plane(0.0)));
+    }
+
+    #[test]
+    fn sphere_straddling_plane_returns_false() {
+        // Sphere at z = 0, radius 2. Signed dist = 0, which is NOT < -2, so straddles.
+        let sphere = BoundingSphere { center: Vec3::ZERO, radius: 2.0 };
+        assert!(!sphere.is_outside_plane(z_plane(0.0)));
+    }
+
+    #[test]
+    fn sphere_outside_frustum_when_outside_any_plane() {
+        // Build a trivial "frustum" of 6 planes all with normal +X at x=0.
+        // Sphere at x=-5 radius 1 is outside all of them.
+        let planes = [Vec4::new(1.0, 0.0, 0.0, 0.0); 6];
+        let sphere = BoundingSphere { center: Vec3::new(-5.0, 0.0, 0.0), radius: 1.0 };
+        assert!(sphere.is_outside_frustum(&planes));
+    }
+
+    #[test]
+    fn sphere_inside_frustum_when_inside_all_planes() {
+        // Box [-1,1]^3. Each plane: signed dist = dot(p, normal) + w.
+        // For "x >= -1": normal = +X, w = 1  → dist at origin = 1 (inside).
+        // For "x <=  1": normal = -X, w = 1  → dist at origin = 1 (inside).
+        let planes = [
+            Vec4::new( 1.0,  0.0,  0.0,  1.0),  // x >= -1
+            Vec4::new(-1.0,  0.0,  0.0,  1.0),  // x <=  1
+            Vec4::new( 0.0,  1.0,  0.0,  1.0),  // y >= -1
+            Vec4::new( 0.0, -1.0,  0.0,  1.0),  // y <=  1
+            Vec4::new( 0.0,  0.0,  1.0,  1.0),  // z >= -1
+            Vec4::new( 0.0,  0.0, -1.0,  1.0),  // z <=  1
+        ];
+        let sphere = BoundingSphere { center: Vec3::ZERO, radius: 0.5 };
+        assert!(!sphere.is_outside_frustum(&planes));
     }
 }
