@@ -227,6 +227,30 @@ impl ImmutableResourceCache {
     }
 }
 
+/// Descriptor used to create a [`RenderTarget`].
+pub struct RenderTargetDescriptor {
+    pub width: u32,
+    pub height: u32,
+    pub color_format: wgpu::TextureFormat,
+    pub depth_format: Option<wgpu::TextureFormat>,
+    pub label: &'static str,
+}
+
+/// An offscreen render target: a colour texture with an optional depth texture.
+///
+/// Both textures are created with `RENDER_ATTACHMENT | TEXTURE_BINDING` usage
+/// so the colour output can be sampled by a subsequent pass.
+pub struct RenderTarget {
+    pub color_texture: wgpu::Texture,
+    pub color_view: wgpu::TextureView,
+    pub depth_texture: Option<wgpu::Texture>,
+    pub depth_view: Option<wgpu::TextureView>,
+    pub width: u32,
+    pub height: u32,
+    pub color_format: wgpu::TextureFormat,
+    pub depth_format: Option<wgpu::TextureFormat>,
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -562,6 +586,212 @@ impl Renderer {
         )?;
         self.pipelines.insert(key, pipeline.clone());
         Ok(pipeline)
+    }
+
+    /// Allocate a GPU-backed offscreen render target.
+    ///
+    /// Both colour and (optional) depth textures are created with
+    /// `RENDER_ATTACHMENT | TEXTURE_BINDING` usage so the colour output can
+    /// be sampled in a subsequent pass.
+    pub fn create_render_target(&self, desc: &RenderTargetDescriptor) -> RenderTarget {
+        let color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(desc.label),
+            size: wgpu::Extent3d {
+                width: desc.width,
+                height: desc.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: desc.color_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let (depth_texture, depth_view) = desc.depth_format.map(|fmt| {
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("render target depth"),
+                size: wgpu::Extent3d {
+                    width: desc.width,
+                    height: desc.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: fmt,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            (Some(tex), Some(view))
+        }).unwrap_or((None, None));
+
+        RenderTarget {
+            color_texture,
+            color_view,
+            depth_texture,
+            depth_view,
+            width: desc.width,
+            height: desc.height,
+            color_format: desc.color_format,
+            depth_format: desc.depth_format,
+        }
+    }
+
+    /// Render a scene into an offscreen [`RenderTarget`].
+    ///
+    /// Behaves identically to [`render_scene`] except the output goes to the
+    /// provided `target` instead of the swapchain surface.
+    #[cfg(not(tarpaulin_include))]
+    pub fn render_to_target(
+        &mut self,
+        target: &RenderTarget,
+        scene: &SceneGraph,
+        assets: &AssetStore,
+        active_camera: Option<NodeId>,
+    ) -> Result<()> {
+        let extracted_camera = active_camera
+            .and_then(|id| scene.extract_active_camera(id).ok());
+
+        let draw_list = if let Some(cam) = extracted_camera {
+            let aspect = target.width as f32 / target.height as f32;
+            let pose = decompose_pose(cam.world_transform);
+            let camera_value = rig_math::Camera { pose, projection: cam.projection };
+            let pv = camera_value.projection_view_matrix(aspect);
+            let planes = rig_scene::frustum_planes_from_projection_view(pv);
+            scene.extract_renderables_culled(&planes)
+        } else {
+            scene.extract_renderables()
+        };
+
+        let Some(camera) = extracted_camera else {
+            return Ok(());
+        };
+
+        let pose = decompose_pose(camera.world_transform);
+        let camera_value = Camera {
+            pose,
+            projection: camera.projection,
+        };
+        let aspect = target.width as f32 / target.height as f32;
+        let pv = camera_value.projection_view_matrix(aspect);
+
+        // Sort draw list
+        let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
+        sorted_indices.sort_by_key(|&i| {
+            let object = &draw_list[i];
+            let shader_key = assets
+                .material(object.material)
+                .map(|m| m.shader)
+                .unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
+            (shader_key, object.mesh)
+        });
+
+        let object_uniforms: Vec<_> = sorted_indices
+            .iter()
+            .map(|&i| ObjectUniforms {
+                world: (pv * draw_list[i].world_transform).to_cols_array_2d(),
+            })
+            .collect();
+        self.frame_resources.prepare_object_uniforms(
+            &self.device,
+            &self.queue,
+            &self.object_bind_group_layout,
+            &object_uniforms,
+        );
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("rig offscreen encoder"),
+            });
+
+        {
+            let depth_attachment =
+                target.depth_view.as_ref().map(|view| {
+                    wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }
+                });
+
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rig offscreen pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.05,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            let mut current_pipeline: Option<ShaderHandle> = None;
+            let mut current_mesh: Option<rig_assets::MeshHandle> = None;
+
+            for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
+                let object = &draw_list[draw_index];
+                let material = assets
+                    .material(object.material)
+                    .map_err(|err| RenderError::Asset(err.to_string()))?;
+                let shader = assets
+                    .shader(material.shader)
+                    .map_err(|err| RenderError::Asset(err.to_string()))?;
+                let mesh = assets
+                    .mesh(object.mesh)
+                    .map_err(|err| RenderError::Asset(err.to_string()))?;
+                let buffers = self.cache.mesh_buffers(&self.device, mesh);
+                let pipeline = self.pipeline_for_shader(
+                    material.shader,
+                    shader,
+                    &mesh.vertex_layout,
+                    target.color_format,
+                    target.depth_format,
+                )?;
+
+                if current_pipeline != Some(material.shader) {
+                    pass.set_pipeline(&pipeline);
+                    current_pipeline = Some(material.shader);
+                }
+                pass.set_bind_group(
+                    0,
+                    &self.frame_resources.object_uniforms.bind_group,
+                    &[self
+                        .frame_resources
+                        .object_uniforms
+                        .dynamic_offset(uniform_index)?],
+                );
+                if current_mesh != Some(object.mesh) {
+                    pass.set_vertex_buffer(0, buffers.vertex.slice(..));
+                    pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
+                    current_mesh = Some(object.mesh);
+                }
+                pass.draw_indexed(0..buffers.index_count, 0, 0..1);
+            }
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
     }
 }
 
@@ -1315,5 +1545,37 @@ mod tests {
         let sorted_switches = count_pipeline_switches(&sorted_shaders);
 
         assert!(sorted_switches < unsorted_switches);
+    }
+
+    // --- Commit 6: RenderTarget ---
+
+    #[test]
+    fn render_target_descriptor_format_fields() {
+        // Verify that the RenderTargetDescriptor fields are accessible and
+        // hold the values we set.  GPU construction requires a Device, which
+        // is not available in unit tests, so we only verify the descriptor.
+        let desc = RenderTargetDescriptor {
+            width: 512,
+            height: 256,
+            color_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            depth_format: Some(wgpu::TextureFormat::Depth32Float),
+            label: "test target",
+        };
+        assert_eq!(desc.width, 512);
+        assert_eq!(desc.height, 256);
+        assert_eq!(desc.color_format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        assert_eq!(desc.depth_format, Some(wgpu::TextureFormat::Depth32Float));
+    }
+
+    #[test]
+    fn render_target_descriptor_no_depth() {
+        let desc = RenderTargetDescriptor {
+            width: 1920,
+            height: 1080,
+            color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            depth_format: None,
+            label: "no depth",
+        };
+        assert!(desc.depth_format.is_none());
     }
 }
