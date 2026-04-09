@@ -578,6 +578,7 @@ mod tests {
             },
             vertex_data: Arc::from([0_u8; 24]),
             index_data: Arc::from([0_u8; 6]),
+            index_format: rig_assets::IndexFormat::Uint16,
             local_bounds: BoundingSphere {
                 center: Vec3::ZERO,
                 radius: 1.0,

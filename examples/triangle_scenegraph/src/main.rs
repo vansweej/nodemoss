@@ -5,7 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use rig_app::{
     Application, CameraRig, RenderContext, StartupContext, UpdateContext,
     rig_assets::{
-        MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
+        IndexFormat, MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat,
+        VertexLayout,
     },
     rig_math::{BoundingSphere, Projection, Quat, Transform, Vec3},
     rig_scene::{CameraComponent, NodeId, Renderable},
@@ -66,6 +67,7 @@ impl Application for TriangleSceneApp {
             },
             vertex_data: Arc::from(bytemuck::cast_slice(&VERTICES)),
             index_data: Arc::from(bytemuck::cast_slice(&INDICES)),
+            index_format: IndexFormat::Uint16,
             local_bounds: BoundingSphere {
                 center: Vec3::ZERO,
                 radius: 0.75,

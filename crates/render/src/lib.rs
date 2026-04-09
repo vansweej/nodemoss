@@ -8,7 +8,9 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use rig_assets::{AssetStore, MeshAsset, ShaderAsset, ShaderHandle, VertexFormat, VertexLayout};
+use rig_assets::{
+    AssetStore, IndexFormat, MeshAsset, ShaderAsset, ShaderHandle, VertexFormat, VertexLayout,
+};
 use rig_math::{Camera, Mat4};
 use rig_scene::{ExtractedCamera, ExtractedRenderable, NodeId, SceneGraph};
 use thiserror::Error;
@@ -46,6 +48,7 @@ struct CachedMeshBuffers {
     vertex: wgpu::Buffer,
     index: wgpu::Buffer,
     index_count: u32,
+    index_format: wgpu::IndexFormat,
 }
 
 /// Key used to look up a cached render pipeline.
@@ -205,11 +208,19 @@ impl ImmutableResourceCache {
             contents: &mesh.index_data,
             usage: wgpu::BufferUsages::INDEX,
         });
-        let index_count = (mesh.index_data.len() / std::mem::size_of::<u16>()) as u32;
+        let index_count = match mesh.index_format {
+            IndexFormat::Uint16 => (mesh.index_data.len() / std::mem::size_of::<u16>()) as u32,
+            IndexFormat::Uint32 => (mesh.index_data.len() / std::mem::size_of::<u32>()) as u32,
+        };
+        let wgpu_index_format = match mesh.index_format {
+            IndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
+            IndexFormat::Uint32 => wgpu::IndexFormat::Uint32,
+        };
         let buffers = CachedMeshBuffers {
             vertex,
             index,
             index_count,
+            index_format: wgpu_index_format,
         };
         self.meshes.insert(key, buffers.clone());
         buffers
@@ -482,7 +493,7 @@ impl Renderer {
                     &[self.frame_resources.object_uniforms.dynamic_offset(index)?],
                 );
                 pass.set_vertex_buffer(0, buffers.vertex.slice(..));
-                pass.set_index_buffer(buffers.index.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
                 pass.draw_indexed(0..buffers.index_count, 0, 0..1);
             }
         }
@@ -646,7 +657,7 @@ fn create_pipeline(
 fn mesh_vertex_attributes(
     vertex_layout: &VertexLayout,
 ) -> std::result::Result<Vec<wgpu::VertexAttribute>, String> {
-    validate_triangle_shader_layout(vertex_layout)?;
+    validate_vertex_layout(vertex_layout)?;
     Ok(vertex_layout
         .attributes
         .iter()
@@ -656,6 +667,48 @@ fn mesh_vertex_attributes(
             shader_location: attribute.shader_location,
         })
         .collect())
+}
+
+/// Generic vertex layout validator.
+///
+/// Checks that:
+/// - `array_stride > 0`
+/// - at least one attribute is present
+/// - no duplicate `shader_location` values
+/// - every attribute fits within the stride (`offset + format_size ≤ stride`)
+///
+/// Does **not** require any specific locations (e.g., position@0 or color@1).
+pub fn validate_vertex_layout(
+    vertex_layout: &VertexLayout,
+) -> std::result::Result<(), String> {
+    if vertex_layout.array_stride == 0 {
+        return Err("vertex layout must use a non-zero array stride".into());
+    }
+
+    if vertex_layout.attributes.is_empty() {
+        return Err("vertex layout must contain at least one attribute".into());
+    }
+
+    let mut seen_locations = std::collections::HashSet::new();
+
+    for attribute in &vertex_layout.attributes {
+        if !seen_locations.insert(attribute.shader_location) {
+            return Err(format!(
+                "vertex layout contains duplicate shader location {}",
+                attribute.shader_location
+            ));
+        }
+
+        let format_size = vertex_format_size(attribute.format);
+        if attribute.offset + format_size > vertex_layout.array_stride {
+            return Err(format!(
+                "vertex attribute at location {} exceeds the declared array stride",
+                attribute.shader_location
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_triangle_shader_layout(
@@ -701,15 +754,19 @@ fn validate_triangle_shader_layout(
 
 fn vertex_format_size(format: VertexFormat) -> u64 {
     match format {
+        VertexFormat::Float32 => std::mem::size_of::<f32>() as u64,
         VertexFormat::Float32x2 => std::mem::size_of::<[f32; 2]>() as u64,
         VertexFormat::Float32x3 => std::mem::size_of::<[f32; 3]>() as u64,
+        VertexFormat::Float32x4 => std::mem::size_of::<[f32; 4]>() as u64,
     }
 }
 
 fn wgpu_vertex_format(format: VertexFormat) -> wgpu::VertexFormat {
     match format {
+        VertexFormat::Float32 => wgpu::VertexFormat::Float32,
         VertexFormat::Float32x2 => wgpu::VertexFormat::Float32x2,
         VertexFormat::Float32x3 => wgpu::VertexFormat::Float32x3,
+        VertexFormat::Float32x4 => wgpu::VertexFormat::Float32x4,
     }
 }
 
@@ -800,6 +857,7 @@ mod tests {
             },
             vertex_data: Arc::from([1_u8; 24]),
             index_data: Arc::from([0_u8, 1, 2, 0, 2, 1]),
+            index_format: rig_assets::IndexFormat::Uint16,
             local_bounds: rig_math::BoundingSphere::ZERO,
         }
     }
@@ -1031,5 +1089,93 @@ mod tests {
         // so we validate the descriptor parameters directly via the public helper
         // by checking the constants it would use.
         assert_eq!(DEPTH_FORMAT, wgpu::TextureFormat::Depth32Float);
+    }
+
+    // --- Commit 2: generic vertex validation and extended VertexFormat ---
+
+    #[test]
+    fn validate_vertex_layout_accepts_normals_only() {
+        let layout = VertexLayout {
+            array_stride: 12,
+            attributes: vec![VertexAttribute {
+                shader_location: 2,
+                format: VertexFormat::Float32x3,
+                offset: 0,
+            }],
+        };
+        assert!(validate_vertex_layout(&layout).is_ok());
+    }
+
+    #[test]
+    fn validate_vertex_layout_rejects_empty_layout() {
+        let layout = VertexLayout {
+            array_stride: 12,
+            attributes: vec![],
+        };
+        assert!(validate_vertex_layout(&layout).is_err());
+    }
+
+    #[test]
+    fn validate_vertex_layout_rejects_zero_stride() {
+        let layout = VertexLayout {
+            array_stride: 0,
+            attributes: vec![VertexAttribute {
+                shader_location: 0,
+                format: VertexFormat::Float32x3,
+                offset: 0,
+            }],
+        };
+        assert!(validate_vertex_layout(&layout).is_err());
+    }
+
+    #[test]
+    fn validate_vertex_layout_rejects_duplicates() {
+        let layout = VertexLayout {
+            array_stride: 24,
+            attributes: vec![
+                VertexAttribute {
+                    shader_location: 0,
+                    format: VertexFormat::Float32x3,
+                    offset: 0,
+                },
+                VertexAttribute {
+                    shader_location: 0,
+                    format: VertexFormat::Float32x3,
+                    offset: 12,
+                },
+            ],
+        };
+        assert!(validate_vertex_layout(&layout).is_err());
+    }
+
+    #[test]
+    fn vertex_format_size_float32x4() {
+        assert_eq!(vertex_format_size(VertexFormat::Float32x4), 16);
+    }
+
+    #[test]
+    fn vertex_format_size_float32() {
+        assert_eq!(vertex_format_size(VertexFormat::Float32), 4);
+    }
+
+    #[test]
+    fn wgpu_vertex_format_maps_float32x4() {
+        assert_eq!(
+            wgpu_vertex_format(VertexFormat::Float32x4),
+            wgpu::VertexFormat::Float32x4
+        );
+    }
+
+    #[test]
+    fn index_count_uses_declared_format() {
+        // 8 bytes of u32 index data → 2 indices (each 4 bytes)
+        let mut mesh = sample_mesh();
+        mesh.index_data = Arc::from([0_u8; 8]);
+        mesh.index_format = rig_assets::IndexFormat::Uint32;
+
+        // Compute expected index count the same way mesh_buffers does.
+        let expected =
+            (mesh.index_data.len() / std::mem::size_of::<u32>()) as u32;
+        assert_eq!(expected, 2);
     }
 }

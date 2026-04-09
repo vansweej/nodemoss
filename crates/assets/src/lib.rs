@@ -85,8 +85,20 @@ pub struct VertexLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VertexFormat {
+    Float32,
     Float32x2,
     Float32x3,
+    Float32x4,
+}
+
+/// Index element width used in a mesh's index buffer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum IndexFormat {
+    /// 16-bit unsigned indices (max 65 535 vertices). Default.
+    #[default]
+    Uint16,
+    /// 32-bit unsigned indices for meshes with more than 65 535 vertices.
+    Uint32,
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +106,8 @@ pub struct MeshAsset {
     pub vertex_layout: VertexLayout,
     pub vertex_data: Arc<[u8]>,
     pub index_data: Arc<[u8]>,
+    /// Index element format. Defaults to `Uint16` for backward compatibility.
+    pub index_format: IndexFormat,
     pub local_bounds: BoundingSphere,
 }
 
@@ -304,6 +318,7 @@ mod tests {
             vertex_layout: sample_layout(),
             vertex_data: Arc::from([0_u8; 24]),
             index_data: Arc::from([0_u8; 6]),
+            index_format: IndexFormat::Uint16,
             local_bounds: BoundingSphere {
                 center: Vec3::ZERO,
                 radius: 1.0,
