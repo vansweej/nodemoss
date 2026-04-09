@@ -17,6 +17,9 @@ pub struct ShaderHandle(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureHandle(u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SamplerHandle(u32);
+
 impl MeshHandle {
     pub fn index(self) -> usize {
         self.0 as usize
@@ -36,6 +39,12 @@ impl ShaderHandle {
 }
 
 impl TextureHandle {
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl SamplerHandle {
     pub fn index(self) -> usize {
         self.0 as usize
     }
@@ -99,6 +108,8 @@ impl Default for MaterialParams {
 pub struct MaterialAsset {
     pub shader: ShaderHandle,
     pub parameters: MaterialParams,
+    /// Texture slots: each entry is a `(texture, sampler)` pair.
+    pub textures: Vec<(TextureHandle, SamplerHandle)>,
 }
 
 #[derive(Clone, Debug)]
@@ -106,10 +117,53 @@ pub struct ShaderAsset {
     pub source: Arc<str>,
 }
 
+/// Pixel format for texture data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextureFormat {
+    Rgba8Unorm,
+    Rgba8UnormSrgb,
+}
+
+/// Texture wrapping mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AddressMode {
+    ClampToEdge,
+    Repeat,
+    MirrorRepeat,
+}
+
+/// Texture filtering mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FilterMode {
+    Nearest,
+    Linear,
+}
+
+/// Renderer-agnostic sampler description.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SamplerDescriptor {
+    pub address_mode_u: AddressMode,
+    pub address_mode_v: AddressMode,
+    pub mag_filter: FilterMode,
+    pub min_filter: FilterMode,
+}
+
+impl Default for SamplerDescriptor {
+    fn default() -> Self {
+        Self {
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TextureAsset {
     pub width: u32,
     pub height: u32,
+    pub format: TextureFormat,
     pub data: Arc<[u8]>,
 }
 
@@ -123,6 +177,8 @@ pub enum AssetError {
     InvalidShader,
     #[error("invalid texture handle")]
     InvalidTexture,
+    #[error("invalid sampler handle")]
+    InvalidSampler,
 }
 
 #[derive(Default)]
@@ -131,6 +187,7 @@ pub struct AssetStore {
     materials: Vec<MaterialAsset>,
     shaders: Vec<ShaderAsset>,
     textures: Vec<TextureAsset>,
+    samplers: Vec<SamplerDescriptor>,
 }
 
 impl AssetStore {
@@ -162,6 +219,12 @@ impl AssetStore {
         handle
     }
 
+    pub fn add_sampler(&mut self, sampler: SamplerDescriptor) -> SamplerHandle {
+        let handle = SamplerHandle(self.samplers.len() as u32);
+        self.samplers.push(sampler);
+        handle
+    }
+
     pub fn mesh(&self, handle: MeshHandle) -> Result<&MeshAsset, AssetError> {
         self.meshes
             .get(handle.index())
@@ -184,6 +247,12 @@ impl AssetStore {
         self.textures
             .get(handle.index())
             .ok_or(AssetError::InvalidTexture)
+    }
+
+    pub fn sampler(&self, handle: SamplerHandle) -> Result<&SamplerDescriptor, AssetError> {
+        self.samplers
+            .get(handle.index())
+            .ok_or(AssetError::InvalidSampler)
     }
 }
 
@@ -258,8 +327,8 @@ mod tests {
             source: Arc::from("shader"),
         });
 
-        let first = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default() });
-        let second = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default() });
+        let first = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default(), textures: vec![] });
+        let second = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default(), textures: vec![] });
 
         assert_eq!(first.index(), 0);
         assert_eq!(second.index(), 1);
@@ -281,12 +350,14 @@ mod tests {
         let handle = store.add_texture(TextureAsset {
             width: 2,
             height: 3,
+            format: TextureFormat::Rgba8Unorm,
             data: Arc::from([255_u8, 0, 0, 255]),
         });
 
         let texture = store.texture(handle).unwrap();
         assert_eq!(texture.width, 2);
         assert_eq!(texture.height, 3);
+        assert_eq!(texture.format, TextureFormat::Rgba8Unorm);
     }
 
     #[test]
@@ -327,5 +398,67 @@ mod tests {
             store.texture(TextureHandle(99)),
             Err(AssetError::InvalidTexture)
         ));
+    }
+
+    #[test]
+    fn handles_expose_sampler_index() {
+        assert_eq!(SamplerHandle(7).index(), 7);
+    }
+
+    #[test]
+    fn sampler_descriptor_default_is_linear_clamp() {
+        let desc = SamplerDescriptor::default();
+        assert_eq!(desc.mag_filter, FilterMode::Linear);
+        assert_eq!(desc.min_filter, FilterMode::Linear);
+        assert_eq!(desc.address_mode_u, AddressMode::ClampToEdge);
+        assert_eq!(desc.address_mode_v, AddressMode::ClampToEdge);
+    }
+
+    #[test]
+    fn add_sampler_returns_retrievable_descriptor() {
+        let mut store = AssetStore::new();
+        let desc = SamplerDescriptor {
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            mag_filter: FilterMode::Nearest,
+            min_filter: FilterMode::Nearest,
+        };
+
+        let handle = store.add_sampler(desc);
+
+        assert_eq!(handle.index(), 0);
+        assert_eq!(*store.sampler(handle).unwrap(), desc);
+    }
+
+    #[test]
+    fn invalid_sampler_handle_returns_error() {
+        let store = AssetStore::new();
+
+        assert!(matches!(
+            store.sampler(SamplerHandle(99)),
+            Err(AssetError::InvalidSampler)
+        ));
+    }
+
+    #[test]
+    fn material_with_textures_stores_pairs() {
+        let mut store = AssetStore::new();
+        let shader = store.add_shader(ShaderAsset { source: Arc::from("s") });
+        let tex = store.add_texture(TextureAsset {
+            width: 1,
+            height: 1,
+            format: TextureFormat::Rgba8UnormSrgb,
+            data: Arc::from([255_u8, 255, 255, 255]),
+        });
+        let samp = store.add_sampler(SamplerDescriptor::default());
+        let mat = store.add_material(MaterialAsset {
+            shader,
+            parameters: MaterialParams::default(),
+            textures: vec![(tex, samp)],
+        });
+
+        let retrieved = store.material(mat).unwrap();
+        assert_eq!(retrieved.textures.len(), 1);
+        assert_eq!(retrieved.textures[0], (tex, samp));
     }
 }

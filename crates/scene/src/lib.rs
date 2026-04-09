@@ -559,7 +559,7 @@ mod tests {
         let shader = assets.add_shader(ShaderAsset {
             source: Arc::from("shader"),
         });
-        let material = assets.add_material(MaterialAsset { shader, parameters: rig_assets::MaterialParams::default() });
+        let material = assets.add_material(MaterialAsset { shader, parameters: rig_assets::MaterialParams::default(), textures: vec![] });
         let mesh = assets.add_mesh(MeshAsset {
             vertex_layout: VertexLayout {
                 array_stride: 24,
