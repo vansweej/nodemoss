@@ -4,13 +4,13 @@ use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use anyhow::Result;
 pub use rig_assets;
+use rig_assets::AssetStore;
 pub use rig_math;
 pub use rig_render;
-pub use rig_scene;
-pub use winit;
-use rig_assets::AssetStore;
 use rig_render::{Renderer, TRIANGLE_SHADER};
+pub use rig_scene;
 use rig_scene::{NodeId, SceneGraph};
+pub use winit;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -26,7 +26,11 @@ pub trait Application: Sized + 'static {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()>;
 
-    fn on_window_event(&mut self, _ctx: &mut UpdateContext<'_>, _event: &WindowEvent) -> Result<()> {
+    fn on_window_event(
+        &mut self,
+        _ctx: &mut UpdateContext<'_>,
+        _event: &WindowEvent,
+    ) -> Result<()> {
         Ok(())
     }
 }

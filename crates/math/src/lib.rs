@@ -145,7 +145,10 @@ mod tests {
     use super::*;
 
     fn approx_eq_vec3(left: Vec3, right: Vec3) {
-        assert!(left.abs_diff_eq(right, 1e-5), "left={left:?} right={right:?}");
+        assert!(
+            left.abs_diff_eq(right, 1e-5),
+            "left={left:?} right={right:?}"
+        );
     }
 
     fn approx_eq_mat4(left: Mat4, right: Mat4) {

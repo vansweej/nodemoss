@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use rig_assets::{AssetStore, MaterialHandle, MeshHandle};
-use rig_math::{BoundingSphere, Mat4, Projection, Vec3, Vec4, Transform};
+use rig_math::{BoundingSphere, Mat4, Projection, Transform, Vec3, Vec4};
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -32,8 +32,15 @@ pub struct CameraComponent {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LightKind {
-    Directional { color: Vec3, intensity: f32 },
-    Point { color: Vec3, intensity: f32, range: f32 },
+    Directional {
+        color: Vec3,
+        intensity: f32,
+    },
+    Point {
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -263,7 +270,11 @@ impl SceneGraph {
         Ok(())
     }
 
-    fn update_world_transforms_with_parent(&mut self, node: NodeId, parent_world: Mat4) -> Result<()> {
+    fn update_world_transforms_with_parent(
+        &mut self,
+        node: NodeId,
+        parent_world: Mat4,
+    ) -> Result<()> {
         let local = self.node(node)?.local_transform.to_mat4();
         let world = parent_world * local;
         self.node_mut(node)?.world_transform = world;
@@ -289,13 +300,18 @@ impl SceneGraph {
         Ok(())
     }
 
-    fn compute_world_bounds(&mut self, node: NodeId, assets: &AssetStore) -> Result<BoundingSphere> {
+    fn compute_world_bounds(
+        &mut self,
+        node: NodeId,
+        assets: &AssetStore,
+    ) -> Result<BoundingSphere> {
         let child_ids = self.children(node)?;
         let mut bound = if let Some(renderable) = self.renderables.get(&node).copied() {
             let mesh = assets
                 .mesh(renderable.mesh)
                 .map_err(|_| SceneError::MissingMeshAsset)?;
-            mesh.local_bounds.transform_by(self.node(node)?.world_transform)
+            mesh.local_bounds
+                .transform_by(self.node(node)?.world_transform)
         } else {
             BoundingSphere::ZERO
         };
@@ -332,7 +348,10 @@ impl SceneGraph {
     }
 
     fn slot(&self, id: NodeId) -> Result<&NodeSlot> {
-        let slot = self.nodes.get(id.index as usize).ok_or(SceneError::InvalidNode)?;
+        let slot = self
+            .nodes
+            .get(id.index as usize)
+            .ok_or(SceneError::InvalidNode)?;
         if slot.generation != id.generation || slot.node.is_none() {
             return Err(SceneError::InvalidNode);
         }
@@ -355,7 +374,10 @@ impl SceneGraph {
     }
 
     fn node_mut(&mut self, id: NodeId) -> Result<&mut SceneNode> {
-        self.slot_mut(id)?.node.as_mut().ok_or(SceneError::InvalidNode)
+        self.slot_mut(id)?
+            .node
+            .as_mut()
+            .ok_or(SceneError::InvalidNode)
     }
 
     fn root_nodes(&self) -> Vec<NodeId> {
@@ -400,18 +422,16 @@ pub fn frustum_planes_from_projection_view(matrix: Mat4) -> [Vec4; 6] {
 fn normalize_plane(plane: Vec4) -> Vec4 {
     let normal = plane.truncate();
     let length = normal.length();
-    if length > 0.0 {
-        plane / length
-    } else {
-        plane
-    }
+    if length > 0.0 { plane / length } else { plane }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use rig_assets::{MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout};
+    use rig_assets::{
+        MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
+    };
     use rig_math::{Quat, Vec3};
 
     use super::*;
@@ -449,7 +469,10 @@ mod tests {
     }
 
     fn approx_eq_vec3(left: Vec3, right: Vec3) {
-        assert!(left.abs_diff_eq(right, 1e-5), "left={left:?} right={right:?}");
+        assert!(
+            left.abs_diff_eq(right, 1e-5),
+            "left={left:?} right={right:?}"
+        );
     }
 
     #[test]
@@ -469,7 +492,10 @@ mod tests {
         scene.destroy_node(first).unwrap();
         let second = scene.create_node("second");
 
-        assert!(matches!(scene.node_name(first), Err(SceneError::InvalidNode)));
+        assert!(matches!(
+            scene.node_name(first),
+            Err(SceneError::InvalidNode)
+        ));
         assert_eq!(scene.node_name(second).unwrap(), "second");
         assert_ne!(first, second);
     }
@@ -504,7 +530,10 @@ mod tests {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("node");
 
-        assert!(matches!(scene.attach_child(node, node), Err(SceneError::SelfParent)));
+        assert!(matches!(
+            scene.attach_child(node, node),
+            Err(SceneError::SelfParent)
+        ));
     }
 
     #[test]
@@ -573,11 +602,16 @@ mod tests {
             },
         };
 
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         scene.set_camera(node, camera_component).unwrap();
 
         assert_eq!(scene.node_name(node).unwrap(), "triangle");
-        assert_eq!(scene.renderable(node).unwrap().copied(), Some(Renderable { mesh, material }));
+        assert_eq!(
+            scene.renderable(node).unwrap().copied(),
+            Some(Renderable { mesh, material })
+        );
         assert_eq!(scene.camera(node).unwrap().copied(), Some(camera_component));
     }
 
@@ -587,29 +621,34 @@ mod tests {
         let root = scene.create_node("root");
         let child = scene.create_node("child");
         scene.attach_child(root, child).unwrap();
-        scene.set_local_transform(
-            root,
-            Transform {
-                translation: Vec3::new(1.0, 0.0, 0.0),
-                rotation: Quat::IDENTITY,
-                scale: Vec3::ONE,
-            },
-        )
-        .unwrap();
-        scene.set_local_transform(
-            child,
-            Transform {
-                translation: Vec3::new(0.0, 2.0, 0.0),
-                rotation: Quat::IDENTITY,
-                scale: Vec3::ONE,
-            },
-        )
-        .unwrap();
+        scene
+            .set_local_transform(
+                root,
+                Transform {
+                    translation: Vec3::new(1.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                child,
+                Transform {
+                    translation: Vec3::new(0.0, 2.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
 
         scene.update_world_transforms(root).unwrap();
 
         approx_eq_vec3(
-            scene.world_transform(child).unwrap().transform_point3(Vec3::ZERO),
+            scene
+                .world_transform(child)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
             Vec3::new(1.0, 2.0, 0.0),
         );
     }
@@ -643,11 +682,17 @@ mod tests {
         scene.update_all_world_transforms().unwrap();
 
         approx_eq_vec3(
-            scene.world_transform(left).unwrap().transform_point3(Vec3::ZERO),
+            scene
+                .world_transform(left)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
             Vec3::new(1.0, 0.0, 0.0),
         );
         approx_eq_vec3(
-            scene.world_transform(right).unwrap().transform_point3(Vec3::ZERO),
+            scene
+                .world_transform(right)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
             Vec3::new(0.0, 1.0, 0.0),
         );
     }
@@ -659,7 +704,9 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(child, Renderable { mesh, material })
+            .unwrap();
         scene
             .set_local_transform(
                 child,
@@ -687,13 +734,7 @@ mod tests {
         let assets = AssetStore::new();
         let node = scene.create_node("node");
         scene
-            .set_renderable(
-                node,
-                Renderable {
-                    mesh,
-                    material,
-                },
-            )
+            .set_renderable(node, Renderable { mesh, material })
             .unwrap();
 
         assert!(matches!(
@@ -707,7 +748,9 @@ mod tests {
         let mut scene = SceneGraph::new();
         let (_, mesh, material) = sample_assets();
         let node = scene.create_node("hidden");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         scene.node_mut(node).unwrap().visibility = VisibilityMode::Hidden;
 
         let extracted = scene.extract_renderables();

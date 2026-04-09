@@ -134,7 +134,9 @@ impl AssetStore {
     }
 
     pub fn mesh(&self, handle: MeshHandle) -> Result<&MeshAsset, AssetError> {
-        self.meshes.get(handle.index()).ok_or(AssetError::InvalidMesh)
+        self.meshes
+            .get(handle.index())
+            .ok_or(AssetError::InvalidMesh)
     }
 
     pub fn material(&self, handle: MaterialHandle) -> Result<&MaterialAsset, AssetError> {
@@ -214,7 +216,10 @@ mod tests {
         let handle = store.add_mesh(mesh.clone());
 
         assert_eq!(handle.index(), 0);
-        assert_eq!(store.mesh(handle).unwrap().vertex_layout, mesh.vertex_layout);
+        assert_eq!(
+            store.mesh(handle).unwrap().vertex_layout,
+            mesh.vertex_layout
+        );
     }
 
     #[test]
@@ -259,7 +264,10 @@ mod tests {
     fn invalid_mesh_handle_returns_error() {
         let store = AssetStore::new();
 
-        assert!(matches!(store.mesh(MeshHandle(99)), Err(AssetError::InvalidMesh)));
+        assert!(matches!(
+            store.mesh(MeshHandle(99)),
+            Err(AssetError::InvalidMesh)
+        ));
     }
 
     #[test]

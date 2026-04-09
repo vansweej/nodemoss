@@ -1,13 +1,13 @@
 //! Concrete `wgpu` renderer for the rig framework.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     sync::Arc,
 };
 
 use bytemuck::{Pod, Zeroable};
-use rig_assets::{AssetStore, MeshAsset, VertexFormat};
+use rig_assets::{AssetStore, MeshAsset, VertexFormat, VertexLayout};
 use rig_math::{Camera, Mat4};
 use rig_scene::{ExtractedRenderable, NodeId, SceneGraph};
 use thiserror::Error;
@@ -85,7 +85,9 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    shader: wgpu::ShaderModule,
+    pipeline_layout: wgpu::PipelineLayout,
+    pipelines: HashMap<VertexLayout, wgpu::RenderPipeline>,
     object_bind_group_layout: wgpu::BindGroupLayout,
     window: Arc<Window>,
     cache: ImmutableResourceCache,
@@ -147,19 +149,20 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
-        let object_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("object bind group layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let object_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("object bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rig render pipeline layout"),
@@ -167,46 +170,14 @@ impl Renderer {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("rig render pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[triangle_vertex_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
         Ok(Self {
             surface,
             device,
             queue,
             surface_config,
-            pipeline,
+            shader,
+            pipeline_layout,
+            pipelines: HashMap::new(),
             object_bind_group_layout,
             window,
             cache: ImmutableResourceCache::default(),
@@ -255,7 +226,11 @@ impl Renderer {
             .map_err(|_| RenderError::InvalidCamera)?
             .copied()
             .ok_or(RenderError::InvalidCamera)?;
-        let pose = decompose_pose(scene.world_transform(active_camera).map_err(|_| RenderError::InvalidCamera)?);
+        let pose = decompose_pose(
+            scene
+                .world_transform(active_camera)
+                .map_err(|_| RenderError::InvalidCamera)?,
+        );
         let camera = Camera {
             pose,
             projection: camera_component.projection,
@@ -307,7 +282,6 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            pass.set_pipeline(&self.pipeline);
             for object in draw_list {
                 let material = assets
                     .material(object.material)
@@ -318,21 +292,19 @@ impl Renderer {
                 let mesh = assets
                     .mesh(object.mesh)
                     .map_err(|err| RenderError::Asset(err.to_string()))?;
-                if !validate_triangle_layout(mesh) {
-                    return Err(RenderError::Asset(
-                        "renderer currently expects position+color triangle vertex layout".into(),
-                    ));
-                }
                 let buffers = self.cache.mesh_buffers(&self.device, mesh);
+                let pipeline = self.pipeline_for_layout(&mesh.vertex_layout)?;
 
                 let object_uniforms = ObjectUniforms {
                     world: (pv * object.world_transform).to_cols_array_2d(),
                 };
-                let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("object uniforms"),
-                    contents: bytemuck::bytes_of(&object_uniforms),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+                let uniform_buffer =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("object uniforms"),
+                            contents: bytemuck::bytes_of(&object_uniforms),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
                 let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("object bind group"),
                     layout: &self.object_bind_group_layout,
@@ -342,6 +314,7 @@ impl Renderer {
                     }],
                 });
 
+                pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &bind_group, &[]);
                 pass.set_vertex_buffer(0, buffers.vertex.slice(..));
                 pass.set_index_buffer(buffers.index.slice(..), wgpu::IndexFormat::Uint16);
@@ -353,16 +326,144 @@ impl Renderer {
         frame.present();
         Ok(())
     }
+
+    fn pipeline_for_layout(
+        &mut self,
+        vertex_layout: &VertexLayout,
+    ) -> Result<wgpu::RenderPipeline> {
+        if let Some(pipeline) = self.pipelines.get(vertex_layout) {
+            return Ok(pipeline.clone());
+        }
+
+        let pipeline = create_pipeline(
+            &self.device,
+            &self.shader,
+            &self.pipeline_layout,
+            self.surface_config.format,
+            vertex_layout,
+        )?;
+        self.pipelines
+            .insert(vertex_layout.clone(), pipeline.clone());
+        Ok(pipeline)
+    }
 }
 
-fn triangle_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-
-    wgpu::VertexBufferLayout {
-        array_stride: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
+fn create_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    pipeline_layout: &wgpu::PipelineLayout,
+    surface_format: wgpu::TextureFormat,
+    vertex_layout: &VertexLayout,
+) -> Result<wgpu::RenderPipeline> {
+    let attributes = mesh_vertex_attributes(vertex_layout).map_err(RenderError::Asset)?;
+    let buffer_layout = wgpu::VertexBufferLayout {
+        array_stride: vertex_layout.array_stride,
         step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &ATTRIBUTES,
+        attributes: &attributes,
+    };
+
+    Ok(
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rig render pipeline"),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[buffer_layout],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        }),
+    )
+}
+
+fn mesh_vertex_attributes(
+    vertex_layout: &VertexLayout,
+) -> std::result::Result<Vec<wgpu::VertexAttribute>, String> {
+    validate_triangle_shader_layout(vertex_layout)?;
+    Ok(vertex_layout
+        .attributes
+        .iter()
+        .map(|attribute| wgpu::VertexAttribute {
+            format: wgpu_vertex_format(attribute.format),
+            offset: attribute.offset,
+            shader_location: attribute.shader_location,
+        })
+        .collect())
+}
+
+fn validate_triangle_shader_layout(
+    vertex_layout: &VertexLayout,
+) -> std::result::Result<(), String> {
+    if vertex_layout.array_stride == 0 {
+        return Err("vertex layout must use a non-zero array stride".into());
+    }
+
+    let mut seen_locations = HashSet::new();
+    let mut has_position = false;
+    let mut has_color = false;
+
+    for attribute in &vertex_layout.attributes {
+        if !seen_locations.insert(attribute.shader_location) {
+            return Err(format!(
+                "vertex layout contains duplicate shader location {}",
+                attribute.shader_location
+            ));
+        }
+
+        let format_size = vertex_format_size(attribute.format);
+        if attribute.offset + format_size > vertex_layout.array_stride {
+            return Err(format!(
+                "vertex attribute at location {} exceeds the declared array stride",
+                attribute.shader_location
+            ));
+        }
+
+        match attribute.shader_location {
+            0 => has_position = true,
+            1 => has_color = true,
+            _ => {}
+        }
+    }
+
+    if !has_position || !has_color {
+        return Err("triangle shader requires position@0 and color@1 attributes".into());
+    }
+
+    Ok(())
+}
+
+fn vertex_format_size(format: VertexFormat) -> u64 {
+    match format {
+        VertexFormat::Float32x3 => std::mem::size_of::<[f32; 3]>() as u64,
+    }
+}
+
+fn wgpu_vertex_format(format: VertexFormat) -> wgpu::VertexFormat {
+    match format {
+        VertexFormat::Float32x3 => wgpu::VertexFormat::Float32x3,
     }
 }
 
@@ -416,12 +517,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 "#;
 
 pub fn validate_triangle_layout(mesh: &MeshAsset) -> bool {
-    mesh.vertex_layout.attributes.len() == 2
-        && mesh.vertex_layout.array_stride == 24
-        && mesh.vertex_layout.attributes[0].shader_location == 0
-        && mesh.vertex_layout.attributes[0].format == VertexFormat::Float32x3
-        && mesh.vertex_layout.attributes[1].shader_location == 1
-        && mesh.vertex_layout.attributes[1].format == VertexFormat::Float32x3
+    validate_triangle_shader_layout(&mesh.vertex_layout).is_ok()
 }
 
 #[cfg(test)]
@@ -462,7 +558,27 @@ mod tests {
     }
 
     #[test]
-    fn validate_triangle_layout_rejects_wrong_stride() {
+    fn validate_triangle_layout_accepts_padded_and_reordered_layout() {
+        let mut mesh = sample_mesh();
+        mesh.vertex_layout.array_stride = 32;
+        mesh.vertex_layout.attributes = vec![
+            VertexAttribute {
+                shader_location: 1,
+                format: VertexFormat::Float32x3,
+                offset: 16,
+            },
+            VertexAttribute {
+                shader_location: 0,
+                format: VertexFormat::Float32x3,
+                offset: 0,
+            },
+        ];
+
+        assert!(validate_triangle_layout(&mesh));
+    }
+
+    #[test]
+    fn validate_triangle_layout_rejects_attribute_outside_stride() {
         let mut mesh = sample_mesh();
         mesh.vertex_layout.array_stride = 16;
 
@@ -478,14 +594,28 @@ mod tests {
     }
 
     #[test]
-    fn triangle_vertex_layout_matches_expected_shader_contract() {
-        let layout = triangle_vertex_layout();
+    fn mesh_vertex_attributes_preserve_asset_layout_information() {
+        let mut mesh = sample_mesh();
+        mesh.vertex_layout.array_stride = 32;
+        mesh.vertex_layout.attributes[0].offset = 4;
+        mesh.vertex_layout.attributes[1].offset = 20;
 
-        assert_eq!(layout.array_stride, 24);
-        assert_eq!(layout.step_mode, wgpu::VertexStepMode::Vertex);
-        assert_eq!(layout.attributes.len(), 2);
-        assert_eq!(layout.attributes[0].shader_location, 0);
-        assert_eq!(layout.attributes[1].shader_location, 1);
+        let attributes = mesh_vertex_attributes(&mesh.vertex_layout).unwrap();
+
+        assert_eq!(attributes.len(), 2);
+        assert_eq!(attributes[0].shader_location, 0);
+        assert_eq!(attributes[0].offset, 4);
+        assert_eq!(attributes[0].format, wgpu::VertexFormat::Float32x3);
+        assert_eq!(attributes[1].shader_location, 1);
+        assert_eq!(attributes[1].offset, 20);
+    }
+
+    #[test]
+    fn mesh_vertex_attributes_reject_duplicate_shader_locations() {
+        let mut mesh = sample_mesh();
+        mesh.vertex_layout.attributes[1].shader_location = 0;
+
+        assert!(mesh_vertex_attributes(&mesh.vertex_layout).is_err());
     }
 
     #[test]

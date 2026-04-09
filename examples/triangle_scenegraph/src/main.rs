@@ -3,10 +3,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use rig_app::{
-    rig_assets::{MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout},
+    Application, RenderContext, StartupContext, UpdateContext,
+    rig_assets::{
+        MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
+    },
     rig_math::{BoundingSphere, Projection, Quat, Transform, Vec3},
     rig_scene::{CameraComponent, NodeId, Renderable},
-    Application, RenderContext, StartupContext, UpdateContext,
 };
 
 #[repr(C)]
@@ -68,7 +70,8 @@ impl Application for TriangleSceneApp {
         });
 
         let triangle = ctx.scene.create_node("triangle");
-        ctx.scene.set_renderable(triangle, Renderable { mesh, material })?;
+        ctx.scene
+            .set_renderable(triangle, Renderable { mesh, material })?;
 
         let camera = ctx.scene.create_node("camera");
         ctx.scene.set_local_transform(
@@ -99,7 +102,8 @@ impl Application for TriangleSceneApp {
     }
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
-        ctx.renderer.render_scene(ctx.scene, ctx.assets, ctx.active_camera)?;
+        ctx.renderer
+            .render_scene(ctx.scene, ctx.assets, ctx.active_camera)?;
         Ok(())
     }
 }
