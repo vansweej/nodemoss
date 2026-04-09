@@ -21,30 +21,50 @@ pub struct TextureHandle(u32);
 pub struct SamplerHandle(u32);
 
 impl MeshHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
 impl MaterialHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
 impl ShaderHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
 impl TextureHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
 impl SamplerHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
