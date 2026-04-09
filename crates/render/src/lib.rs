@@ -618,12 +618,14 @@ fn validate_triangle_shader_layout(
 
 fn vertex_format_size(format: VertexFormat) -> u64 {
     match format {
+        VertexFormat::Float32x2 => std::mem::size_of::<[f32; 2]>() as u64,
         VertexFormat::Float32x3 => std::mem::size_of::<[f32; 3]>() as u64,
     }
 }
 
 fn wgpu_vertex_format(format: VertexFormat) -> wgpu::VertexFormat {
     match format {
+        VertexFormat::Float32x2 => wgpu::VertexFormat::Float32x2,
         VertexFormat::Float32x3 => wgpu::VertexFormat::Float32x3,
     }
 }

@@ -56,6 +56,7 @@ pub struct VertexLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VertexFormat {
+    Float32x2,
     Float32x3,
 }
 
@@ -67,9 +68,37 @@ pub struct MeshAsset {
     pub local_bounds: BoundingSphere,
 }
 
+/// Blinn-Phong material color properties for GPU upload.
+///
+/// All fields are `[f32; 4]` so the struct can derive `Pod`/`Zeroable` and be
+/// uploaded directly to a uniform buffer without an intermediate conversion step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaterialParams {
+    /// Ambient reflectance (RGBA).
+    pub ambient: [f32; 4],
+    /// Diffuse reflectance (RGBA).
+    pub diffuse: [f32; 4],
+    /// Specular reflectance; `w` component is the shininess (Phong exponent).
+    pub specular: [f32; 4],
+    /// Emissive color (RGBA). Zero by default.
+    pub emissive: [f32; 4],
+}
+
+impl Default for MaterialParams {
+    fn default() -> Self {
+        Self {
+            ambient: [0.2, 0.2, 0.2, 1.0],
+            diffuse: [0.8, 0.8, 0.8, 1.0],
+            specular: [1.0, 1.0, 1.0, 32.0],
+            emissive: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MaterialAsset {
     pub shader: ShaderHandle,
+    pub parameters: MaterialParams,
 }
 
 #[derive(Clone, Debug)]
@@ -229,8 +258,8 @@ mod tests {
             source: Arc::from("shader"),
         });
 
-        let first = store.add_material(MaterialAsset { shader });
-        let second = store.add_material(MaterialAsset { shader });
+        let first = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default() });
+        let second = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default() });
 
         assert_eq!(first.index(), 0);
         assert_eq!(second.index(), 1);

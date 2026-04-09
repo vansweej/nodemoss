@@ -393,6 +393,27 @@ impl SceneGraph {
             .collect()
     }
 
+    /// Extract all lights from the scene.
+    ///
+    /// For each node that has a `LightComponent`, reads the world transform
+    /// and derives world-space position and forward direction (−Z in local space).
+    pub fn extract_lights(&self) -> Vec<ExtractedLight> {
+        self.lights
+            .iter()
+            .filter_map(|(&node, &light)| {
+                let world = self.node(node).ok()?.world_transform;
+                let world_position = world.transform_point3(Vec3::ZERO);
+                // The light points in −Z local space (same convention as camera)
+                let world_direction = world.transform_vector3(-Vec3::Z).normalize_or_zero();
+                Some(ExtractedLight {
+                    kind: light.kind,
+                    world_position,
+                    world_direction,
+                })
+            })
+            .collect()
+    }
+
     fn slot(&self, id: NodeId) -> Result<&NodeSlot> {
         let slot = self
             .nodes
@@ -462,6 +483,16 @@ pub struct ExtractedCamera {
     pub world_transform: Mat4,
 }
 
+/// Light data extracted from the scene, ready for the renderer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExtractedLight {
+    pub kind: LightKind,
+    /// World-space position (relevant for `Point` lights).
+    pub world_position: Vec3,
+    /// World-space forward direction of the light node (−Z axis in local space).
+    pub world_direction: Vec3,
+}
+
 pub fn frustum_planes_from_projection_view(matrix: Mat4) -> [Vec4; 6] {
     let left = matrix.col(3) + matrix.col(0);
     let right = matrix.col(3) - matrix.col(0);
@@ -495,7 +526,7 @@ mod tests {
         let shader = assets.add_shader(ShaderAsset {
             source: Arc::from("shader"),
         });
-        let material = assets.add_material(MaterialAsset { shader });
+        let material = assets.add_material(MaterialAsset { shader, parameters: rig_assets::MaterialParams::default() });
         let mesh = assets.add_mesh(MeshAsset {
             vertex_layout: VertexLayout {
                 array_stride: 24,
@@ -961,5 +992,103 @@ mod tests {
         // NodeId 99 does not exist — should get NotACamera (cameras map lookup fails first)
         // or InvalidNode depending on the lookup order. Either is an error.
         assert!(scene.extract_active_camera(invalid).is_err());
+    }
+
+    #[test]
+    fn extract_lights_returns_empty_for_scene_with_no_lights() {
+        let scene = SceneGraph::new();
+
+        assert!(scene.extract_lights().is_empty());
+    }
+
+    #[test]
+    fn extract_lights_computes_world_direction_for_directional_light() {
+        let mut scene = SceneGraph::new();
+        let light_node = scene.create_node("sun");
+        // Rotate 90° around X: local Y→Z, Z→−Y.
+        // So local −Z maps to +Y in world space.
+        scene
+            .set_local_transform(
+                light_node,
+                Transform {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_light(
+                light_node,
+                LightComponent {
+                    kind: LightKind::Directional {
+                        color: Vec3::ONE,
+                        intensity: 1.0,
+                    },
+                },
+            )
+            .unwrap();
+        scene.update_world_transforms(light_node).unwrap();
+
+        let lights = scene.extract_lights();
+
+        assert_eq!(lights.len(), 1);
+        approx_eq_vec3(lights[0].world_direction, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn extract_lights_includes_world_position_for_point_light() {
+        let mut scene = SceneGraph::new();
+        let light_node = scene.create_node("lamp");
+        scene
+            .set_local_transform(
+                light_node,
+                Transform {
+                    translation: Vec3::new(3.0, 5.0, -2.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_light(
+                light_node,
+                LightComponent {
+                    kind: LightKind::Point {
+                        color: Vec3::ONE,
+                        intensity: 2.0,
+                        range: 10.0,
+                    },
+                },
+            )
+            .unwrap();
+        scene.update_world_transforms(light_node).unwrap();
+
+        let lights = scene.extract_lights();
+
+        assert_eq!(lights.len(), 1);
+        approx_eq_vec3(lights[0].world_position, Vec3::new(3.0, 5.0, -2.0));
+    }
+
+    #[test]
+    fn extract_lights_returns_all_lights_in_scene() {
+        let mut scene = SceneGraph::new();
+        for i in 0..3 {
+            let node = scene.create_node(format!("light_{i}"));
+            scene
+                .set_light(
+                    node,
+                    LightComponent {
+                        kind: LightKind::Directional {
+                            color: Vec3::ONE,
+                            intensity: 1.0,
+                        },
+                    },
+                )
+                .unwrap();
+            scene.update_world_transforms(node).unwrap();
+        }
+
+        assert_eq!(scene.extract_lights().len(), 3);
     }
 }
