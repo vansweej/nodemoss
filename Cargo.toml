@@ -8,6 +8,7 @@ members = [
     "crates/app",
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
+    "examples/multi_object",
 ]
 exclude = ["GeometricTools"]
 

@@ -923,6 +923,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "multi_object"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
 name = "naga"
 version = "29.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
