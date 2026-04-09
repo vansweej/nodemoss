@@ -12,6 +12,16 @@ pub struct NodeId {
     generation: u32,
 }
 
+impl NodeId {
+    /// Construct a `NodeId` directly from raw index and generation values.
+    ///
+    /// Primarily intended for tests that need to construct scene-independent
+    /// `NodeId` values without going through the scene graph allocator.
+    pub fn from_raw(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisibilityMode {
     Inherit,
@@ -478,6 +488,17 @@ impl SceneGraph {
             .node
             .as_mut()
             .ok_or(SceneError::InvalidNode)
+    }
+
+    /// Return the visibility mode of a node.
+    pub fn visibility(&self, id: NodeId) -> Result<VisibilityMode> {
+        Ok(self.node(id)?.visibility)
+    }
+
+    /// Set the visibility mode of a node.
+    pub fn set_visibility(&mut self, id: NodeId, mode: VisibilityMode) -> Result<()> {
+        self.node_mut(id)?.visibility = mode;
+        Ok(())
     }
 
     fn root_nodes(&self) -> Vec<NodeId> {
@@ -1188,7 +1209,7 @@ mod tests {
                 },
             )
             .unwrap();
-        scene.node_mut(node).unwrap().visibility = VisibilityMode::AlwaysVisible;
+        scene.set_visibility(node, VisibilityMode::AlwaysVisible).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
 
@@ -1206,7 +1227,7 @@ mod tests {
         let node = scene.create_node("hidden");
         scene.set_renderable(node, Renderable { mesh, material }).unwrap();
         // Inside frustum but explicitly hidden
-        scene.node_mut(node).unwrap().visibility = VisibilityMode::Hidden;
+        scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
 
@@ -1214,5 +1235,31 @@ mod tests {
         let extracted = scene.extract_renderables_culled(&planes);
 
         assert!(extracted.is_empty());
+    }
+
+    #[test]
+    fn set_visibility_changes_node_visibility() {
+        let mut scene = SceneGraph::new();
+        let node = scene.create_node("test");
+
+        assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::Inherit);
+
+        scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
+        assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::Hidden);
+
+        scene
+            .set_visibility(node, VisibilityMode::AlwaysVisible)
+            .unwrap();
+        assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::AlwaysVisible);
+    }
+
+    #[test]
+    fn set_visibility_errors_for_invalid_node() {
+        let mut scene = SceneGraph::new();
+        let node = scene.create_node("temp");
+        scene.destroy_node(node).unwrap();
+
+        assert!(scene.set_visibility(node, VisibilityMode::Hidden).is_err());
+        assert!(scene.visibility(node).is_err());
     }
 }

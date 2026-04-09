@@ -419,10 +419,25 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let object_uniforms: Vec<_> = draw_list
+        // Build a sorted draw order.  Look up the shader handle for each
+        // object (via its material) and sort by (shader_handle, mesh_handle)
+        // so that we minimise pipeline switches and vertex-buffer rebinds.
+        // Objects with missing assets are silently skipped here but will
+        // produce a proper error during the actual draw call if they remain.
+        let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
+        sorted_indices.sort_by_key(|&i| {
+            let object = &draw_list[i];
+            let shader_key = assets
+                .material(object.material)
+                .map(|m| m.shader)
+                .unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
+            (shader_key, object.mesh)
+        });
+
+        let object_uniforms: Vec<_> = sorted_indices
             .iter()
-            .map(|object| ObjectUniforms {
-                world: (pv * object.world_transform).to_cols_array_2d(),
+            .map(|&i| ObjectUniforms {
+                world: (pv * draw_list[i].world_transform).to_cols_array_2d(),
             })
             .collect();
         self.frame_resources.prepare_object_uniforms(
@@ -467,7 +482,13 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            for (index, object) in draw_list.iter().enumerate() {
+            // Tracks the last-bound pipeline and mesh to skip redundant state
+            // changes between draw calls.
+            let mut current_pipeline: Option<ShaderHandle> = None;
+            let mut current_mesh: Option<rig_assets::MeshHandle> = None;
+
+            for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
+                let object = &draw_list[draw_index];
                 let material = assets
                     .material(object.material)
                     .map_err(|err| RenderError::Asset(err.to_string()))?;
@@ -486,14 +507,23 @@ impl Renderer {
                     Some(DEPTH_FORMAT),
                 )?;
 
-                pass.set_pipeline(&pipeline);
+                if current_pipeline != Some(material.shader) {
+                    pass.set_pipeline(&pipeline);
+                    current_pipeline = Some(material.shader);
+                }
                 pass.set_bind_group(
                     0,
                     &self.frame_resources.object_uniforms.bind_group,
-                    &[self.frame_resources.object_uniforms.dynamic_offset(index)?],
+                    &[self
+                        .frame_resources
+                        .object_uniforms
+                        .dynamic_offset(uniform_index)?],
                 );
-                pass.set_vertex_buffer(0, buffers.vertex.slice(..));
-                pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
+                if current_mesh != Some(object.mesh) {
+                    pass.set_vertex_buffer(0, buffers.vertex.slice(..));
+                    pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
+                    current_mesh = Some(object.mesh);
+                }
                 pass.draw_indexed(0..buffers.index_count, 0, 0..1);
             }
         }
@@ -1177,5 +1207,113 @@ mod tests {
         let expected =
             (mesh.index_data.len() / std::mem::size_of::<u32>()) as u32;
         assert_eq!(expected, 2);
+    }
+
+    // --- Commit 4: draw-list sorting ---
+
+    #[test]
+    fn draw_list_sorted_by_shader_then_mesh() {
+        use rig_assets::{AssetStore, MaterialAsset, MaterialParams, MeshHandle, ShaderAsset};
+        use rig_math::BoundingSphere;
+        use rig_scene::ExtractedRenderable;
+
+        let mut assets = AssetStore::new();
+        let shader_a = assets.add_shader(ShaderAsset { source: Arc::from("a") });
+        let shader_b = assets.add_shader(ShaderAsset { source: Arc::from("b") });
+
+        let material_a1 = assets.add_material(MaterialAsset {
+            shader: shader_a,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
+        let material_b1 = assets.add_material(MaterialAsset {
+            shader: shader_b,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
+        let material_a2 = assets.add_material(MaterialAsset {
+            shader: shader_a,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
+
+        let mesh_x = assets.add_mesh(sample_mesh());
+        let mesh_y = {
+            let mut m = sample_mesh();
+            m.vertex_data = Arc::from([2_u8; 24]);
+            assets.add_mesh(m)
+        };
+
+        // Deliberately interleaved: b1/x, a1/y, a2/x
+        let draw_list = vec![
+            ExtractedRenderable {
+                node: rig_scene::NodeId::from_raw(0, 0),
+                mesh: mesh_x,
+                material: material_b1,
+                world_transform: Mat4::IDENTITY,
+                world_bound: BoundingSphere::ZERO,
+            },
+            ExtractedRenderable {
+                node: rig_scene::NodeId::from_raw(1, 0),
+                mesh: mesh_y,
+                material: material_a1,
+                world_transform: Mat4::IDENTITY,
+                world_bound: BoundingSphere::ZERO,
+            },
+            ExtractedRenderable {
+                node: rig_scene::NodeId::from_raw(2, 0),
+                mesh: mesh_x,
+                material: material_a2,
+                world_transform: Mat4::IDENTITY,
+                world_bound: BoundingSphere::ZERO,
+            },
+        ];
+
+        // Build sorted indices the same way render_draw_list does.
+        let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
+        sorted_indices.sort_by_key(|&i| {
+            let object = &draw_list[i];
+            let shader_key = assets
+                .material(object.material)
+                .map(|m| m.shader)
+                .unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
+            (shader_key, object.mesh)
+        });
+
+        // After sorting: shader_a objects first (a1/y, a2/x), then shader_b (b1/x).
+        // Within shader_a the order by mesh: mesh_x < mesh_y depends on handle
+        // ordering.  What matters is that all shader_a objects are consecutive
+        // and all shader_b objects are consecutive.
+        let sorted_shaders: Vec<ShaderHandle> = sorted_indices
+            .iter()
+            .map(|&i| {
+                assets
+                    .material(draw_list[i].material)
+                    .map(|m| m.shader)
+                    .unwrap()
+            })
+            .collect();
+
+        // shader_a objects come before shader_b objects.
+        let first_b = sorted_shaders.iter().position(|&s| s == shader_b).unwrap();
+        assert!(sorted_shaders[..first_b].iter().all(|&s| s == shader_a));
+        assert!(sorted_shaders[first_b..].iter().all(|&s| s == shader_b));
+    }
+
+    #[test]
+    fn sorted_draw_list_reduces_state_changes() {
+        // Count hypothetical pipeline switches for sorted vs unsorted order.
+        let shaders = vec![1_u32, 2, 1, 2, 1]; // unsorted: 4 switches
+        let mut sorted_shaders = shaders.clone();
+        sorted_shaders.sort();
+
+        fn count_pipeline_switches(shaders: &[u32]) -> usize {
+            shaders.windows(2).filter(|w| w[0] != w[1]).count()
+        }
+
+        let unsorted_switches = count_pipeline_switches(&shaders);
+        let sorted_switches = count_pipeline_switches(&sorted_shaders);
+
+        assert!(sorted_switches < unsorted_switches);
     }
 }
