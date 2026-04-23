@@ -1,5 +1,25 @@
 {
   "nodes": {
+    "architecture-prompts": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1776984973,
+        "narHash": "sha256-Pm2aVOYmrMP1WjqVwFddtnMcbDzIp1Dp2ilvr2AHalE=",
+        "owner": "vansweej",
+        "repo": "architecture_prompts",
+        "rev": "d3b20564bd3ee9e533e23bc05f04efe7dbd1bbd5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "vansweej",
+        "repo": "architecture_prompts",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1775639890,
@@ -18,6 +38,7 @@
     },
     "root": {
       "inputs": {
+        "architecture-prompts": "architecture-prompts",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
       }

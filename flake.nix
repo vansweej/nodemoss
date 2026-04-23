@@ -7,6 +7,10 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    architecture-prompts = {
+      url = "github:vansweej/architecture_prompts";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -14,6 +18,7 @@
       self,
       nixpkgs,
       rust-overlay,
+      architecture-prompts,
     }:
     let
       supportedSystems = [
@@ -86,6 +91,7 @@
             nativeBuildInputs = [
               rustToolchain
               pkgs.cargo-tarpaulin
+              architecture-prompts.packages.${system}.default
             ]
             ++ pkgs.lib.optionals isLinux linuxNativeBuildInputs;
 
