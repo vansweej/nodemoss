@@ -142,12 +142,12 @@ pub struct TextureAsset {
 
 ```rust
 pub struct ImmutableResourceCache {
-    shaders: HashMap<u64, wgpu::ShaderModule>,
-    vertex_buffers: HashMap<u64, wgpu::Buffer>,
-    index_buffers: HashMap<u64, wgpu::Buffer>,
-    textures: HashMap<u64, wgpu::Texture>,
-    texture_views: HashMap<u64, wgpu::TextureView>,
-    samplers: HashMap<u64, wgpu::Sampler>,
+    shaders: HashMap<ShaderHandle, wgpu::ShaderModule>,
+    vertex_buffers: HashMap<MeshHandle, wgpu::Buffer>,
+    index_buffers: HashMap<MeshHandle, wgpu::Buffer>,
+    textures: HashMap<TextureHandle, wgpu::Texture>,
+    texture_views: HashMap<TextureHandle, wgpu::TextureView>,
+    samplers: HashMap<SamplerHandle, wgpu::Sampler>,
 }
 ```
 
@@ -178,16 +178,16 @@ pub struct CachedMeshBuffers {
 
 Returning owned cloneable objects avoids borrow conflicts across nested cache lookups.
 
-### 4.3 Hashing policy
+### 4.3 Keying policy
 
-The cache key should reflect immutable content.
+Cache keys are typed asset handles (`MeshHandle`, `ShaderHandle`, `TextureHandle`, etc.).
+Handles are cheap, collision-free, and stable for the lifetime of the asset store.
 
-Examples:
+This is preferred over content hashing because:
 
-- shader source bytes
-- mesh vertex/index bytes + layout
-- texture pixels + format + dimensions
-- sampler descriptor fields
+- handles are already unique identifiers — no hash computation needed
+- two assets with identical bytes but different handles are correctly treated as distinct
+- the cache cannot accidentally alias two logically different assets
 
 The hash should never be used as a substitute for runtime identity of mutable allocations.
 
