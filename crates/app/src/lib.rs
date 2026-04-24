@@ -9,6 +9,8 @@ pub use rig_gpu;
 use rig_gpu::{Frame, GpuContext};
 pub use rig_math;
 use rig_math::{Quat, Vec3};
+pub use rig_overlay;
+use rig_overlay::{ElementId, Overlay, Position};
 pub use rig_render;
 use rig_render::Renderer;
 pub use rig_scene;
@@ -22,12 +24,23 @@ use winit::{
     window::{Window, WindowId},
 };
 
+// Re-export overlay types for convenience.
+pub use rig_overlay::{Anchor, OverlayError as OverlayErr};
+
 pub trait Application: Sized + 'static {
     fn init(ctx: &mut StartupContext<'_>) -> Result<Self>;
 
     fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> Result<()>;
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()>;
+
+    /// Called once per frame to update overlay text elements.
+    ///
+    /// Override this to update [`ElementId`] text via [`OverlayUpdateContext`].
+    /// The default implementation is a no-op.
+    fn update_overlay(&mut self, _ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
+        Ok(())
+    }
 
     fn on_window_event(
         &mut self,
@@ -43,6 +56,7 @@ pub struct StartupContext<'a> {
     pub assets: &'a mut AssetStore,
     pub gpu: &'a GpuContext,
     pub renderer: &'a mut Renderer,
+    pub overlay: &'a mut Overlay,
     pub window: &'a Window,
 }
 
@@ -61,6 +75,28 @@ pub struct RenderContext<'a> {
     pub frame: &'a mut Frame,
     pub renderer: &'a mut Renderer,
     pub active_camera: Option<NodeId>,
+}
+
+/// Context passed to [`Application::update_overlay`].
+pub struct OverlayUpdateContext<'a> {
+    pub overlay: &'a mut Overlay,
+    pub timer: &'a FrameTimer,
+}
+
+impl OverlayUpdateContext<'_> {
+    /// Convenience wrapper: update the text of an overlay element.
+    pub fn set_text(&mut self, id: ElementId, text: impl Into<String>) -> Result<()> {
+        self.overlay
+            .set_text(id, text)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    /// Convenience wrapper: update the position of an overlay element.
+    pub fn set_position(&mut self, id: ElementId, position: Position) -> Result<()> {
+        self.overlay
+            .set_position(id, position)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -211,6 +247,8 @@ struct RunnerState<A: Application> {
     assets: AssetStore,
     gpu: GpuContext,
     renderer: Renderer,
+    overlay: Overlay,
+    overlay_visible: bool,
     input: InputState,
     timer: FrameTimer,
     active_camera: Option<NodeId>,
@@ -252,6 +290,13 @@ impl<A: Application> ApplicationHandler for Runner<A> {
         let gpu = pollster::block_on(GpuContext::new(window.clone()))
             .expect("failed to initialize GPU context");
         let mut renderer = Renderer::new(&gpu);
+        let mut overlay = Overlay::new(
+            &gpu.device,
+            &gpu.queue,
+            gpu.surface_format(),
+            gpu.width(),
+            gpu.height(),
+        );
         let mut scene = SceneGraph::new();
         let mut assets = AssetStore::new();
         let input = InputState::default();
@@ -261,6 +306,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             assets: &mut assets,
             gpu: &gpu,
             renderer: &mut renderer,
+            overlay: &mut overlay,
             window: window.as_ref(),
         };
         let app = A::init(&mut startup).expect("failed to initialize application");
@@ -274,6 +320,8 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             assets,
             gpu,
             renderer,
+            overlay,
+            overlay_visible: true,
             input,
             timer,
             active_camera,
@@ -297,8 +345,15 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             WindowEvent::Resized(size) => {
                 state.gpu.resize(*size);
                 state.renderer.resize(&state.gpu);
+                state.overlay.resize(size.width, size.height);
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // F3 toggles the overlay — intercept before forwarding to app.
+                if let winit::keyboard::PhysicalKey::Code(KeyCode::F3) = event.physical_key {
+                    if event.state == winit::event::ElementState::Pressed {
+                        state.overlay_visible = !state.overlay_visible;
+                    }
+                }
                 state.input.update(event);
             }
             _ => {}
@@ -323,6 +378,18 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         .expect("application update failed");
                 }
 
+                // Let the app update overlay text elements.
+                {
+                    let mut overlay_ctx = OverlayUpdateContext {
+                        overlay: &mut state.overlay,
+                        timer: &state.timer,
+                    };
+                    state
+                        .app
+                        .update_overlay(&mut overlay_ctx)
+                        .expect("application update_overlay failed");
+                }
+
                 state
                     .scene
                     .update_all_world_transforms()
@@ -345,6 +412,20 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         .app
                         .render(&mut render_ctx)
                         .expect("application render failed");
+
+                    // Render overlay on top of the scene.
+                    if state.overlay_visible {
+                        state
+                            .overlay
+                            .render_pass(
+                                &state.gpu.device,
+                                &state.gpu.queue,
+                                &mut frame.encoder,
+                                &frame.view,
+                            )
+                            .expect("overlay render failed");
+                    }
+
                     frame.present();
                 }
             }
