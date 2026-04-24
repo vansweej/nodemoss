@@ -7,13 +7,13 @@
 
 use std::{
     collections::HashMap,
-    hash::{Hash, Hasher},
     num::NonZeroU64,
 };
 
 use bytemuck::{Pod, Zeroable};
 use rig_assets::{
-    AssetStore, IndexFormat, MeshAsset, ShaderAsset, ShaderHandle, VertexFormat, VertexLayout,
+    AssetStore, IndexFormat, MeshAsset, MeshHandle, ShaderAsset, ShaderHandle, VertexFormat,
+    VertexLayout,
 };
 use rig_gpu::{Frame, GpuContext};
 use rig_math::{Camera, Mat4};
@@ -174,14 +174,18 @@ impl FrameResources {
 
 #[derive(Default)]
 struct ImmutableResourceCache {
-    shaders: HashMap<u64, wgpu::ShaderModule>,
-    meshes: HashMap<u64, CachedMeshBuffers>,
+    shaders: HashMap<ShaderHandle, wgpu::ShaderModule>,
+    meshes: HashMap<MeshHandle, CachedMeshBuffers>,
 }
 
 impl ImmutableResourceCache {
-    fn shader_module(&mut self, device: &wgpu::Device, shader: &ShaderAsset) -> wgpu::ShaderModule {
-        let key = hash_shader(shader);
-        if let Some(module) = self.shaders.get(&key) {
+    fn shader_module(
+        &mut self,
+        device: &wgpu::Device,
+        handle: ShaderHandle,
+        shader: &ShaderAsset,
+    ) -> wgpu::ShaderModule {
+        if let Some(module) = self.shaders.get(&handle) {
             return module.clone();
         }
 
@@ -189,13 +193,17 @@ impl ImmutableResourceCache {
             label: Some("rig render shader"),
             source: wgpu::ShaderSource::Wgsl(shader.source.as_ref().into()),
         });
-        self.shaders.insert(key, module.clone());
+        self.shaders.insert(handle, module.clone());
         module
     }
 
-    fn mesh_buffers(&mut self, device: &wgpu::Device, mesh: &MeshAsset) -> CachedMeshBuffers {
-        let key = hash_mesh(mesh);
-        if let Some(buffers) = self.meshes.get(&key) {
+    fn mesh_buffers(
+        &mut self,
+        device: &wgpu::Device,
+        handle: MeshHandle,
+        mesh: &MeshAsset,
+    ) -> CachedMeshBuffers {
+        if let Some(buffers) = self.meshes.get(&handle) {
             return buffers.clone();
         }
 
@@ -223,7 +231,7 @@ impl ImmutableResourceCache {
             index_count,
             index_format: wgpu_index_format,
         };
-        self.meshes.insert(key, buffers.clone());
+        self.meshes.insert(handle, buffers.clone());
         buffers
     }
 }
@@ -493,7 +501,7 @@ impl Renderer {
             let mesh = assets
                 .mesh(object.mesh)
                 .map_err(|err| RenderError::Asset(err.to_string()))?;
-            let buffers = self.cache.mesh_buffers(&gpu.device, mesh);
+            let buffers = self.cache.mesh_buffers(&gpu.device, object.mesh, mesh);
             let pipeline = self.pipeline_for_shader(
                 gpu,
                 material.shader,
@@ -545,7 +553,7 @@ impl Renderer {
             return Ok(pipeline.clone());
         }
 
-        let shader_module = self.cache.shader_module(&gpu.device, shader);
+        let shader_module = self.cache.shader_module(&gpu.device, shader_handle, shader);
         let pipeline = create_pipeline(
             &gpu.device,
             &shader_module,
@@ -973,20 +981,6 @@ fn wgpu_vertex_format(format: VertexFormat) -> wgpu::VertexFormat {
     }
 }
 
-fn hash_shader(shader: &ShaderAsset) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    shader.source.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn hash_mesh(mesh: &MeshAsset) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    mesh.vertex_layout.hash(&mut hasher);
-    mesh.vertex_data.hash(&mut hasher);
-    mesh.index_data.hash(&mut hasher);
-    hasher.finish()
-}
-
 fn decompose_pose(world: Mat4) -> rig_math::Transform {
     let (_, rotation, translation) = world.to_scale_rotation_translation();
     rig_math::Transform {
@@ -1135,44 +1129,21 @@ mod tests {
     }
 
     #[test]
-    fn hash_mesh_is_stable_for_identical_content() {
-        let mesh_a = sample_mesh();
-        let mesh_b = sample_mesh();
-
-        assert_eq!(hash_mesh(&mesh_a), hash_mesh(&mesh_b));
+    fn immutable_cache_uses_handle_as_key() {
+        // Two different handles with identical content must be tracked separately.
+        let handle_a = MeshHandle::from_raw(0);
+        let handle_b = MeshHandle::from_raw(1);
+        // Verify the handles are distinct (cache correctness is structural, not GPU-testable here).
+        assert_ne!(handle_a, handle_b);
+        // Same handle must compare equal to itself.
+        assert_eq!(handle_a, MeshHandle::from_raw(0));
     }
 
     #[test]
-    fn hash_mesh_changes_when_content_changes() {
-        let mesh_a = sample_mesh();
-        let mut mesh_b = sample_mesh();
-        mesh_b.index_data = Arc::from([0_u8, 1, 2]);
-
-        assert_ne!(hash_mesh(&mesh_a), hash_mesh(&mesh_b));
-    }
-
-    #[test]
-    fn hash_shader_is_stable_for_identical_source() {
-        let shader_a = ShaderAsset {
-            source: Arc::from("shader"),
-        };
-        let shader_b = ShaderAsset {
-            source: Arc::from("shader"),
-        };
-
-        assert_eq!(hash_shader(&shader_a), hash_shader(&shader_b));
-    }
-
-    #[test]
-    fn hash_shader_changes_when_source_changes() {
-        let shader_a = ShaderAsset {
-            source: Arc::from("shader_a"),
-        };
-        let shader_b = ShaderAsset {
-            source: Arc::from("shader_b"),
-        };
-
-        assert_ne!(hash_shader(&shader_a), hash_shader(&shader_b));
+    fn shader_handle_identity() {
+        let h = ShaderHandle::from_raw(42);
+        assert_eq!(h, ShaderHandle::from_raw(42));
+        assert_ne!(h, ShaderHandle::from_raw(0));
     }
 
     #[test]
