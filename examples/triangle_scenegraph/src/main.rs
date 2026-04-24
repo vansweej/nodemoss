@@ -48,7 +48,11 @@ impl Application for TriangleSceneApp {
         let shader = ctx.assets.add_shader(ShaderAsset {
             source: Arc::from(rig_app::rig_render::TRIANGLE_SHADER),
         });
-        let material = ctx.assets.add_material(MaterialAsset { shader, parameters: Default::default(), textures: vec![] });
+        let material = ctx.assets.add_material(MaterialAsset {
+            shader,
+            parameters: Default::default(),
+            textures: vec![],
+        });
         let mesh = ctx.assets.add_mesh(MeshAsset {
             vertex_layout: VertexLayout {
                 array_stride: std::mem::size_of::<Vertex>() as u64,

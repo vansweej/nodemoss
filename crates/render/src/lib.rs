@@ -407,15 +407,17 @@ impl Renderer {
         assets: &AssetStore,
         active_camera: Option<NodeId>,
     ) -> Result<()> {
-        let extracted_camera = active_camera
-            .and_then(|id| scene.extract_active_camera(id).ok());
+        let extracted_camera = active_camera.and_then(|id| scene.extract_active_camera(id).ok());
 
         let draw_list = if let Some(cam) = extracted_camera {
             // Compute frustum planes from the camera's projection-view matrix and
             // cull objects that are entirely outside it.
             let aspect = self.surface_config.width as f32 / self.surface_config.height as f32;
             let pose = decompose_pose(cam.world_transform);
-            let camera_value = rig_math::Camera { pose, projection: cam.projection };
+            let camera_value = rig_math::Camera {
+                pose,
+                projection: cam.projection,
+            };
             let pv = camera_value.projection_view_matrix(aspect);
             let planes = rig_scene::frustum_planes_from_projection_view(pv);
             scene.extract_renderables_culled(&planes)
@@ -622,31 +624,33 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: desc.color_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let (depth_texture, depth_view) = desc.depth_format.map(|fmt| {
-            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("render target depth"),
-                size: wgpu::Extent3d {
-                    width: desc.width,
-                    height: desc.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: fmt,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-            (Some(tex), Some(view))
-        }).unwrap_or((None, None));
+        let (depth_texture, depth_view) = desc
+            .depth_format
+            .map(|fmt| {
+                let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("render target depth"),
+                    size: wgpu::Extent3d {
+                        width: desc.width,
+                        height: desc.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: fmt,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                (Some(tex), Some(view))
+            })
+            .unwrap_or((None, None));
 
         RenderTarget {
             color_texture,
@@ -672,13 +676,15 @@ impl Renderer {
         assets: &AssetStore,
         active_camera: Option<NodeId>,
     ) -> Result<()> {
-        let extracted_camera = active_camera
-            .and_then(|id| scene.extract_active_camera(id).ok());
+        let extracted_camera = active_camera.and_then(|id| scene.extract_active_camera(id).ok());
 
         let draw_list = if let Some(cam) = extracted_camera {
             let aspect = target.width as f32 / target.height as f32;
             let pose = decompose_pose(cam.world_transform);
-            let camera_value = rig_math::Camera { pose, projection: cam.projection };
+            let camera_value = rig_math::Camera {
+                pose,
+                projection: cam.projection,
+            };
             let pv = camera_value.projection_view_matrix(aspect);
             let planes = rig_scene::frustum_planes_from_projection_view(pv);
             scene.extract_renderables_culled(&planes)
@@ -730,16 +736,17 @@ impl Renderer {
 
         {
             let depth_attachment =
-                target.depth_view.as_ref().map(|view| {
-                    wgpu::RenderPassDepthStencilAttachment {
+                target
+                    .depth_view
+                    .as_ref()
+                    .map(|view| wgpu::RenderPassDepthStencilAttachment {
                         view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
-                    }
-                });
+                    });
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rig offscreen pass"),
@@ -1024,9 +1031,7 @@ fn mesh_vertex_attributes(
 /// - every attribute fits within the stride (`offset + format_size ≤ stride`)
 ///
 /// Does **not** require any specific locations (e.g., position@0 or color@1).
-pub fn validate_vertex_layout(
-    vertex_layout: &VertexLayout,
-) -> std::result::Result<(), String> {
+pub fn validate_vertex_layout(vertex_layout: &VertexLayout) -> std::result::Result<(), String> {
     if vertex_layout.array_stride == 0 {
         return Err("vertex layout must use a non-zero array stride".into());
     }
@@ -1520,8 +1525,7 @@ mod tests {
         mesh.index_format = rig_assets::IndexFormat::Uint32;
 
         // Compute expected index count the same way mesh_buffers does.
-        let expected =
-            (mesh.index_data.len() / std::mem::size_of::<u32>()) as u32;
+        let expected = (mesh.index_data.len() / std::mem::size_of::<u32>()) as u32;
         assert_eq!(expected, 2);
     }
 
@@ -1534,8 +1538,12 @@ mod tests {
         use rig_scene::ExtractedRenderable;
 
         let mut assets = AssetStore::new();
-        let shader_a = assets.add_shader(ShaderAsset { source: Arc::from("a") });
-        let shader_b = assets.add_shader(ShaderAsset { source: Arc::from("b") });
+        let shader_a = assets.add_shader(ShaderAsset {
+            source: Arc::from("a"),
+        });
+        let shader_b = assets.add_shader(ShaderAsset {
+            source: Arc::from("b"),
+        });
 
         let material_a1 = assets.add_material(MaterialAsset {
             shader: shader_a,
