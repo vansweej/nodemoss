@@ -25,7 +25,7 @@ use winit::{
 };
 
 // Re-export overlay types for convenience.
-pub use rig_overlay::{Anchor, OverlayError as OverlayErr};
+pub use rig_overlay::{Anchor, OverlayError};
 
 pub trait Application: Sized + 'static {
     fn init(ctx: &mut StartupContext<'_>) -> Result<Self>;
@@ -66,6 +66,14 @@ pub struct UpdateContext<'a> {
     pub input: &'a InputState,
     pub timer: &'a FrameTimer,
     pub active_camera: &'a mut Option<NodeId>,
+    exit_requested: &'a mut bool,
+}
+
+impl UpdateContext<'_> {
+    /// Request the runner to exit cleanly after the current frame.
+    pub fn request_exit(&mut self) {
+        *self.exit_requested = true;
+    }
 }
 
 pub struct RenderContext<'a> {
@@ -252,6 +260,7 @@ struct RunnerState<A: Application> {
     input: InputState,
     timer: FrameTimer,
     active_camera: Option<NodeId>,
+    exit_requested: bool,
 }
 
 struct Runner<A: Application> {
@@ -277,18 +286,27 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             return;
         }
 
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title(self.title.clone())
-                        .with_inner_size(winit::dpi::PhysicalSize::new(800, 600)),
-                )
-                .expect("failed to create window"),
-        );
+        let window = match event_loop.create_window(
+            Window::default_attributes()
+                .with_title(self.title.clone())
+                .with_inner_size(winit::dpi::PhysicalSize::new(800, 600)),
+        ) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                log::error!("failed to create window: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
-        let gpu = pollster::block_on(GpuContext::new(window.clone()))
-            .expect("failed to initialize GPU context");
+        let gpu = match pollster::block_on(GpuContext::new(window.clone())) {
+            Ok(g) => g,
+            Err(e) => {
+                log::error!("failed to initialize GPU context: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
         let mut renderer = Renderer::new(&gpu);
         let mut overlay = Overlay::new(
             &gpu.device,
@@ -301,6 +319,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
         let mut assets = AssetStore::new();
         let input = InputState::default();
         let timer = FrameTimer::new();
+        let exit_requested = false;
         let mut startup = StartupContext {
             scene: &mut scene,
             assets: &mut assets,
@@ -309,7 +328,14 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             overlay: &mut overlay,
             window: window.as_ref(),
         };
-        let app = A::init(&mut startup).expect("failed to initialize application");
+        let app = match A::init(&mut startup) {
+            Ok(a) => a,
+            Err(e) => {
+                log::error!("failed to initialize application: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let active_camera = scene.first_camera();
 
@@ -325,6 +351,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             input,
             timer,
             active_camera,
+            exit_requested,
         });
     }
 
@@ -371,11 +398,18 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         input: input_snapshot,
                         timer: timer_snapshot,
                         active_camera: &mut state.active_camera,
+                        exit_requested: &mut state.exit_requested,
                     };
-                    state
-                        .app
-                        .update(&mut update_ctx, dt)
-                        .expect("application update failed");
+                    if let Err(e) = state.app.update(&mut update_ctx, dt) {
+                        log::error!("application update failed: {e}");
+                        event_loop.exit();
+                        return;
+                    }
+                }
+
+                if state.exit_requested {
+                    event_loop.exit();
+                    return;
                 }
 
                 // Let the app update overlay text elements.
@@ -384,20 +418,23 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         overlay: &mut state.overlay,
                         timer: &state.timer,
                     };
-                    state
-                        .app
-                        .update_overlay(&mut overlay_ctx)
-                        .expect("application update_overlay failed");
+                    if let Err(e) = state.app.update_overlay(&mut overlay_ctx) {
+                        log::error!("application update_overlay failed: {e}");
+                        event_loop.exit();
+                        return;
+                    }
                 }
 
-                state
-                    .scene
-                    .update_all_world_transforms()
-                    .expect("failed to update world transforms");
-                state
-                    .scene
-                    .update_all_world_bounds(&state.assets)
-                    .expect("failed to update world bounds");
+                if let Err(e) = state.scene.update_all_world_transforms() {
+                    log::error!("failed to update world transforms: {e}");
+                    event_loop.exit();
+                    return;
+                }
+                if let Err(e) = state.scene.update_all_world_bounds(&state.assets) {
+                    log::error!("failed to update world bounds: {e}");
+                    event_loop.exit();
+                    return;
+                }
 
                 if let Some(mut frame) = state.gpu.begin_frame() {
                     let mut render_ctx = RenderContext {
@@ -408,22 +445,24 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         renderer: &mut state.renderer,
                         active_camera: state.active_camera,
                     };
-                    state
-                        .app
-                        .render(&mut render_ctx)
-                        .expect("application render failed");
+                    if let Err(e) = state.app.render(&mut render_ctx) {
+                        log::error!("application render failed: {e}");
+                        event_loop.exit();
+                        return;
+                    }
 
                     // Render overlay on top of the scene.
                     if state.overlay_visible {
-                        state
-                            .overlay
-                            .render_pass(
-                                &state.gpu.device,
-                                &state.gpu.queue,
-                                &mut frame.encoder,
-                                &frame.view,
-                            )
-                            .expect("overlay render failed");
+                        if let Err(e) = state.overlay.render_pass(
+                            &state.gpu.device,
+                            &state.gpu.queue,
+                            &mut frame.encoder,
+                            &frame.view,
+                        ) {
+                            log::error!("overlay render failed: {e}");
+                            event_loop.exit();
+                            return;
+                        }
                     }
 
                     frame.present();
@@ -438,11 +477,17 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                     input: input_snapshot,
                     timer: timer_snapshot,
                     active_camera: &mut state.active_camera,
+                    exit_requested: &mut state.exit_requested,
                 };
-                state
-                    .app
-                    .on_window_event(&mut update_ctx, &other)
-                    .expect("application window event failed");
+                if let Err(e) = state.app.on_window_event(&mut update_ctx, &other) {
+                    log::error!("application window event failed: {e}");
+                    event_loop.exit();
+                    return;
+                }
+                if state.exit_requested {
+                    event_loop.exit();
+                    return;
+                }
             }
         }
 
@@ -514,12 +559,14 @@ mod tests {
         };
         let timer = FrameTimer::new();
         let mut active_camera = None;
+        let mut exit_requested = false;
         let mut ctx = UpdateContext {
             scene: &mut scene,
             assets: &assets,
             input: &input,
             timer: &timer,
             active_camera: &mut active_camera,
+            exit_requested: &mut exit_requested,
         };
 
         CameraRig {
@@ -549,12 +596,14 @@ mod tests {
         };
         let timer = FrameTimer::new();
         let mut active_camera = None;
+        let mut exit_requested = false;
         let mut ctx = UpdateContext {
             scene: &mut scene,
             assets: &assets,
             input: &input,
             timer: &timer,
             active_camera: &mut active_camera,
+            exit_requested: &mut exit_requested,
         };
 
         CameraRig {
@@ -622,6 +671,28 @@ mod tests {
         assert_eq!(runner.title, "test");
         assert!(runner.window.is_none());
         assert!(runner.state.is_none());
+    }
+
+    #[test]
+    fn update_context_request_exit_sets_flag() {
+        let mut scene = SceneGraph::new();
+        let assets = AssetStore::new();
+        let input = InputState::default();
+        let timer = FrameTimer::new();
+        let mut active_camera = None;
+        let mut exit_requested = false;
+        let mut ctx = UpdateContext {
+            scene: &mut scene,
+            assets: &assets,
+            input: &input,
+            timer: &timer,
+            active_camera: &mut active_camera,
+            exit_requested: &mut exit_requested,
+        };
+
+        ctx.request_exit();
+
+        assert!(exit_requested);
     }
 
     struct TestApp;
