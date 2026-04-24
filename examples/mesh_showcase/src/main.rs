@@ -203,10 +203,12 @@ impl Application for MeshShowcaseApp {
         ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
     }
 
-    fn on_window_event(&mut self, _ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
+    fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
         if let WindowEvent::KeyboardInput { event, .. } = event {
-            if event.physical_key == PhysicalKey::Code(KeyCode::Escape) {
-                std::process::exit(0);
+            if event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                && event.state == rig_app::winit::event::ElementState::Pressed
+            {
+                ctx.request_exit();
             }
         }
         Ok(())

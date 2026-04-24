@@ -68,8 +68,9 @@ struct PlatonicApp {
     camera_node: NodeId,
     camera_rig: CameraRig,
     solids: Vec<SolidState>,
-    /// Monotonically increasing scene time in seconds.
-    elapsed: f32,
+    /// Monotonically increasing scene time in seconds (f64 to avoid precision
+    /// loss after long runtimes).
+    elapsed: f64,
     fps_id: ElementId,
     cam_pos_id: ElementId,
     /// Camera position cached from update() for use in update_overlay().
@@ -233,7 +234,7 @@ impl Application for PlatonicApp {
                 rotation_speed: 1.5,
             },
             solids,
-            elapsed: 0.0,
+            elapsed: 0.0_f64,
             fps_id,
             cam_pos_id,
             camera_pos: Vec3::new(0.0, 4.0, 18.0),
@@ -241,11 +242,11 @@ impl Application for PlatonicApp {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> Result<()> {
-        self.elapsed += dt;
+        self.elapsed += dt as f64;
 
         // Animate each solid: orbit around origin + self-rotation.
         for solid in &self.solids {
-            let angle = solid.orbit_phase + solid.orbit_speed * self.elapsed;
+            let angle = solid.orbit_phase + solid.orbit_speed * self.elapsed as f32;
 
             // Orbit position — slight Y oscillation for a 3-D trajectory.
             let x = solid.orbit_radius * angle.cos();
@@ -253,7 +254,8 @@ impl Application for PlatonicApp {
             let y = solid.orbit_tilt * (angle * 0.7).sin();
 
             // Self-rotation accumulates over time.
-            let spin = Quat::from_axis_angle(solid.spin_axis, solid.spin_speed * self.elapsed);
+            let spin =
+                Quat::from_axis_angle(solid.spin_axis, solid.spin_speed * self.elapsed as f32);
 
             ctx.scene.set_local_transform(
                 solid.node,
@@ -296,7 +298,7 @@ impl Application for PlatonicApp {
         )
     }
 
-    fn on_window_event(&mut self, _ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
+    fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
         if let WindowEvent::KeyboardInput { event, .. } = event {
             if matches!(
                 event.physical_key,
@@ -304,10 +306,7 @@ impl Application for PlatonicApp {
             ) && event.state == rig_app::winit::event::ElementState::Pressed
             {
                 log::info!("Escape pressed — closing window.");
-                // The runner will exit on the next CloseRequested; we request
-                // it indirectly by doing nothing — the user can also use the
-                // window close button. A direct exit would require access to
-                // the event loop handle which is not exposed through the trait.
+                ctx.request_exit();
             }
         }
         Ok(())
