@@ -163,7 +163,7 @@ impl Application for OffscreenApp {
         )?;
 
         // --- Offscreen render target -----------------------------------------
-        let offscreen_target = ctx.renderer.create_render_target(&RenderTargetDescriptor {
+        let offscreen_target = ctx.renderer.create_render_target(ctx.gpu, &RenderTargetDescriptor {
             width: OFFSCREEN_WIDTH,
             height: OFFSCREEN_HEIGHT,
             color_format: OFFSCREEN_FORMAT,
@@ -173,8 +173,8 @@ impl Application for OffscreenApp {
 
         // --- Blit pipeline ---------------------------------------------------
         let blit = build_blit_resources(
-            ctx.renderer.device(),
-            ctx.renderer.surface_format(),
+            &ctx.gpu.device,
+            ctx.gpu.surface_format(),
             &offscreen_target,
         );
 
@@ -202,6 +202,7 @@ impl Application for OffscreenApp {
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         // 1. Render scene into offscreen target.
         ctx.renderer.render_to_target(
+            ctx.gpu,
             &self.offscreen_target,
             ctx.scene,
             ctx.assets,
@@ -209,7 +210,8 @@ impl Application for OffscreenApp {
         )?;
 
         // 2. Blit the offscreen colour texture onto the swapchain.
-        blit_to_screen(ctx.renderer, &self.blit)?;
+        ctx.renderer
+            .blit_texture_to_screen(ctx.frame, &self.blit.pipeline, &self.blit.bind_group)?;
 
         Ok(())
     }
@@ -314,14 +316,6 @@ fn build_blit_resources(
         bind_group,
         _sampler: sampler,
     }
-}
-
-fn blit_to_screen(
-    renderer: &mut rig_app::rig_render::Renderer,
-    blit: &BlitResources,
-) -> Result<()> {
-    renderer.blit_texture_to_screen(&blit.pipeline, &blit.bind_group)?;
-    Ok(())
 }
 
 fn main() -> Result<()> {

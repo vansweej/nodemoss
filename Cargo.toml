@@ -4,6 +4,7 @@ members = [
     "crates/math",
     "crates/scene",
     "crates/assets",
+    "crates/gpu",
     "crates/render",
     "crates/app",
     "examples/hello_triangle",
@@ -25,6 +26,7 @@ rust-version = "1.85"
 rig-math = { path = "crates/math" }
 rig-assets = { path = "crates/assets" }
 rig-scene = { path = "crates/scene" }
+rig-gpu = { path = "crates/gpu" }
 rig-render = { path = "crates/render" }
 rig-app = { path = "crates/app" }
 

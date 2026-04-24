@@ -1,34 +1,33 @@
 //! Concrete `wgpu` renderer for the rig framework.
+//!
+//! [`Renderer`] owns only rendering state (pipelines, caches, frame resources,
+//! depth texture). It does **not** own the GPU device, queue, or surface —
+//! those live in [`rig_gpu::GpuContext`], which is passed by reference to
+//! every method that needs GPU access.
 
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
     num::NonZeroU64,
-    sync::Arc,
 };
 
 use bytemuck::{Pod, Zeroable};
 use rig_assets::{
     AssetStore, IndexFormat, MeshAsset, ShaderAsset, ShaderHandle, VertexFormat, VertexLayout,
 };
+use rig_gpu::{Frame, GpuContext};
 use rig_math::{Camera, Mat4};
 use rig_scene::{ExtractedCamera, ExtractedRenderable, NodeId, SceneGraph};
 use thiserror::Error;
 use wgpu::util::DeviceExt;
-use winit::{dpi::PhysicalSize, window::Window};
 
+pub use rig_gpu;
 pub use wgpu;
+
+// ── errors ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
 pub enum RenderError {
-    #[error("failed to create surface: {0}")]
-    SurfaceCreate(#[from] wgpu::CreateSurfaceError),
-    #[error("failed to find a suitable GPU adapter")]
-    NoAdapter,
-    #[error("failed to create device: {0}")]
-    RequestDevice(#[from] wgpu::RequestDeviceError),
-    #[error("surface does not expose a supported format")]
-    NoSurfaceFormat,
     #[error("scene node is not a camera")]
     InvalidCamera,
     #[error("asset error: {0}")]
@@ -36,6 +35,8 @@ pub enum RenderError {
 }
 
 pub type Result<T> = std::result::Result<T, RenderError>;
+
+// ── internal types ────────────────────────────────────────────────────────────
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -227,6 +228,8 @@ impl ImmutableResourceCache {
     }
 }
 
+// ── public types ──────────────────────────────────────────────────────────────
+
 /// Descriptor used to create a [`RenderTarget`].
 pub struct RenderTargetDescriptor {
     pub width: u32,
@@ -251,74 +254,27 @@ pub struct RenderTarget {
     pub depth_format: Option<wgpu::TextureFormat>,
 }
 
+/// Scene renderer.
+///
+/// Owns pipeline caches, the immutable resource cache, per-frame GPU buffers,
+/// and the depth texture. Does **not** own the wgpu device/queue/surface —
+/// those live in [`GpuContext`] and are passed by reference.
 pub struct Renderer {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface_config: wgpu::SurfaceConfiguration,
     pipeline_layout: wgpu::PipelineLayout,
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     object_bind_group_layout: wgpu::BindGroupLayout,
     frame_resources: FrameResources,
-    window: Arc<Window>,
     cache: ImmutableResourceCache,
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
 }
 
 impl Renderer {
-    #[cfg(not(tarpaulin_include))]
-    pub async fn new(window: Arc<Window>) -> Result<Self> {
-        let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let surface = instance.create_surface(window.clone())?;
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: Some(&surface),
-            })
-            .await
-            .map_err(|_| RenderError::NoAdapter)?;
-
-        log::info!("Using adapter: {}", adapter.get_info().name);
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("rig renderer device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                memory_hints: wgpu::MemoryHints::default(),
-                trace: wgpu::Trace::Off,
-            })
-            .await?;
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        let format = surface_caps
-            .formats
-            .iter()
-            .find(|candidate| candidate.is_srgb())
-            .copied()
-            .or_else(|| surface_caps.formats.first().copied())
-            .ok_or(RenderError::NoSurfaceFormat)?;
-
-        let width = size.width.max(1);
-        let height = size.height.max(1);
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width,
-            height,
-            present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-        };
-        surface.configure(&device, &surface_config);
+    /// Create a new renderer for the given GPU context.
+    ///
+    /// The depth texture is sized to match the current surface dimensions.
+    pub fn new(gpu: &GpuContext) -> Self {
+        let device = &gpu.device;
 
         let object_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -338,7 +294,7 @@ impl Renderer {
             });
 
         let frame_resources = FrameResources::new(
-            &device,
+            device,
             &object_bind_group_layout,
             device.limits().min_uniform_buffer_offset_alignment as u64,
         );
@@ -349,60 +305,39 @@ impl Renderer {
             immediate_size: 0,
         });
 
-        let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
+        let (depth_texture, depth_view) =
+            create_depth_texture(device, gpu.width(), gpu.height());
 
-        Ok(Self {
-            surface,
-            device,
-            queue,
-            surface_config,
+        Self {
             pipeline_layout,
             pipelines: HashMap::new(),
             object_bind_group_layout,
             frame_resources,
-            window,
             cache: ImmutableResourceCache::default(),
             depth_texture,
             depth_view,
-        })
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width > 0 && size.height > 0 {
-            self.surface_config.width = size.width;
-            self.surface_config.height = size.height;
-            self.surface.configure(&self.device, &self.surface_config);
-            (self.depth_texture, self.depth_view) =
-                create_depth_texture(&self.device, size.width, size.height);
         }
     }
 
+    /// Recreate the depth texture after a window resize.
+    ///
+    /// Call this after [`GpuContext::resize`] so the depth buffer matches the
+    /// new surface dimensions.
     #[cfg(not(tarpaulin_include))]
-    pub fn window(&self) -> &Window {
-        &self.window
+    pub fn resize(&mut self, gpu: &GpuContext) {
+        (self.depth_texture, self.depth_view) =
+            create_depth_texture(&gpu.device, gpu.width(), gpu.height());
     }
 
-    /// Borrow the wgpu device. Useful for examples that need to create custom
-    /// GPU resources (pipelines, bind groups, buffers) alongside the renderer.
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-
-    /// Borrow the wgpu queue. Useful for examples that need to submit their
-    /// own command encoders.
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
-
-    /// The texture format of the swapchain surface.
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.surface_config.format
-    }
-
+    /// Render the scene into the current swapchain frame.
+    ///
+    /// Writes draw calls into `frame.encoder` and renders to `frame.view`.
+    /// The caller is responsible for calling [`Frame::present`] afterwards.
     #[cfg(not(tarpaulin_include))]
     pub fn render_scene(
         &mut self,
+        gpu: &GpuContext,
+        frame: &mut Frame,
         scene: &SceneGraph,
         assets: &AssetStore,
         active_camera: Option<NodeId>,
@@ -410,9 +345,7 @@ impl Renderer {
         let extracted_camera = active_camera.and_then(|id| scene.extract_active_camera(id).ok());
 
         let draw_list = if let Some(cam) = extracted_camera {
-            // Compute frustum planes from the camera's projection-view matrix and
-            // cull objects that are entirely outside it.
-            let aspect = self.surface_config.width as f32 / self.surface_config.height as f32;
+            let aspect = gpu.aspect();
             let pose = decompose_pose(cam.world_transform);
             let camera_value = rig_math::Camera {
                 pose,
@@ -425,12 +358,14 @@ impl Renderer {
             scene.extract_renderables()
         };
 
-        self.render_draw_list(assets, extracted_camera, &draw_list)
+        self.render_draw_list(gpu, frame, assets, extracted_camera, &draw_list)
     }
 
     #[cfg(not(tarpaulin_include))]
     fn render_draw_list(
         &mut self,
+        gpu: &GpuContext,
+        frame: &mut Frame,
         assets: &AssetStore,
         camera: Option<ExtractedCamera>,
         draw_list: &[ExtractedRenderable],
@@ -439,36 +374,15 @@ impl Renderer {
             return Ok(());
         };
 
-        let aspect = self.surface_config.width as f32 / self.surface_config.height as f32;
+        let aspect = gpu.aspect();
         let pv = camera_projection_view(&camera, aspect);
 
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout => return Ok(()),
-            wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.surface_config);
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Validation => return Ok(()),
-        };
-
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sorted_indices = self.prepare_draw_order(assets, draw_list, pv);
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("rig render encoder"),
-            });
+        let sorted_indices = self.prepare_draw_order(gpu, assets, draw_list, pv);
 
         self.record_scene_pass(
-            &mut encoder,
-            &view,
+            gpu,
+            &mut frame.encoder,
+            &frame.view,
             Some(&self.depth_view.clone()),
             wgpu::Color {
                 r: 0.1,
@@ -479,13 +393,9 @@ impl Renderer {
             assets,
             draw_list,
             &sorted_indices,
-            self.surface_config.format,
+            gpu.surface_format(),
             Some(DEPTH_FORMAT),
-        )?;
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
-        Ok(())
+        )
     }
 
     /// Sort the draw list by `(ShaderHandle, MeshHandle)`, compute per-object
@@ -496,15 +406,11 @@ impl Renderer {
     #[cfg(not(tarpaulin_include))]
     fn prepare_draw_order(
         &mut self,
+        gpu: &GpuContext,
         assets: &AssetStore,
         draw_list: &[ExtractedRenderable],
         pv: Mat4,
     ) -> Vec<usize> {
-        // Build a sorted draw order. Look up the shader handle for each
-        // object (via its material) and sort by (shader_handle, mesh_handle)
-        // so that we minimise pipeline switches and vertex-buffer rebinds.
-        // Objects with missing assets are silently skipped here but will
-        // produce a proper error during the actual draw call if they remain.
         let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
         sorted_indices.sort_by_key(|&i| {
             let object = &draw_list[i];
@@ -522,8 +428,8 @@ impl Renderer {
             })
             .collect();
         self.frame_resources.prepare_object_uniforms(
-            &self.device,
-            &self.queue,
+            &gpu.device,
+            &gpu.queue,
             &self.object_bind_group_layout,
             &object_uniforms,
         );
@@ -532,14 +438,11 @@ impl Renderer {
     }
 
     /// Record a single scene render pass into `encoder`.
-    ///
-    /// The pass clears the colour attachment to `clear_color`, optionally
-    /// clears depth to 1.0, then issues sorted draw calls with minimal
-    /// pipeline and vertex-buffer state changes.
     #[cfg(not(tarpaulin_include))]
     #[allow(clippy::too_many_arguments)]
     fn record_scene_pass(
         &mut self,
+        gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
         color_view: &wgpu::TextureView,
         depth_view: Option<&wgpu::TextureView>,
@@ -576,8 +479,6 @@ impl Renderer {
             multiview_mask: None,
         });
 
-        // Tracks the last-bound pipeline and mesh to skip redundant state
-        // changes between draw calls.
         let mut current_pipeline: Option<ShaderHandle> = None;
         let mut current_mesh: Option<rig_assets::MeshHandle> = None;
 
@@ -592,8 +493,9 @@ impl Renderer {
             let mesh = assets
                 .mesh(object.mesh)
                 .map_err(|err| RenderError::Asset(err.to_string()))?;
-            let buffers = self.cache.mesh_buffers(&self.device, mesh);
+            let buffers = self.cache.mesh_buffers(&gpu.device, mesh);
             let pipeline = self.pipeline_for_shader(
+                gpu,
                 material.shader,
                 shader,
                 &mesh.vertex_layout,
@@ -626,6 +528,7 @@ impl Renderer {
 
     fn pipeline_for_shader(
         &mut self,
+        gpu: &GpuContext,
         shader_handle: ShaderHandle,
         shader: &ShaderAsset,
         vertex_layout: &VertexLayout,
@@ -642,9 +545,9 @@ impl Renderer {
             return Ok(pipeline.clone());
         }
 
-        let shader_module = self.cache.shader_module(&self.device, shader);
+        let shader_module = self.cache.shader_module(&gpu.device, shader);
         let pipeline = create_pipeline(
-            &self.device,
+            &gpu.device,
             &shader_module,
             &self.pipeline_layout,
             color_format,
@@ -656,12 +559,13 @@ impl Renderer {
     }
 
     /// Allocate a GPU-backed offscreen render target.
-    ///
-    /// Both colour and (optional) depth textures are created with
-    /// `RENDER_ATTACHMENT | TEXTURE_BINDING` usage so the colour output can
-    /// be sampled in a subsequent pass.
-    pub fn create_render_target(&self, desc: &RenderTargetDescriptor) -> RenderTarget {
-        let color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+    pub fn create_render_target(
+        &self,
+        gpu: &GpuContext,
+        desc: &RenderTargetDescriptor,
+    ) -> RenderTarget {
+        let device = &gpu.device;
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(desc.label),
             size: wgpu::Extent3d {
                 width: desc.width,
@@ -680,7 +584,7 @@ impl Renderer {
         let (depth_texture, depth_view) = desc
             .depth_format
             .map(|fmt| {
-                let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("render target depth"),
                     size: wgpu::Extent3d {
                         width: desc.width,
@@ -713,12 +617,10 @@ impl Renderer {
     }
 
     /// Render a scene into an offscreen [`RenderTarget`].
-    ///
-    /// Behaves identically to [`render_scene`] except the output goes to the
-    /// provided `target` instead of the swapchain surface.
     #[cfg(not(tarpaulin_include))]
     pub fn render_to_target(
         &mut self,
+        gpu: &GpuContext,
         target: &RenderTarget,
         scene: &SceneGraph,
         assets: &AssetStore,
@@ -742,15 +644,16 @@ impl Renderer {
         let aspect = target.width as f32 / target.height as f32;
         let pv = camera_projection_view(&camera, aspect);
 
-        let sorted_indices = self.prepare_draw_order(assets, &draw_list, pv);
+        let sorted_indices = self.prepare_draw_order(gpu, assets, &draw_list, pv);
 
-        let mut encoder = self
+        let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("rig offscreen encoder"),
             });
 
         self.record_scene_pass(
+            gpu,
             &mut encoder,
             &target.color_view,
             target.depth_view.as_ref(),
@@ -767,56 +670,28 @@ impl Renderer {
             target.depth_format,
         )?;
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        gpu.queue.submit(std::iter::once(encoder.finish()));
         Ok(())
     }
 
     /// Blit an offscreen texture onto the swapchain surface using a
     /// caller-supplied fullscreen-quad pipeline and bind group.
     ///
-    /// This is the final step of an offscreen rendering workflow:
-    /// 1. Call [`render_to_target`] to render the scene into a [`RenderTarget`].
-    /// 2. Build a blit `RenderPipeline` and `BindGroup` that sample the
-    ///    offscreen colour texture (using [`surface_format`] as the colour
-    ///    target format).
-    /// 3. Call this method to present the result.
-    ///
-    /// The method acquires the current swapchain frame, records a single
-    /// render pass with `draw(0..3, 0..1)` (no vertex buffer — positions are
-    /// generated inside the vertex shader), and presents the frame.
+    /// Records a blit pass into `frame.encoder` targeting `frame.view`.
+    /// Call [`Frame::present`] after this to flip the frame.
     #[cfg(not(tarpaulin_include))]
     pub fn blit_texture_to_screen(
         &mut self,
+        frame: &mut Frame,
         pipeline: &wgpu::RenderPipeline,
         bind_group: &wgpu::BindGroup,
     ) -> Result<()> {
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout => return Ok(()),
-            wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.surface_config);
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Validation => return Ok(()),
-        };
-
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("blit encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = frame
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("blit pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &frame.view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -830,16 +705,14 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..3, 0..1);
         Ok(())
     }
 }
+
+// ── public helpers ────────────────────────────────────────────────────────────
 
 /// The depth format used for all main render passes.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -867,6 +740,113 @@ pub fn create_depth_texture(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
+
+/// Generic vertex layout validator.
+pub fn validate_vertex_layout(vertex_layout: &VertexLayout) -> std::result::Result<(), String> {
+    if vertex_layout.array_stride == 0 {
+        return Err("vertex layout must use a non-zero array stride".into());
+    }
+
+    if vertex_layout.attributes.is_empty() {
+        return Err("vertex layout must contain at least one attribute".into());
+    }
+
+    let mut seen_locations = std::collections::HashSet::new();
+
+    for attribute in &vertex_layout.attributes {
+        if !seen_locations.insert(attribute.shader_location) {
+            return Err(format!(
+                "vertex layout contains duplicate shader location {}",
+                attribute.shader_location
+            ));
+        }
+
+        let format_size = vertex_format_size(attribute.format);
+        if attribute.offset + format_size > vertex_layout.array_stride {
+            return Err(format!(
+                "vertex attribute at location {} exceeds the declared array stride",
+                attribute.shader_location
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+// ── WGSL shaders ──────────────────────────────────────────────────────────────
+
+pub const TRIANGLE_SHADER: &str = r#"
+struct ObjectUniforms {
+    mvp: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec3<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
+    out.color = in.color;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.color, 1.0);
+}
+"#;
+
+/// WGSL shader that maps vertex normals to RGB colour.
+///
+/// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
+/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes — the
+/// standard layout produced by `rig_assets::mesh_factory`.
+pub const NORMAL_COLOR_SHADER: &str = r#"
+struct ObjectUniforms {
+    mvp: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) uv:       vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0)       color:         vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
+    // Map normal components from [-1, 1] to [0, 1] for a distinctive colour.
+    out.color = in.normal * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.color, 1.0);
+}
+"#;
+
+// ── private helpers ───────────────────────────────────────────────────────────
 
 fn aligned_uniform_size(size: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
@@ -975,46 +955,6 @@ fn mesh_vertex_attributes(
         .collect())
 }
 
-/// Generic vertex layout validator.
-///
-/// Checks that:
-/// - `array_stride > 0`
-/// - at least one attribute is present
-/// - no duplicate `shader_location` values
-/// - every attribute fits within the stride (`offset + format_size ≤ stride`)
-///
-/// Does **not** require any specific locations (e.g., position@0 or color@1).
-pub fn validate_vertex_layout(vertex_layout: &VertexLayout) -> std::result::Result<(), String> {
-    if vertex_layout.array_stride == 0 {
-        return Err("vertex layout must use a non-zero array stride".into());
-    }
-
-    if vertex_layout.attributes.is_empty() {
-        return Err("vertex layout must contain at least one attribute".into());
-    }
-
-    let mut seen_locations = std::collections::HashSet::new();
-
-    for attribute in &vertex_layout.attributes {
-        if !seen_locations.insert(attribute.shader_location) {
-            return Err(format!(
-                "vertex layout contains duplicate shader location {}",
-                attribute.shader_location
-            ));
-        }
-
-        let format_size = vertex_format_size(attribute.format);
-        if attribute.offset + format_size > vertex_layout.array_stride {
-            return Err(format!(
-                "vertex attribute at location {} exceeds the declared array stride",
-                attribute.shader_location
-            ));
-        }
-    }
-
-    Ok(())
-}
-
 fn vertex_format_size(format: VertexFormat) -> u64 {
     match format {
         VertexFormat::Float32 => std::mem::size_of::<f32>() as u64,
@@ -1056,7 +996,6 @@ fn decompose_pose(world: Mat4) -> rig_math::Transform {
     }
 }
 
-/// Compute the projection-view matrix for an extracted camera at the given aspect ratio.
 fn camera_projection_view(camera: &ExtractedCamera, aspect: f32) -> Mat4 {
     let pose = decompose_pose(camera.world_transform);
     let camera_value = Camera {
@@ -1066,80 +1005,7 @@ fn camera_projection_view(camera: &ExtractedCamera, aspect: f32) -> Mat4 {
     camera_value.projection_view_matrix(aspect)
 }
 
-pub const TRIANGLE_SHADER: &str = r#"
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
-};
-
-@group(0) @binding(0)
-var<uniform> object: ObjectUniforms;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) color: vec3<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec3<f32>,
-};
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
-    out.color = in.color;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
-}
-"#;
-
-/// WGSL shader that maps vertex normals to RGB colour.
-///
-/// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
-/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes — the
-/// standard layout produced by `rig_assets::mesh_factory`.
-///
-/// The fragment colour is computed as `normal * 0.5 + 0.5`, mapping the
-/// `[-1, 1]` normal range to `[0, 1]` RGB. No lighting is applied; this
-/// shader is useful for debugging geometry and demonstrating procedural meshes.
-pub const NORMAL_COLOR_SHADER: &str = r#"
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
-};
-
-@group(0) @binding(0)
-var<uniform> object: ObjectUniforms;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal:   vec3<f32>,
-    @location(2) uv:       vec2<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0)       color:         vec3<f32>,
-};
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
-    // Map normal components from [-1, 1] to [0, 1] for a distinctive colour.
-    out.color = in.normal * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
-}
-"#;
+// ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1398,13 +1264,8 @@ mod tests {
 
     #[test]
     fn create_depth_texture_returns_correct_dimensions() {
-        // We can't easily create a wgpu Device in a unit test without a display,
-        // so we validate the descriptor parameters directly via the public helper
-        // by checking the constants it would use.
         assert_eq!(DEPTH_FORMAT, wgpu::TextureFormat::Depth32Float);
     }
-
-    // --- Commit 2: generic vertex validation and extended VertexFormat ---
 
     #[test]
     fn validate_vertex_layout_accepts_normals_only() {
@@ -1481,17 +1342,13 @@ mod tests {
 
     #[test]
     fn index_count_uses_declared_format() {
-        // 8 bytes of u32 index data → 2 indices (each 4 bytes)
         let mut mesh = sample_mesh();
         mesh.index_data = Arc::from([0_u8; 8]);
         mesh.index_format = rig_assets::IndexFormat::Uint32;
 
-        // Compute expected index count the same way mesh_buffers does.
         let expected = (mesh.index_data.len() / std::mem::size_of::<u32>()) as u32;
         assert_eq!(expected, 2);
     }
-
-    // --- Commit 4: draw-list sorting ---
 
     #[test]
     fn draw_list_sorted_by_shader_then_mesh() {
@@ -1530,7 +1387,6 @@ mod tests {
             assets.add_mesh(m)
         };
 
-        // Deliberately interleaved: b1/x, a1/y, a2/x
         let draw_list = vec![
             ExtractedRenderable {
                 node: rig_scene::NodeId::from_raw(0, 0),
@@ -1555,7 +1411,6 @@ mod tests {
             },
         ];
 
-        // Build sorted indices the same way render_draw_list does.
         let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
         sorted_indices.sort_by_key(|&i| {
             let object = &draw_list[i];
@@ -1566,10 +1421,6 @@ mod tests {
             (shader_key, object.mesh)
         });
 
-        // After sorting: shader_a objects first (a1/y, a2/x), then shader_b (b1/x).
-        // Within shader_a the order by mesh: mesh_x < mesh_y depends on handle
-        // ordering.  What matters is that all shader_a objects are consecutive
-        // and all shader_b objects are consecutive.
         let sorted_shaders: Vec<ShaderHandle> = sorted_indices
             .iter()
             .map(|&i| {
@@ -1580,7 +1431,6 @@ mod tests {
             })
             .collect();
 
-        // shader_a objects come before shader_b objects.
         let first_b = sorted_shaders.iter().position(|&s| s == shader_b).unwrap();
         assert!(sorted_shaders[..first_b].iter().all(|&s| s == shader_a));
         assert!(sorted_shaders[first_b..].iter().all(|&s| s == shader_b));
@@ -1588,8 +1438,7 @@ mod tests {
 
     #[test]
     fn sorted_draw_list_reduces_state_changes() {
-        // Count hypothetical pipeline switches for sorted vs unsorted order.
-        let shaders = vec![1_u32, 2, 1, 2, 1]; // unsorted: 4 switches
+        let shaders = vec![1_u32, 2, 1, 2, 1];
         let mut sorted_shaders = shaders.clone();
         sorted_shaders.sort();
 
@@ -1603,13 +1452,8 @@ mod tests {
         assert!(sorted_switches < unsorted_switches);
     }
 
-    // --- Commit 6: RenderTarget ---
-
     #[test]
     fn render_target_descriptor_format_fields() {
-        // Verify that the RenderTargetDescriptor fields are accessible and
-        // hold the values we set.  GPU construction requires a Device, which
-        // is not available in unit tests, so we only verify the descriptor.
         let desc = RenderTargetDescriptor {
             width: 512,
             height: 256,
@@ -1633,5 +1477,14 @@ mod tests {
             label: "no depth",
         };
         assert!(desc.depth_format.is_none());
+    }
+
+    #[test]
+    fn render_error_display_is_non_empty() {
+        let err = RenderError::InvalidCamera;
+        assert!(!err.to_string().is_empty());
+
+        let err = RenderError::Asset("test".into());
+        assert!(err.to_string().contains("test"));
     }
 }

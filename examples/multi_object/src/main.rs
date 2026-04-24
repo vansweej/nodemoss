@@ -176,7 +176,7 @@ impl Application for MultiObjectApp {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         ctx.renderer
-            .render_scene(ctx.scene, ctx.assets, ctx.active_camera)?;
+            .render_scene(ctx.gpu, ctx.frame, ctx.scene, ctx.assets, ctx.active_camera)?;
         Ok(())
     }
 

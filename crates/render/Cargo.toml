@@ -6,13 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Concrete wgpu renderer for the rig framework"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
+
 [dependencies]
 rig-math.workspace = true
 rig-assets.workspace = true
 rig-scene.workspace = true
+rig-gpu.workspace = true
 wgpu.workspace = true
-winit.workspace = true
 bytemuck.workspace = true
-pollster.workspace = true
 log.workspace = true
 thiserror.workspace = true

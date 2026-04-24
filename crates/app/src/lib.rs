@@ -5,6 +5,8 @@ use std::{collections::HashSet, sync::Arc, time::Instant};
 use anyhow::Result;
 pub use rig_assets;
 use rig_assets::AssetStore;
+pub use rig_gpu;
+use rig_gpu::{Frame, GpuContext};
 pub use rig_math;
 use rig_math::{Quat, Vec3};
 pub use rig_render;
@@ -39,6 +41,7 @@ pub trait Application: Sized + 'static {
 pub struct StartupContext<'a> {
     pub scene: &'a mut SceneGraph,
     pub assets: &'a mut AssetStore,
+    pub gpu: &'a GpuContext,
     pub renderer: &'a mut Renderer,
     pub window: &'a Window,
 }
@@ -54,6 +57,8 @@ pub struct UpdateContext<'a> {
 pub struct RenderContext<'a> {
     pub scene: &'a SceneGraph,
     pub assets: &'a AssetStore,
+    pub gpu: &'a GpuContext,
+    pub frame: &'a mut Frame,
     pub renderer: &'a mut Renderer,
     pub active_camera: Option<NodeId>,
 }
@@ -204,6 +209,7 @@ struct RunnerState<A: Application> {
     app: A,
     scene: SceneGraph,
     assets: AssetStore,
+    gpu: GpuContext,
     renderer: Renderer,
     input: InputState,
     timer: FrameTimer,
@@ -243,8 +249,9 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                 .expect("failed to create window"),
         );
 
-        let mut renderer = pollster::block_on(Renderer::new(window.clone()))
-            .expect("failed to initialize renderer");
+        let gpu = pollster::block_on(GpuContext::new(window.clone()))
+            .expect("failed to initialize GPU context");
+        let mut renderer = Renderer::new(&gpu);
         let mut scene = SceneGraph::new();
         let mut assets = AssetStore::new();
         let input = InputState::default();
@@ -252,12 +259,12 @@ impl<A: Application> ApplicationHandler for Runner<A> {
         let mut startup = StartupContext {
             scene: &mut scene,
             assets: &mut assets,
+            gpu: &gpu,
             renderer: &mut renderer,
             window: window.as_ref(),
         };
         let app = A::init(&mut startup).expect("failed to initialize application");
 
-        // If init() did not select a camera, fall back to the first camera in the scene.
         let active_camera = scene.first_camera();
 
         self.window = Some(window);
@@ -265,6 +272,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             app,
             scene,
             assets,
+            gpu,
             renderer,
             input,
             timer,
@@ -287,7 +295,8 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                 return;
             }
             WindowEvent::Resized(size) => {
-                state.renderer.resize(*size);
+                state.gpu.resize(*size);
+                state.renderer.resize(&state.gpu);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 state.input.update(event);
@@ -323,10 +332,12 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                     .update_all_world_bounds(&state.assets)
                     .expect("failed to update world bounds");
 
-                {
+                if let Some(mut frame) = state.gpu.begin_frame() {
                     let mut render_ctx = RenderContext {
                         scene: &state.scene,
                         assets: &state.assets,
+                        gpu: &state.gpu,
+                        frame: &mut frame,
                         renderer: &mut state.renderer,
                         active_camera: state.active_camera,
                     };
@@ -334,6 +345,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         .app
                         .render(&mut render_ctx)
                         .expect("application render failed");
+                    frame.present();
                 }
             }
             other => {
