@@ -923,6 +923,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mesh_showcase"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "rig-app",
+]
+
+[[package]]
 name = "multi_object"
 version = "0.1.0"
 dependencies = [

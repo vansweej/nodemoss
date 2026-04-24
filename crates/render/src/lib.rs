@@ -1015,8 +1015,6 @@ pub fn validate_vertex_layout(vertex_layout: &VertexLayout) -> std::result::Resu
     Ok(())
 }
 
-
-
 fn vertex_format_size(format: VertexFormat) -> u64 {
     match format {
         VertexFormat::Float32 => std::mem::size_of::<f32>() as u64,
@@ -1100,7 +1098,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// WGSL shader that maps vertex normals to RGB colour.
+///
+/// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
+/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes — the
+/// standard layout produced by `rig_assets::mesh_factory`.
+///
+/// The fragment colour is computed as `normal * 0.5 + 0.5`, mapping the
+/// `[-1, 1]` normal range to `[0, 1]` RGB. No lighting is applied; this
+/// shader is useful for debugging geometry and demonstrating procedural meshes.
+pub const NORMAL_COLOR_SHADER: &str = r#"
+struct ObjectUniforms {
+    mvp: mat4x4<f32>,
+};
 
+@group(0) @binding(0)
+var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) uv:       vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0)       color:         vec3<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
+    // Map normal components from [-1, 1] to [0, 1] for a distinctive colour.
+    out.color = in.normal * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.color, 1.0);
+}
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -1290,6 +1329,15 @@ mod tests {
         assert!(TRIANGLE_SHADER.contains("fn vs_main"));
         assert!(TRIANGLE_SHADER.contains("fn fs_main"));
         assert!(TRIANGLE_SHADER.contains("@group(0) @binding(0)"));
+    }
+
+    #[test]
+    fn normal_color_shader_mentions_expected_entry_points_and_locations() {
+        assert!(NORMAL_COLOR_SHADER.contains("fn vs_main"));
+        assert!(NORMAL_COLOR_SHADER.contains("fn fs_main"));
+        assert!(NORMAL_COLOR_SHADER.contains("@location(0) position"));
+        assert!(NORMAL_COLOR_SHADER.contains("@location(1) normal"));
+        assert!(NORMAL_COLOR_SHADER.contains("@location(2) uv"));
     }
 
     #[test]

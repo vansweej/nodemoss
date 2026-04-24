@@ -17,48 +17,10 @@ use rig_app::{
     Application, CameraRig, RenderContext, StartupContext, UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
+    rig_render::NORMAL_COLOR_SHADER,
     rig_scene::{CameraComponent, NodeId, Renderable, VisibilityMode},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
-
-// ---------------------------------------------------------------------------
-// Normal-shaded WGSL shader (no lighting — colours derived from normals).
-// Layout: position @ 0, normal @ 1, uv @ 2.
-// ---------------------------------------------------------------------------
-
-const NORMAL_SHADER: &str = r#"
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
-};
-
-@group(0) @binding(0)
-var<uniform> object: ObjectUniforms;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal:   vec3<f32>,
-    @location(2) uv:       vec2<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0)       color:         vec3<f32>,
-};
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
-    // Map normal from [-1,1] to [0,1] for a simple colour.
-    out.color = in.normal * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
-}
-"#;
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -78,7 +40,7 @@ impl Application for MultiObjectApp {
     fn init(ctx: &mut StartupContext<'_>) -> Result<Self> {
         // --- Shader & material -----------------------------------------------
         let shader = ctx.assets.add_shader(ShaderAsset {
-            source: NORMAL_SHADER.into(),
+            source: NORMAL_COLOR_SHADER.into(),
         });
         let material = ctx.assets.add_material(MaterialAsset {
             shader,
