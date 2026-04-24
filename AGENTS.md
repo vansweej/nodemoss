@@ -28,6 +28,11 @@ graphics/                       # workspace root (this directory)
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
+## Language
+
+This is a Rust project. When using OpenCode skills, load the  skill
+for language-specific coding standards, error handling, and tooling rules.
+
 ## Technology choices
 
 | Area             | Choice      | Notes                                                    |
