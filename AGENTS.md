@@ -105,6 +105,8 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 1. **Minimal triangle** — wgpu + winit, hardcoded vertices, no framework abstractions (current)
 2. **Triangle via scene graph** — all core crates wired up, same triangle rendered through SceneGraph + AssetStore + Renderer + Application
 3. **Incremental features** — camera controls, frustum culling, lights, materials, MeshFactory, textures, multiple objects
+   - MeshFactory: box, sphere, plane, platonic solids (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron)
+   - `platonic_solids` example: five solids orbiting with spin animation and fly-camera
 
 ## Documentation
 

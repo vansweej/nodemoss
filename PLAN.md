@@ -209,7 +209,12 @@ list explicitly mentions "MeshFactory".
    triangles) centred at origin in the XZ plane, normal = +Y. 4 vertices, 6
    indices. UVs span [0, 1].
 
-5. **Re-export from `rig-assets/src/lib.rs`** as `pub mod mesh_factory`.
+5. **Platonic solids** — `create_tetrahedron()`, `create_hexahedron()`,
+   `create_octahedron()`, `create_dodecahedron()`, `create_icosahedron()`.
+   All inscribed in the unit sphere, smooth normals (normal = position),
+   spherical UV mapping. Inspired by `GTE/Graphics/MeshFactory.cpp`.
+
+6. **Re-export from `rig-assets/src/lib.rs`** as `pub mod mesh_factory`.
 
 ### Tests
 
@@ -239,6 +244,11 @@ We start with the three most useful shapes (box, sphere, plane) and add
 more later. GTE uses a "standard vertex" with position, normal, tangent,
 binormal, and texcoord — we use a simpler layout (position + normal + UV)
 that still supports Blinn-Phong lighting and texture mapping.
+
+All five platonic solids are now implemented, inspired by
+`GTE/Graphics/MeshFactory.cpp` (`CreateTetrahedron`, `CreateHexahedron`,
+`CreateOctahedron`, `CreateDodecahedron`, `CreateIcosahedron`). Each solid
+is inscribed in the unit sphere with smooth normals and spherical UV mapping.
 
 ---
 
