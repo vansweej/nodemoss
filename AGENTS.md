@@ -73,11 +73,25 @@ examples/         (depend on rig-app)
 
 ## Build & run
 
+This project uses a Nix flake for the development environment. nixGL is included to
+bridge host GPU drivers (NVIDIA/Vulkan) into the Nix sandbox on non-NixOS Linux. nixGL
+uses `builtins.currentTime` internally, which requires impure evaluation — so the dev
+shell **must always be entered with `--impure`**:
+
+```bash
+nix develop --impure
+```
+
+This is normal and expected for GPU / CUDA / Vulkan development under Nix. Do not remove
+`--impure` or attempt to remove nixGL to work around the flag requirement.
+
+Inside the dev shell:
+
 ```bash
 # build entire workspace
 cargo build --workspace
 
-# run the hello-triangle example
+# run the hello-triangle example (prefix with nixGL on non-NixOS NVIDIA systems)
 cargo run -p hello_triangle
 
 # run tests
