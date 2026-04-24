@@ -31,8 +31,13 @@ pub type Result<T> = std::result::Result<T, OverlayError>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Anchor {
     TopLeft,
+    TopCenter,
     TopRight,
+    LeftCenter,
+    Center,
+    RightCenter,
     BottomLeft,
+    BottomCenter,
     BottomRight,
 }
 
@@ -132,10 +137,17 @@ impl ElementRegistry {
             Position::Anchor { anchor, offset } => {
                 let w = self.surface_width as f32;
                 let h = self.surface_height as f32;
+                let cx = (w - text_width) / 2.0;
+                let cy = (h - text_height) / 2.0;
                 match anchor {
                     Anchor::TopLeft => (offset[0], offset[1]),
+                    Anchor::TopCenter => (cx + offset[0], offset[1]),
                     Anchor::TopRight => (w - text_width - offset[0], offset[1]),
+                    Anchor::LeftCenter => (offset[0], cy + offset[1]),
+                    Anchor::Center => (cx + offset[0], cy + offset[1]),
+                    Anchor::RightCenter => (w - text_width - offset[0], cy + offset[1]),
                     Anchor::BottomLeft => (offset[0], h - text_height - offset[1]),
+                    Anchor::BottomCenter => (cx + offset[0], h - text_height - offset[1]),
                     Anchor::BottomRight => {
                         (w - text_width - offset[0], h - text_height - offset[1])
                     }
@@ -257,8 +269,8 @@ impl Overlay {
             .iter()
             .zip(self.registry.elements.iter())
             .map(|(buffer, element)| {
-                // Approximate text bounds for anchor resolution.
-                let text_width = element.font_size * element.text.len() as f32 * 0.6;
+                // Use shaped glyph metrics for accurate text width measurement.
+                let text_width = measure_buffer_width(buffer);
                 let text_height = element.font_size * 1.2;
                 let (left, top) =
                     self.registry
@@ -326,8 +338,18 @@ impl Overlay {
     }
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+/// Measure the pixel width of a shaped glyphon [`Buffer`] by taking the
+/// maximum `line_w` across all layout runs.
+///
+/// Returns `0.0` for an empty buffer.
+fn measure_buffer_width(buffer: &glyphon::Buffer) -> f32 {
+    buffer
+        .layout_runs()
+        .map(|run| run.line_w)
+        .fold(0.0_f32, f32::max)
+}
 
+// ── tests ─────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +510,104 @@ mod tests {
         // x: 800 - 80 - 8 = 712, y: 600 - 20 - 8 = 572
         assert_eq!(x, 712.0);
         assert_eq!(y, 572.0);
+    }
+
+    #[test]
+    fn resolve_position_top_center() {
+        let reg = ElementRegistry::new(800, 600);
+        let text_width = 100.0;
+
+        let (x, y) = reg.resolve_position(
+            &Position::Anchor {
+                anchor: Anchor::TopCenter,
+                offset: [0.0, 8.0],
+            },
+            text_width,
+            0.0,
+        );
+
+        // x: (800 - 100) / 2 = 350, y: 8
+        assert_eq!(x, 350.0);
+        assert_eq!(y, 8.0);
+    }
+
+    #[test]
+    fn resolve_position_bottom_center() {
+        let reg = ElementRegistry::new(800, 600);
+        let text_width = 100.0;
+        let text_height = 20.0;
+
+        let (x, y) = reg.resolve_position(
+            &Position::Anchor {
+                anchor: Anchor::BottomCenter,
+                offset: [0.0, 8.0],
+            },
+            text_width,
+            text_height,
+        );
+
+        // x: (800 - 100) / 2 = 350, y: 600 - 20 - 8 = 572
+        assert_eq!(x, 350.0);
+        assert_eq!(y, 572.0);
+    }
+
+    #[test]
+    fn resolve_position_left_center() {
+        let reg = ElementRegistry::new(800, 600);
+        let text_height = 20.0;
+
+        let (x, y) = reg.resolve_position(
+            &Position::Anchor {
+                anchor: Anchor::LeftCenter,
+                offset: [8.0, 0.0],
+            },
+            0.0,
+            text_height,
+        );
+
+        // x: 8, y: (600 - 20) / 2 = 290
+        assert_eq!(x, 8.0);
+        assert_eq!(y, 290.0);
+    }
+
+    #[test]
+    fn resolve_position_right_center() {
+        let reg = ElementRegistry::new(800, 600);
+        let text_width = 100.0;
+        let text_height = 20.0;
+
+        let (x, y) = reg.resolve_position(
+            &Position::Anchor {
+                anchor: Anchor::RightCenter,
+                offset: [8.0, 0.0],
+            },
+            text_width,
+            text_height,
+        );
+
+        // x: 800 - 100 - 8 = 692, y: (600 - 20) / 2 = 290
+        assert_eq!(x, 692.0);
+        assert_eq!(y, 290.0);
+    }
+
+    #[test]
+    fn resolve_position_center() {
+        let reg = ElementRegistry::new(800, 600);
+        let text_width = 100.0;
+        let text_height = 20.0;
+
+        let (x, y) = reg.resolve_position(
+            &Position::Anchor {
+                anchor: Anchor::Center,
+                offset: [0.0, 0.0],
+            },
+            text_width,
+            text_height,
+        );
+
+        // x: (800 - 100) / 2 = 350, y: (600 - 20) / 2 = 290
+        assert_eq!(x, 350.0);
+        assert_eq!(y, 290.0);
     }
 
     #[test]
