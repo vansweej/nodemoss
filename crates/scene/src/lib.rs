@@ -317,8 +317,9 @@ impl SceneGraph {
     /// Returns `SceneError::InvalidNode` when `id` is not a valid node, and
     /// `SceneError::NotACamera` when the node exists but has no camera component.
     pub fn extract_active_camera(&self, id: NodeId) -> Result<ExtractedCamera> {
-        let camera = self.cameras.get(&id).ok_or(SceneError::NotACamera)?;
+        // Validate node existence first so stale handles get InvalidNode, not NotACamera.
         let world_transform = self.node(id)?.world_transform;
+        let camera = self.cameras.get(&id).ok_or(SceneError::NotACamera)?;
         Ok(ExtractedCamera {
             node: id,
             projection: camera.projection,
@@ -407,7 +408,7 @@ impl SceneGraph {
             .filter_map(|(&node, &renderable)| {
                 let world = self.node(node).ok()?.world_transform;
                 let world_bound = self.node(node).ok()?.world_bound;
-                let visibility = self.node(node).ok()?.visibility;
+                let visibility = self.effective_visibility(node).ok()?;
                 if matches!(visibility, VisibilityMode::Hidden) {
                     return None;
                 }
@@ -447,9 +448,10 @@ impl SceneGraph {
     /// Like [`extract_renderables`] but skips objects whose world bounding
     /// sphere is entirely outside the given frustum planes.
     ///
-    /// - `VisibilityMode::Hidden`       → always culled.
-    /// - `VisibilityMode::AlwaysVisible` → skip frustum test, always included.
-    /// - `VisibilityMode::Inherit`       → normal frustum test.
+    /// - `VisibilityMode::Hidden` (effective) → always culled.
+    /// - `VisibilityMode::AlwaysVisible`       → skip frustum test, always included
+    ///                                           **unless** an ancestor is `Hidden`.
+    /// - `VisibilityMode::Inherit`             → normal frustum test.
     pub fn extract_renderables_culled(
         &self,
         frustum_planes: &[Vec4; 6],
@@ -458,7 +460,8 @@ impl SceneGraph {
             .iter()
             .filter_map(|(&node, &renderable)| {
                 let node_data = self.node(node).ok()?;
-                match node_data.visibility {
+                let effective = self.effective_visibility(node).ok()?;
+                match effective {
                     VisibilityMode::Hidden => return None,
                     VisibilityMode::AlwaysVisible => {}
                     VisibilityMode::Inherit => {
@@ -520,6 +523,25 @@ impl SceneGraph {
     pub fn set_visibility(&mut self, id: NodeId, mode: VisibilityMode) -> Result<()> {
         self.node_mut(id)?.visibility = mode;
         Ok(())
+    }
+
+    /// Resolve the effective visibility of a node by walking the parent chain.
+    ///
+    /// - If any ancestor is `Hidden`, the effective visibility is `Hidden`
+    ///   regardless of the node's own mode (hidden ancestor wins).
+    /// - Otherwise the node's own `VisibilityMode` is returned.
+    pub fn effective_visibility(&self, id: NodeId) -> Result<VisibilityMode> {
+        let own = self.node(id)?.visibility;
+        // Walk ancestors; if any is Hidden, this node is effectively hidden.
+        let mut current = self.node(id)?.parent;
+        while let Some(parent_id) = current {
+            let parent = self.node(parent_id)?;
+            if parent.visibility == VisibilityMode::Hidden {
+                return Ok(VisibilityMode::Hidden);
+            }
+            current = parent.parent;
+        }
+        Ok(own)
     }
 
     fn root_nodes(&self) -> Vec<NodeId> {
@@ -1172,9 +1194,32 @@ mod tests {
             generation: 0,
         };
 
-        // NodeId 99 does not exist — should get NotACamera (cameras map lookup fails first)
-        // or InvalidNode depending on the lookup order. Either is an error.
-        assert!(scene.extract_active_camera(invalid).is_err());
+        // NodeId 99 does not exist — should get InvalidNode (node check runs first).
+        assert!(matches!(
+            scene.extract_active_camera(invalid),
+            Err(SceneError::InvalidNode)
+        ));
+    }
+
+    #[test]
+    fn extract_active_camera_returns_invalid_node_for_stale_handle() {
+        let mut scene = SceneGraph::new();
+        let cam = scene.create_node("cam");
+        scene
+            .set_camera(
+                cam,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
+        scene.destroy_node(cam).unwrap();
+
+        // Stale handle — node no longer exists, must get InvalidNode not NotACamera.
+        assert!(matches!(
+            scene.extract_active_camera(cam),
+            Err(SceneError::InvalidNode)
+        ));
     }
 
     #[test]
@@ -1402,5 +1447,69 @@ mod tests {
 
         assert!(scene.set_visibility(node, VisibilityMode::Hidden).is_err());
         assert!(scene.visibility(node).is_err());
+    }
+
+    #[test]
+    fn effective_visibility_returns_inherit_when_all_ancestors_inherit() {
+        let mut scene = SceneGraph::new();
+        let parent = scene.create_node("parent");
+        let child = scene.create_node("child");
+        scene.attach_child(parent, child).unwrap();
+
+        assert_eq!(
+            scene.effective_visibility(child).unwrap(),
+            VisibilityMode::Inherit
+        );
+    }
+
+    #[test]
+    fn effective_visibility_returns_hidden_for_hidden_ancestor() {
+        let mut scene = SceneGraph::new();
+        let parent = scene.create_node("parent");
+        let child = scene.create_node("child");
+        scene.attach_child(parent, child).unwrap();
+        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+
+        assert_eq!(
+            scene.effective_visibility(child).unwrap(),
+            VisibilityMode::Hidden
+        );
+    }
+
+    #[test]
+    fn extract_renderables_hides_child_when_parent_is_hidden() {
+        let mut scene = SceneGraph::new();
+        let (_, mesh, material) = sample_assets();
+        let parent = scene.create_node("parent");
+        let child = scene.create_node("child");
+        scene.attach_child(parent, child).unwrap();
+        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
+        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+
+        let extracted = scene.extract_renderables();
+
+        assert!(extracted.is_empty(), "child should be hidden via parent");
+    }
+
+    #[test]
+    fn extract_renderables_culled_hides_always_visible_child_when_parent_is_hidden() {
+        let mut scene = SceneGraph::new();
+        let (assets, mesh, material) = sample_assets();
+        let parent = scene.create_node("parent");
+        let child = scene.create_node("child");
+        scene.attach_child(parent, child).unwrap();
+        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
+        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+        scene.set_visibility(child, VisibilityMode::AlwaysVisible).unwrap();
+        scene.update_all_world_transforms().unwrap();
+        scene.update_all_world_bounds(&assets).unwrap();
+
+        let planes = box_frustum(10.0);
+        let extracted = scene.extract_renderables_culled(&planes);
+
+        assert!(
+            extracted.is_empty(),
+            "AlwaysVisible child should still be hidden when parent is Hidden"
+        );
     }
 }
