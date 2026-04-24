@@ -30,3 +30,27 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 ```
+
+### NVIDIA GPU (non-NixOS Linux)
+
+On non-NixOS Linux with a proprietary NVIDIA driver, the Nix dev shell
+cannot see the host GPU libraries. This causes Vulkan loader errors like:
+
+```
+libGLX_nvidia.so.0: cannot open shared object file: No such file or directory
+loader_icd_scan: Failed loading library associated with ICD JSON libGLX_nvidia.so.0
+```
+
+The scene may still render via a software fallback, but without hardware acceleration.
+
+The dev shell includes [nixGL](https://github.com/nix-community/nixGL) to solve this.
+Prefix GPU-using commands with `nixGL` so the host NVIDIA driver is injected into the
+library path and wgpu can use the hardware Vulkan implementation:
+
+```bash
+nixGL cargo run -p hello_triangle
+nixGL cargo run -p triangle_scenegraph
+```
+
+> **macOS and NixOS users:** `nixGL` is not needed — GPU drivers are already visible
+> to Nix on these platforms. Use `cargo run` directly.
