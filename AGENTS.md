@@ -17,14 +17,20 @@ graphics/                       # workspace root (this directory)
     RESOURCES.md                # assets, GPU resources, frame resources
     APPLICATION.md              # runtime, event loop, contexts, interaction
   crates/
-    math/                       # rig-math   — glam re-exports + Transform, BoundingSphere, Projection, Camera
-    scene/                      # rig-scene  — arena SceneGraph, generational NodeId, cameras/lights/renderables
-    assets/                     # rig-assets — immutable meshes, materials, shader source, textures
-    render/                     # rig-render — concrete wgpu renderer, immutable cache, frame resources
-    app/                        # rig-app    — Application trait, runner, startup/update/render contexts
+    math/                       # rig-math    — glam re-exports + Transform, BoundingSphere, Projection, Camera
+    scene/                      # rig-scene   — arena SceneGraph, generational NodeId, cameras/lights/renderables
+    assets/                     # rig-assets  — immutable meshes, materials, shader source, textures
+    gpu/                        # rig-gpu     — GpuContext (device/queue/surface), Frame, GpuError
+    render/                     # rig-render  — concrete wgpu renderer, immutable cache, frame resources
+    overlay/                    # rig-overlay — 2D text overlay (glyphon), retained ElementRegistry
+    app/                        # rig-app     — Application trait, runner, startup/update/render/overlay contexts
   examples/
-    hello_triangle/             # milestone 1 — colored triangle (wgpu + winit, no framework)
-    triangle_scenegraph/        # milestone 2 — same triangle via scene graph
+    hello_triangle/             # milestone 1 — colored triangle (raw wgpu + winit, no framework)
+    triangle_scenegraph/        # milestone 2 — triangle via scene graph + Application trait
+    mesh_showcase/              # milestone 3 — MeshFactory primitives
+    multi_object/               # milestone 3 — multiple objects, camera rig
+    offscreen_demo/             # milestone 3 — offscreen render target + blit
+    platonic_solids/            # milestone 3 — five animated solids, fly-camera, overlay
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
@@ -41,8 +47,9 @@ for language-specific coding standards, error handling, and tooling rules.
 | Windowing        | **winit**   | Cross-platform. Integrates with wgpu.                    |
 | Math             | **glam**    | Fast, bytemuck-compatible. Extended by rig-math.         |
 | Scene graph      | **Hybrid**  | Arena tree + scene-facing component maps.                 |
-| Project layout   | **Cargo workspace** | 4 crates with clean dependency boundaries.        |
+| Project layout   | **Cargo workspace** | 7 crates with clean dependency boundaries.        |
 | GPU resources    | **Immutable cache + frame resources** | Share immutable GPU state, allocate mutable frame data explicitly. |
+| 2D overlay       | **glyphon** | GPU text rendering; retained element registry in rig-overlay. |
 
 ## Crate dependency order
 
@@ -53,9 +60,13 @@ rig-scene         (depends on rig-math)
   ^
 rig-assets        (depends on rig-math)
   ^
-rig-render        (depends on rig-math, rig-scene, rig-assets, wgpu)
+rig-gpu           (depends on wgpu, winit)
   ^
-rig-app           (depends on rig-scene, rig-assets, rig-render, winit)
+rig-render        (depends on rig-gpu, rig-math, rig-scene, rig-assets)
+  ^
+rig-overlay       (depends on rig-gpu, glyphon)
+  ^
+rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, winit)
   ^
 examples/         (depend on rig-app)
 ```
@@ -89,11 +100,13 @@ cargo clippy --workspace -- -D warnings
 
 ## Architecture decisions (summary)
 
-1. **Application pattern**: one `Application` trait + startup/update/render contexts, driven by a redraw-based runner.
+1. **Application pattern**: one `Application` trait + startup/update/render/overlay contexts, driven by a redraw-based runner.
 2. **Scene graph**: arena-allocated storage with generational `NodeId` handles, first-child/next-sibling links, and scene-facing component maps.
 3. **Asset model**: immutable shared assets (`MeshAsset`, `MaterialAsset`, `ShaderAsset`) referenced by typed handles.
 4. **Renderer model**: concrete `wgpu` renderer with immutable resource caching and explicit frame-local allocations.
 5. **Camera system**: active camera selected from scene camera nodes; `CameraRig` and `TrackBall` are opt-in utilities.
+6. **GPU context**: `rig-gpu` owns device/queue/surface; `begin_frame` returns `Option<Frame>`; `Frame::present` submits and flips.
+7. **Overlay system**: `rig-overlay` wraps glyphon; retained `ElementRegistry`; F3 toggles visibility; rendered after 3D scene with `LoadOp::Load`.
 
 ## Reference codebase
 
@@ -107,11 +120,12 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 
 ## Milestones
 
-1. **Minimal triangle** — wgpu + winit, hardcoded vertices, no framework abstractions (current)
-2. **Triangle via scene graph** — all core crates wired up, same triangle rendered through SceneGraph + AssetStore + Renderer + Application
-3. **Incremental features** — camera controls, frustum culling, lights, materials, MeshFactory, textures, multiple objects
+1. **Minimal triangle** — wgpu + winit, hardcoded vertices, no framework abstractions ✓
+2. **Triangle via scene graph** — all core crates wired up, same triangle rendered through SceneGraph + AssetStore + Renderer + Application ✓
+3. **Incremental features** — camera controls, frustum culling, lights, materials, MeshFactory, textures, multiple objects ✓
    - MeshFactory: box, sphere, plane, platonic solids (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron)
    - `platonic_solids` example: five solids orbiting with spin animation and fly-camera
+4. **Overlay system** — `rig-gpu` crate, `rig-overlay` crate (glyphon), FPS counters in all examples, F3 toggle ✓
 
 ## Documentation
 

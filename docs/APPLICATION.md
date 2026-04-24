@@ -1,7 +1,7 @@
 # Application Framework, Runtime, and Interaction
 
-**Crates**: `rig-app`, `rig-scene`, `rig-render`, `rig-math`
-**Purpose**: Define the runtime shell around scene update, rendering, input, and utility controllers
+**Crates**: `rig-app`, `rig-gpu`, `rig-render`, `rig-overlay`, `rig-scene`, `rig-math`
+**Purpose**: Define the runtime shell around scene update, rendering, overlay, input, and utility controllers
 
 ---
 
@@ -17,9 +17,10 @@
 8. [Camera Model](#8-camera-model)
 9. [Controllers](#9-controllers)
 10. [Render Extraction and Submission](#10-render-extraction-and-submission)
-11. [Surface Lifecycle and Error Handling](#11-surface-lifecycle-and-error-handling)
-12. [Worked Example](#12-worked-example)
-13. [GTE Comparison](#13-gte-comparison)
+11. [Overlay System](#11-overlay-system)
+12. [Surface Lifecycle and Error Handling](#12-surface-lifecycle-and-error-handling)
+13. [Worked Example](#13-worked-example)
+14. [GTE Comparison](#14-gte-comparison)
 
 ---
 
@@ -31,9 +32,11 @@ It is responsible for:
 
 - creating the `winit` event loop
 - creating the window
-- initializing the renderer
+- initializing `GpuContext` (device, queue, surface)
+- initializing the renderer, overlay, and asset store
 - managing input and frame timing
-- driving application update and redraw
+- driving application update, overlay update, and redraw
+- presenting the finished frame
 - exposing utility controllers such as camera movement helpers
 
 It is not responsible for:
@@ -57,13 +60,17 @@ sequenceDiagram
     participant Main as main()
     participant Runner as rig-app runner
     participant Winit as winit
-    participant Renderer as rig-render
+    participant Gpu as rig-gpu (GpuContext)
+    participant Renderer as rig-render (Renderer)
+    participant Overlay as rig-overlay (Overlay)
     participant App as User application
 
     Main->>Runner: run::<MyApp>()
     Runner->>Winit: create EventLoop
     Runner->>Winit: create Window
-    Runner->>Renderer: initialize from window
+    Runner->>Gpu: GpuContext::new(window)
+    Runner->>Renderer: Renderer::new(&gpu)
+    Runner->>Overlay: Overlay::new(&gpu)
     Runner->>App: MyApp::init(startup_ctx)
     Runner->>Winit: enter event loop
 ```
@@ -93,19 +100,23 @@ Reasons startup can fail:
 
 ## 3. Application Trait
 
-The application trait should separate startup, update, and render responsibilities.
+The application trait separates startup, update, overlay update, and render responsibilities.
 
 ```rust
 pub trait Application: Sized {
     fn init(ctx: &mut StartupContext) -> anyhow::Result<Self>;
 
-    fn update(&mut self, ctx: &mut UpdateContext, dt: f32) -> anyhow::Result<()>;
+    fn update(&mut self, ctx: &mut UpdateContext<'_>) -> anyhow::Result<()>;
 
-    fn render(&mut self, ctx: &mut RenderContext) -> anyhow::Result<()>;
+    fn render(&mut self, ctx: &mut RenderContext<'_>) -> anyhow::Result<()>;
+
+    fn update_overlay(&mut self, _ctx: &mut OverlayUpdateContext<'_>) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     fn on_window_event(
         &mut self,
-        _ctx: &mut UpdateContext,
+        _ctx: &mut UpdateContext<'_>,
         _event: &winit::event::WindowEvent,
     ) -> anyhow::Result<()> {
         Ok(())
@@ -115,18 +126,18 @@ pub trait Application: Sized {
 
 ### Why this split
 
-- startup needs setup access
+- startup needs setup access (scene, assets, renderer, overlay, gpu)
 - update needs world mutation and input
-- render needs renderer-facing operations
+- render needs renderer-facing operations and the current `Frame`
+- overlay update is separate so it can access the `Overlay` registry without conflicting borrows with the scene
 
-This is a better fit than one public mutable “god context” passed everywhere.
+This is a better fit than one public mutable "god context" passed everywhere.
 
 ---
 
 ## 4. Context Types
 
-The exact API can evolve, but the architectural direction is stable: use narrower context
-types instead of exposing all subsystems as public fields.
+Narrower context types are used instead of exposing all subsystems as public fields.
 
 ### 4.1 StartupContext
 
@@ -137,7 +148,8 @@ pub struct StartupContext<'a> {
     pub scene: &'a mut SceneGraph,
     pub assets: &'a mut AssetStore,
     pub renderer: &'a mut Renderer,
-    pub window: &'a Window,
+    pub overlay: &'a mut Overlay,
+    pub gpu: &'a GpuContext,
 }
 ```
 
@@ -148,6 +160,7 @@ Used during simulation and scene updates.
 ```rust
 pub struct UpdateContext<'a> {
     pub scene: &'a mut SceneGraph,
+    pub assets: &'a AssetStore,
     pub input: &'a InputState,
     pub timer: &'a FrameTimer,
     pub active_camera: &'a mut Option<NodeId>,
@@ -156,14 +169,36 @@ pub struct UpdateContext<'a> {
 
 ### 4.3 RenderContext
 
-Used during redraw.
+Used during redraw. Holds a live `Frame` so the app can record render passes.
 
 ```rust
 pub struct RenderContext<'a> {
     pub scene: &'a SceneGraph,
     pub assets: &'a AssetStore,
     pub renderer: &'a mut Renderer,
+    pub gpu: &'a GpuContext,
+    pub frame: &'a mut Frame,
     pub active_camera: Option<NodeId>,
+}
+```
+
+### 4.4 OverlayUpdateContext
+
+Used after `update()` to refresh overlay text elements.
+
+```rust
+pub struct OverlayUpdateContext<'a> {
+    pub overlay: &'a mut Overlay,
+    pub timer: &'a FrameTimer,
+}
+```
+
+Convenience methods:
+
+```rust
+impl OverlayUpdateContext<'_> {
+    pub fn set_text(&mut self, id: ElementId, text: impl Into<String>) -> anyhow::Result<()>;
+    pub fn set_position(&mut self, id: ElementId, pos: Position) -> anyhow::Result<()>;
 }
 ```
 
@@ -171,7 +206,8 @@ pub struct RenderContext<'a> {
 
 - update code should not casually reach into renderer internals
 - render code should not mutate arbitrary scene internals by default
-- context structure should make illegal states harder to express
+- overlay update has its own context to avoid borrow conflicts with scene/renderer
+- context structure makes illegal states harder to express
 
 ---
 
@@ -185,19 +221,25 @@ Use redraw-driven rendering.
 flowchart TD
     WE["Window/input event"] --> Handle["Update input and app state"]
     Handle --> Wait["AboutToWait"]
-    Wait --> Req["request_redraw() if needed"]
+    Wait --> Req["request_redraw()"]
     Req --> Redraw["RedrawRequested"]
-    Redraw --> Update["app.update(dt)"]
-    Update --> Render["app.render(ctx)"]
-    Render --> Present["present frame"]
+    Redraw --> BF["gpu.begin_frame()"]
+    BF --> Update["app.update(ctx)"]
+    Update --> Overlay["app.update_overlay(ctx)"]
+    Overlay --> Render["app.render(ctx)"]
+    Render --> OP["overlay.render_pass(frame)"]
+    OP --> Present["frame.present()"]
 
     style WE fill:#e3f2fd,stroke:#1565c0
     style Handle fill:#e3f2fd,stroke:#1565c0
     style Wait fill:#fff3e0,stroke:#e65100
     style Req fill:#fff3e0,stroke:#e65100
     style Redraw fill:#c8e6c9,stroke:#2e7d32
+    style BF fill:#c8e6c9,stroke:#2e7d32
     style Update fill:#c8e6c9,stroke:#2e7d32
+    style Overlay fill:#f3e5f5,stroke:#6a1b9a
     style Render fill:#c8e6c9,stroke:#2e7d32
+    style OP fill:#f3e5f5,stroke:#6a1b9a
     style Present fill:#c8e6c9,stroke:#2e7d32
 ```
 
@@ -404,7 +446,77 @@ The important boundary is that renderer upload policy is renderer-owned.
 
 ---
 
-## 11. Surface Lifecycle and Error Handling
+## 11. Overlay System
+
+`rig-overlay` provides a retained 2D text overlay rendered on top of the 3D scene.
+
+### 11.1 Architecture
+
+```
+rig-overlay
+  ElementRegistry   — non-GPU, testable; stores TextElement by ElementId
+  Overlay           — wraps glyphon TextRenderer; owns font system + atlas
+```
+
+`Overlay` renders in a separate render pass that uses `LoadOp::Load` so it composites
+over the already-rendered 3D scene without clearing it.
+
+### 11.2 Element lifecycle
+
+Elements are registered once in `Application::init` and updated each frame in
+`Application::update_overlay`.
+
+```rust
+// init
+let fps_id = ctx.overlay.add_text(TextElement {
+    text: "FPS: 0".into(),
+    position: Position::Anchor { anchor: Anchor::TopRight, offset: [8.0, 8.0] },
+    color: [1.0, 1.0, 1.0, 1.0],
+    font_size: 16.0,
+});
+
+// update_overlay
+ctx.set_text(fps_id, format!("FPS: {:.0}", ctx.timer.fps()))?;
+```
+
+### 11.3 Positioning
+
+```rust
+pub enum Position {
+    /// Pixel coordinates from top-left.
+    Absolute { x: f32, y: f32 },
+    /// Offset from a named corner/edge anchor.
+    Anchor { anchor: Anchor, offset: [f32; 2] },
+}
+
+pub enum Anchor {
+    TopLeft, TopRight, BottomLeft, BottomRight,
+    TopCenter, BottomCenter, LeftCenter, RightCenter,
+    Center,
+}
+```
+
+### 11.4 Visibility toggle
+
+The runner intercepts **F3** key presses and toggles `overlay_visible` before forwarding
+the event to the application. When hidden, `overlay.render_pass` is skipped entirely.
+
+### 11.5 Frame integration
+
+The runner owns the two-phase frame lifecycle:
+
+```
+begin_frame()
+  → app.update()
+  → app.update_overlay()
+  → app.render()          ← 3D scene pass(es)
+  → overlay.render_pass() ← 2D text pass (LoadOp::Load)
+frame.present()
+```
+
+---
+
+## 12. Surface Lifecycle and Error Handling
 
 The runtime should handle `wgpu` surface cases explicitly.
 
@@ -431,12 +543,13 @@ This behavior should be owned by the runner and renderer, not spread through sce
 
 ---
 
-## 12. Worked Example
+## 13. Worked Example
 
 ```rust
 struct TriangleApp {
     triangle: NodeId,
     camera: NodeId,
+    fps_id: ElementId,
 }
 
 impl Application for TriangleApp {
@@ -447,10 +560,7 @@ impl Application for TriangleApp {
         let triangle = ctx.scene.create_node("triangle");
         ctx.scene.set_renderable(
             triangle,
-            Renderable {
-                mesh: triangle_mesh,
-                material: triangle_material,
-            },
+            Renderable { mesh: triangle_mesh, material: triangle_material },
         )?;
 
         let camera = ctx.scene.create_node("camera");
@@ -464,27 +574,40 @@ impl Application for TriangleApp {
                 },
             },
         )?;
+        *ctx.active_camera = Some(camera);
 
-        Ok(Self { triangle, camera })
+        let fps_id = ctx.overlay.add_text(TextElement {
+            text: "FPS: 0".into(),
+            position: Position::Anchor { anchor: Anchor::TopRight, offset: [8.0, 8.0] },
+            color: [1.0, 1.0, 1.0, 1.0],
+            font_size: 16.0,
+        });
+
+        Ok(Self { triangle, camera, fps_id })
     }
 
-    fn update(&mut self, ctx: &mut UpdateContext, dt: f32) -> anyhow::Result<()> {
+    fn update(&mut self, ctx: &mut UpdateContext<'_>) -> anyhow::Result<()> {
         // update scene state here
         Ok(())
     }
 
-    fn render(&mut self, ctx: &mut RenderContext) -> anyhow::Result<()> {
-        ctx.renderer.render_scene(ctx.scene, ctx.assets, ctx.active_camera)?;
+    fn render(&mut self, ctx: &mut RenderContext<'_>) -> anyhow::Result<()> {
+        ctx.renderer.render_scene(ctx.gpu, ctx.frame, ctx.scene, ctx.assets, ctx.active_camera)?;
         Ok(())
+    }
+
+    fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> anyhow::Result<()> {
+        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
     }
 }
 ```
 
-This example keeps scene mutation in update and rendering in the renderer.
+This example keeps scene mutation in `update`, rendering in `render`, and overlay text
+updates in `update_overlay`. The runner calls all three in order each frame.
 
 ---
 
-## 13. GTE Comparison
+## 14. GTE Comparison
 
 GTE still informs some concepts, but the runtime shape is different.
 

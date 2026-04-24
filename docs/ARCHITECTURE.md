@@ -109,19 +109,29 @@ graphics/                           # workspace root
     assets/                         # rig-assets
       Cargo.toml
       src/lib.rs
+    gpu/                            # rig-gpu
+      Cargo.toml
+      src/lib.rs
     render/                         # rig-render
+      Cargo.toml
+      src/lib.rs
+    overlay/                        # rig-overlay
       Cargo.toml
       src/lib.rs
     app/                            # rig-app
       Cargo.toml
       src/lib.rs
   examples/
-    hello_triangle/                 # milestone 1
+    hello_triangle/                 # milestone 1 (raw wgpu+winit)
       Cargo.toml
       src/main.rs
     triangle_scenegraph/            # milestone 2
       Cargo.toml
       src/main.rs
+    mesh_showcase/                  # milestone 3+
+    multi_object/
+    offscreen_demo/
+    platonic_solids/
   GeometricTools/                   # reference only, not part of the workspace
 ```
 
@@ -132,8 +142,10 @@ graphics/                           # workspace root
 | `rig-math` | Math primitives and geometry helpers | glam |
 | `rig-scene` | Scene hierarchy, transforms, bounds, cameras, lights, renderable instances | rig-math |
 | `rig-assets` | Immutable meshes, materials, shader source, textures, asset handles | rig-math |
-| `rig-render` | Concrete `wgpu` renderer, GPU caches, frame resources, extraction, drawing | rig-math, rig-scene, rig-assets, wgpu |
-| `rig-app` | Runner, input, timing, event loop integration, utility controllers | rig-scene, rig-render, winit |
+| `rig-gpu` | GPU context: device, queue, surface, swapchain, `Frame` handle | wgpu, winit |
+| `rig-render` | Concrete `wgpu` renderer, GPU caches, frame resources, extraction, drawing | rig-gpu, rig-math, rig-scene, rig-assets |
+| `rig-overlay` | 2D text overlay (glyphon), retained element registry, anchor positioning | rig-gpu, glyphon |
+| `rig-app` | Runner, input, timing, event loop integration, utility controllers | rig-gpu, rig-render, rig-overlay, rig-scene, winit |
 
 ---
 
@@ -141,29 +153,37 @@ graphics/                           # workspace root
 
 ```mermaid
 graph TD
-    examples["examples/<br/><i>hello_triangle, triangle_scenegraph</i>"]
+    examples["examples/<br/><i>triangle_scenegraph, mesh_showcase, …</i>"]
     app["rig-app"]
+    overlay["rig-overlay"]
     render["rig-render"]
+    gpu["rig-gpu"]
     assets["rig-assets"]
     scene["rig-scene"]
     math["rig-math"]
     winit["winit<br/><i>(external)</i>"]
     wgpu["wgpu<br/><i>(external)</i>"]
+    glyphon["glyphon<br/><i>(external)</i>"]
     glam["glam<br/><i>(external)</i>"]
 
     examples --> app
-    examples --> render
-    examples --> assets
-    examples --> scene
 
     app --> render
+    app --> overlay
     app --> scene
+    app --> gpu
     app --> winit
+
+    overlay --> gpu
+    overlay --> glyphon
 
     render --> assets
     render --> scene
     render --> math
-    render --> wgpu
+    render --> gpu
+
+    gpu --> wgpu
+    gpu --> winit
 
     assets --> math
     scene --> math
@@ -171,17 +191,21 @@ graph TD
 
     style examples fill:#e8f5e9,stroke:#388e3c
     style app fill:#e3f2fd,stroke:#1565c0
+    style overlay fill:#e3f2fd,stroke:#1565c0
     style render fill:#e3f2fd,stroke:#1565c0
+    style gpu fill:#e3f2fd,stroke:#1565c0
     style assets fill:#e3f2fd,stroke:#1565c0
     style scene fill:#e3f2fd,stroke:#1565c0
     style math fill:#e3f2fd,stroke:#1565c0
     style winit fill:#fff3e0,stroke:#e65100
     style wgpu fill:#fff3e0,stroke:#e65100
+    style glyphon fill:#fff3e0,stroke:#e65100
     style glam fill:#fff3e0,stroke:#e65100
 ```
 
-`rig-math` is the leaf. `rig-app` is the runtime shell. `rig-render` depends on scene and
-assets, but scene and assets do not depend on the renderer.
+`rig-math` is the leaf. `rig-gpu` owns the wgpu device/queue/surface. `rig-render` and
+`rig-overlay` both depend on `rig-gpu` but not on each other. `rig-app` is the runtime
+shell that wires all crates together.
 
 ---
 
