@@ -340,7 +340,7 @@ impl Renderer {
         let frame_resources = FrameResources::new(
             &device,
             &object_bind_group_layout,
-            adapter.limits().min_uniform_buffer_offset_alignment as u64,
+            device.limits().min_uniform_buffer_offset_alignment as u64,
         );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
