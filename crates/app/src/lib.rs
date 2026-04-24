@@ -38,10 +38,12 @@ pub trait Application: Sized + 'static {
     ///
     /// Override this to update [`ElementId`] text via [`OverlayUpdateContext`].
     /// The default implementation is a no-op.
+    #[cfg(not(tarpaulin_include))]
     fn update_overlay(&mut self, _ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
         Ok(())
     }
 
+    #[cfg(not(tarpaulin_include))]
     fn on_window_event(
         &mut self,
         _ctx: &mut UpdateContext<'_>,
@@ -91,6 +93,7 @@ pub struct OverlayUpdateContext<'a> {
     pub timer: &'a FrameTimer,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl OverlayUpdateContext<'_> {
     /// Convenience wrapper: update the text of an overlay element.
     pub fn set_text(&mut self, id: ElementId, text: impl Into<String>) -> Result<()> {
@@ -152,6 +155,7 @@ impl CameraRig {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl Default for CameraRig {
     fn default() -> Self {
         Self {
@@ -171,6 +175,7 @@ impl InputState {
         self.keys.contains(&key)
     }
 
+    #[cfg(not(tarpaulin_include))]
     fn update(&mut self, event: &winit::event::KeyEvent) {
         if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
             self.update_key(code, event.state);

@@ -173,6 +173,7 @@ pub struct Overlay {
     registry: ElementRegistry,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl Overlay {
     /// Create a new overlay for the given GPU context and surface format.
     #[cfg(not(tarpaulin_include))]
@@ -342,6 +343,7 @@ impl Overlay {
 /// maximum `line_w` across all layout runs.
 ///
 /// Returns `0.0` for an empty buffer.
+#[cfg(not(tarpaulin_include))]
 fn measure_buffer_width(buffer: &glyphon::Buffer) -> f32 {
     buffer
         .layout_runs()

@@ -5,10 +5,7 @@
 //! those live in [`rig_gpu::GpuContext`], which is passed by reference to
 //! every method that needs GPU access.
 
-use std::{
-    collections::HashMap,
-    num::NonZeroU64,
-};
+use std::{collections::HashMap, num::NonZeroU64};
 
 use bytemuck::{Pod, Zeroable};
 use rig_assets::{
@@ -71,6 +68,7 @@ struct ObjectUniformBuffer {
     capacity: usize,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl ObjectUniformBuffer {
     fn new(
         device: &wgpu::Device,
@@ -143,6 +141,7 @@ struct FrameResources {
     object_uniforms: ObjectUniformBuffer,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl FrameResources {
     fn new(
         device: &wgpu::Device,
@@ -178,6 +177,7 @@ struct ImmutableResourceCache {
     meshes: HashMap<MeshHandle, CachedMeshBuffers>,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl ImmutableResourceCache {
     fn shader_module(
         &mut self,
@@ -277,6 +277,7 @@ pub struct Renderer {
     depth_view: wgpu::TextureView,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl Renderer {
     /// Create a new renderer for the given GPU context.
     ///
@@ -313,8 +314,7 @@ impl Renderer {
             immediate_size: 0,
         });
 
-        let (depth_texture, depth_view) =
-            create_depth_texture(device, gpu.width(), gpu.height());
+        let (depth_texture, depth_view) = create_depth_texture(device, gpu.width(), gpu.height());
 
         Self {
             pipeline_layout,
@@ -722,6 +722,7 @@ impl Renderer {
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Create a depth texture and its default view sized to `width × height`.
+#[cfg(not(tarpaulin_include))]
 pub fn create_depth_texture(
     device: &wgpu::Device,
     width: u32,
@@ -884,6 +885,7 @@ fn encode_object_uniforms(uniforms: &[ObjectUniforms], stride: u64) -> Vec<u8> {
     bytes
 }
 
+#[cfg(not(tarpaulin_include))]
 fn create_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,

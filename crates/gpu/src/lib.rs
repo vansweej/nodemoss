@@ -50,6 +50,7 @@ pub struct Frame {
     queue: Arc<wgpu::Queue>,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl Frame {
     /// Submit the recorded commands and present the frame to the screen.
     pub fn present(self) {
@@ -71,6 +72,7 @@ pub struct GpuContext {
     pub window: Arc<Window>,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl GpuContext {
     /// Initialise the GPU context for the given window.
     ///

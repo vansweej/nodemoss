@@ -165,20 +165,20 @@ impl Application for OffscreenApp {
         )?;
 
         // --- Offscreen render target -----------------------------------------
-        let offscreen_target = ctx.renderer.create_render_target(ctx.gpu, &RenderTargetDescriptor {
-            width: OFFSCREEN_WIDTH,
-            height: OFFSCREEN_HEIGHT,
-            color_format: OFFSCREEN_FORMAT,
-            depth_format: Some(rig_app::rig_render::DEPTH_FORMAT),
-            label: "offscreen scene",
-        });
+        let offscreen_target = ctx.renderer.create_render_target(
+            ctx.gpu,
+            &RenderTargetDescriptor {
+                width: OFFSCREEN_WIDTH,
+                height: OFFSCREEN_HEIGHT,
+                color_format: OFFSCREEN_FORMAT,
+                depth_format: Some(rig_app::rig_render::DEPTH_FORMAT),
+                label: "offscreen scene",
+            },
+        );
 
         // --- Blit pipeline ---------------------------------------------------
-        let blit = build_blit_resources(
-            &ctx.gpu.device,
-            ctx.gpu.surface_format(),
-            &offscreen_target,
-        );
+        let blit =
+            build_blit_resources(&ctx.gpu.device, ctx.gpu.surface_format(), &offscreen_target);
 
         let fps_id = ctx.overlay.add_text(TextElement {
             text: "FPS: 0".into(),
@@ -223,8 +223,11 @@ impl Application for OffscreenApp {
         )?;
 
         // 2. Blit the offscreen colour texture onto the swapchain.
-        ctx.renderer
-            .blit_texture_to_screen(ctx.frame, &self.blit.pipeline, &self.blit.bind_group)?;
+        ctx.renderer.blit_texture_to_screen(
+            ctx.frame,
+            &self.blit.pipeline,
+            &self.blit.bind_group,
+        )?;
 
         Ok(())
     }

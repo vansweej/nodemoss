@@ -739,7 +739,10 @@ mod tests {
         let child = scene.create_node("child");
         scene.attach_child(real_parent, child).unwrap();
 
-        let invalid = NodeId { index: 99, generation: 0 };
+        let invalid = NodeId {
+            index: 99,
+            generation: 0,
+        };
         assert!(matches!(
             scene.attach_child(invalid, child),
             Err(SceneError::InvalidNode)
@@ -1468,7 +1471,9 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+        scene
+            .set_visibility(parent, VisibilityMode::Hidden)
+            .unwrap();
 
         assert_eq!(
             scene.effective_visibility(child).unwrap(),
@@ -1483,8 +1488,12 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
-        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+        scene
+            .set_renderable(child, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_visibility(parent, VisibilityMode::Hidden)
+            .unwrap();
 
         let extracted = scene.extract_renderables();
 
@@ -1498,9 +1507,15 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
-        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
-        scene.set_visibility(child, VisibilityMode::AlwaysVisible).unwrap();
+        scene
+            .set_renderable(child, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_visibility(parent, VisibilityMode::Hidden)
+            .unwrap();
+        scene
+            .set_visibility(child, VisibilityMode::AlwaysVisible)
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
 
