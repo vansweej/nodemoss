@@ -439,13 +439,8 @@ impl Renderer {
             return Ok(());
         };
 
-        let pose = decompose_pose(camera.world_transform);
-        let camera_value = Camera {
-            pose,
-            projection: camera.projection,
-        };
         let aspect = self.surface_config.width as f32 / self.surface_config.height as f32;
-        let pv = camera_value.projection_view_matrix(aspect);
+        let pv = camera_projection_view(&camera, aspect);
 
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
@@ -462,7 +457,50 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        // Build a sorted draw order.  Look up the shader handle for each
+
+        let sorted_indices = self.prepare_draw_order(assets, draw_list, pv);
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("rig render encoder"),
+            });
+
+        self.record_scene_pass(
+            &mut encoder,
+            &view,
+            Some(&self.depth_view.clone()),
+            wgpu::Color {
+                r: 0.1,
+                g: 0.1,
+                b: 0.1,
+                a: 1.0,
+            },
+            assets,
+            draw_list,
+            &sorted_indices,
+            self.surface_config.format,
+            Some(DEPTH_FORMAT),
+        )?;
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
+    /// Sort the draw list by `(ShaderHandle, MeshHandle)`, compute per-object
+    /// MVP uniforms, and upload them to the GPU uniform buffer.
+    ///
+    /// Returns the sorted index list so the caller can iterate in the correct
+    /// order when recording draw calls.
+    #[cfg(not(tarpaulin_include))]
+    fn prepare_draw_order(
+        &mut self,
+        assets: &AssetStore,
+        draw_list: &[ExtractedRenderable],
+        pv: Mat4,
+    ) -> Vec<usize> {
+        // Build a sorted draw order. Look up the shader handle for each
         // object (via its material) and sort by (shader_handle, mesh_handle)
         // so that we minimise pipeline switches and vertex-buffer rebinds.
         // Objects with missing assets are silently skipped here but will
@@ -489,90 +527,100 @@ impl Renderer {
             &self.object_bind_group_layout,
             &object_uniforms,
         );
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("rig render encoder"),
-            });
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("rig render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+        sorted_indices
+    }
 
-            // Tracks the last-bound pipeline and mesh to skip redundant state
-            // changes between draw calls.
-            let mut current_pipeline: Option<ShaderHandle> = None;
-            let mut current_mesh: Option<rig_assets::MeshHandle> = None;
+    /// Record a single scene render pass into `encoder`.
+    ///
+    /// The pass clears the colour attachment to `clear_color`, optionally
+    /// clears depth to 1.0, then issues sorted draw calls with minimal
+    /// pipeline and vertex-buffer state changes.
+    #[cfg(not(tarpaulin_include))]
+    #[allow(clippy::too_many_arguments)]
+    fn record_scene_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        color_view: &wgpu::TextureView,
+        depth_view: Option<&wgpu::TextureView>,
+        clear_color: wgpu::Color,
+        assets: &AssetStore,
+        draw_list: &[ExtractedRenderable],
+        sorted_indices: &[usize],
+        color_format: wgpu::TextureFormat,
+        depth_format: Option<wgpu::TextureFormat>,
+    ) -> Result<()> {
+        let depth_attachment = depth_view.map(|view| wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(1.0),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
 
-            for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
-                let object = &draw_list[draw_index];
-                let material = assets
-                    .material(object.material)
-                    .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let shader = assets
-                    .shader(material.shader)
-                    .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let mesh = assets
-                    .mesh(object.mesh)
-                    .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let buffers = self.cache.mesh_buffers(&self.device, mesh);
-                let pipeline = self.pipeline_for_shader(
-                    material.shader,
-                    shader,
-                    &mesh.vertex_layout,
-                    self.surface_config.format,
-                    Some(DEPTH_FORMAT),
-                )?;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("rig scene pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: depth_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
 
-                if current_pipeline != Some(material.shader) {
-                    pass.set_pipeline(&pipeline);
-                    current_pipeline = Some(material.shader);
-                }
-                pass.set_bind_group(
-                    0,
-                    &self.frame_resources.object_uniforms.bind_group,
-                    &[self
-                        .frame_resources
-                        .object_uniforms
-                        .dynamic_offset(uniform_index)?],
-                );
-                if current_mesh != Some(object.mesh) {
-                    pass.set_vertex_buffer(0, buffers.vertex.slice(..));
-                    pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
-                    current_mesh = Some(object.mesh);
-                }
-                pass.draw_indexed(0..buffers.index_count, 0, 0..1);
+        // Tracks the last-bound pipeline and mesh to skip redundant state
+        // changes between draw calls.
+        let mut current_pipeline: Option<ShaderHandle> = None;
+        let mut current_mesh: Option<rig_assets::MeshHandle> = None;
+
+        for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
+            let object = &draw_list[draw_index];
+            let material = assets
+                .material(object.material)
+                .map_err(|err| RenderError::Asset(err.to_string()))?;
+            let shader = assets
+                .shader(material.shader)
+                .map_err(|err| RenderError::Asset(err.to_string()))?;
+            let mesh = assets
+                .mesh(object.mesh)
+                .map_err(|err| RenderError::Asset(err.to_string()))?;
+            let buffers = self.cache.mesh_buffers(&self.device, mesh);
+            let pipeline = self.pipeline_for_shader(
+                material.shader,
+                shader,
+                &mesh.vertex_layout,
+                color_format,
+                depth_format,
+            )?;
+
+            if current_pipeline != Some(material.shader) {
+                pass.set_pipeline(&pipeline);
+                current_pipeline = Some(material.shader);
             }
+            pass.set_bind_group(
+                0,
+                &self.frame_resources.object_uniforms.bind_group,
+                &[self
+                    .frame_resources
+                    .object_uniforms
+                    .dynamic_offset(uniform_index)?],
+            );
+            if current_mesh != Some(object.mesh) {
+                pass.set_vertex_buffer(0, buffers.vertex.slice(..));
+                pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
+                current_mesh = Some(object.mesh);
+            }
+            pass.draw_indexed(0..buffers.index_count, 0, 0..1);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
         Ok(())
     }
 
@@ -680,12 +728,7 @@ impl Renderer {
 
         let draw_list = if let Some(cam) = extracted_camera {
             let aspect = target.width as f32 / target.height as f32;
-            let pose = decompose_pose(cam.world_transform);
-            let camera_value = rig_math::Camera {
-                pose,
-                projection: cam.projection,
-            };
-            let pv = camera_value.projection_view_matrix(aspect);
+            let pv = camera_projection_view(&cam, aspect);
             let planes = rig_scene::frustum_planes_from_projection_view(pv);
             scene.extract_renderables_culled(&planes)
         } else {
@@ -696,37 +739,10 @@ impl Renderer {
             return Ok(());
         };
 
-        let pose = decompose_pose(camera.world_transform);
-        let camera_value = Camera {
-            pose,
-            projection: camera.projection,
-        };
         let aspect = target.width as f32 / target.height as f32;
-        let pv = camera_value.projection_view_matrix(aspect);
+        let pv = camera_projection_view(&camera, aspect);
 
-        // Sort draw list
-        let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
-        sorted_indices.sort_by_key(|&i| {
-            let object = &draw_list[i];
-            let shader_key = assets
-                .material(object.material)
-                .map(|m| m.shader)
-                .unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
-            (shader_key, object.mesh)
-        });
-
-        let object_uniforms: Vec<_> = sorted_indices
-            .iter()
-            .map(|&i| ObjectUniforms {
-                world: (pv * draw_list[i].world_transform).to_cols_array_2d(),
-            })
-            .collect();
-        self.frame_resources.prepare_object_uniforms(
-            &self.device,
-            &self.queue,
-            &self.object_bind_group_layout,
-            &object_uniforms,
-        );
+        let sorted_indices = self.prepare_draw_order(assets, &draw_list, pv);
 
         let mut encoder = self
             .device
@@ -734,85 +750,22 @@ impl Renderer {
                 label: Some("rig offscreen encoder"),
             });
 
-        {
-            let depth_attachment =
-                target
-                    .depth_view
-                    .as_ref()
-                    .map(|view| wgpu::RenderPassDepthStencilAttachment {
-                        view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    });
-
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("rig offscreen pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target.color_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.05,
-                            b: 0.05,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: depth_attachment,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            let mut current_pipeline: Option<ShaderHandle> = None;
-            let mut current_mesh: Option<rig_assets::MeshHandle> = None;
-
-            for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
-                let object = &draw_list[draw_index];
-                let material = assets
-                    .material(object.material)
-                    .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let shader = assets
-                    .shader(material.shader)
-                    .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let mesh = assets
-                    .mesh(object.mesh)
-                    .map_err(|err| RenderError::Asset(err.to_string()))?;
-                let buffers = self.cache.mesh_buffers(&self.device, mesh);
-                let pipeline = self.pipeline_for_shader(
-                    material.shader,
-                    shader,
-                    &mesh.vertex_layout,
-                    target.color_format,
-                    target.depth_format,
-                )?;
-
-                if current_pipeline != Some(material.shader) {
-                    pass.set_pipeline(&pipeline);
-                    current_pipeline = Some(material.shader);
-                }
-                pass.set_bind_group(
-                    0,
-                    &self.frame_resources.object_uniforms.bind_group,
-                    &[self
-                        .frame_resources
-                        .object_uniforms
-                        .dynamic_offset(uniform_index)?],
-                );
-                if current_mesh != Some(object.mesh) {
-                    pass.set_vertex_buffer(0, buffers.vertex.slice(..));
-                    pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
-                    current_mesh = Some(object.mesh);
-                }
-                pass.draw_indexed(0..buffers.index_count, 0, 0..1);
-            }
-        }
+        self.record_scene_pass(
+            &mut encoder,
+            &target.color_view,
+            target.depth_view.as_ref(),
+            wgpu::Color {
+                r: 0.05,
+                g: 0.05,
+                b: 0.05,
+                a: 1.0,
+            },
+            assets,
+            &draw_list,
+            &sorted_indices,
+            target.color_format,
+            target.depth_format,
+        )?;
 
         self.queue.submit(std::iter::once(encoder.finish()));
         Ok(())
@@ -1103,6 +1056,16 @@ fn decompose_pose(world: Mat4) -> rig_math::Transform {
         rotation,
         scale: rig_math::Vec3::ONE,
     }
+}
+
+/// Compute the projection-view matrix for an extracted camera at the given aspect ratio.
+fn camera_projection_view(camera: &ExtractedCamera, aspect: f32) -> Mat4 {
+    let pose = decompose_pose(camera.world_transform);
+    let camera_value = Camera {
+        pose,
+        projection: camera.projection,
+    };
+    camera_value.projection_view_matrix(aspect)
 }
 
 pub const TRIANGLE_SHADER: &str = r#"
