@@ -97,6 +97,8 @@ pub enum SceneError {
     InvalidNode,
     #[error("cannot attach a node to itself")]
     SelfParent,
+    #[error("attaching parent to its own descendant would create a cycle")]
+    CycleDetected,
     #[error("missing mesh asset for renderable node")]
     MissingMeshAsset,
     #[error("node does not have a camera component")]
@@ -166,6 +168,15 @@ impl SceneGraph {
             return Err(SceneError::SelfParent);
         }
 
+        // Validate both nodes exist before any mutation.
+        self.node(parent)?;
+        self.node(child)?;
+
+        // Reject if parent is already a descendant of child (would create a cycle).
+        if self.is_ancestor(child, parent)? {
+            return Err(SceneError::CycleDetected);
+        }
+
         self.detach_child(child)?;
 
         let first_child = self.node(parent)?.first_child;
@@ -176,6 +187,19 @@ impl SceneGraph {
         }
         self.node_mut(parent)?.first_child = Some(child);
         Ok(())
+    }
+
+    /// Returns `true` if `ancestor` is an ancestor of `descendant` (i.e. walking
+    /// the parent chain from `descendant` reaches `ancestor`).
+    fn is_ancestor(&self, ancestor: NodeId, descendant: NodeId) -> Result<bool> {
+        let mut current = self.node(descendant)?.parent;
+        while let Some(id) = current {
+            if id == ancestor {
+                return Ok(true);
+            }
+            current = self.node(id)?.parent;
+        }
+        Ok(false)
     }
 
     pub fn detach_child(&mut self, child: NodeId) -> Result<()> {
@@ -664,6 +688,57 @@ mod tests {
 
         assert!(scene.children(first_parent).unwrap().is_empty());
         assert_eq!(scene.children(second_parent).unwrap(), vec![child]);
+    }
+
+    #[test]
+    fn attach_child_rejects_ancestor_to_descendant_reparenting() {
+        let mut scene = SceneGraph::new();
+        let grandparent = scene.create_node("grandparent");
+        let parent = scene.create_node("parent");
+        let child = scene.create_node("child");
+        scene.attach_child(grandparent, parent).unwrap();
+        scene.attach_child(parent, child).unwrap();
+
+        // Trying to make grandparent a child of child would create a cycle.
+        assert!(matches!(
+            scene.attach_child(child, grandparent),
+            Err(SceneError::CycleDetected)
+        ));
+        // Tree must be unchanged.
+        assert_eq!(scene.children(grandparent).unwrap(), vec![parent]);
+        assert_eq!(scene.children(parent).unwrap(), vec![child]);
+        assert!(scene.children(child).unwrap().is_empty());
+    }
+
+    #[test]
+    fn attach_child_does_not_detach_child_when_parent_is_invalid() {
+        let mut scene = SceneGraph::new();
+        let real_parent = scene.create_node("real_parent");
+        let child = scene.create_node("child");
+        scene.attach_child(real_parent, child).unwrap();
+
+        let invalid = NodeId { index: 99, generation: 0 };
+        assert!(matches!(
+            scene.attach_child(invalid, child),
+            Err(SceneError::InvalidNode)
+        ));
+        // Child must still be attached to real_parent.
+        assert_eq!(scene.children(real_parent).unwrap(), vec![child]);
+    }
+
+    #[test]
+    fn attach_child_does_not_detach_child_when_cycle_detected() {
+        let mut scene = SceneGraph::new();
+        let parent = scene.create_node("parent");
+        let child = scene.create_node("child");
+        scene.attach_child(parent, child).unwrap();
+
+        // Trying to make parent a child of child would create a cycle.
+        let result = scene.attach_child(child, parent);
+        assert!(matches!(result, Err(SceneError::CycleDetected)));
+        // parent must still be a root (not detached from its position).
+        assert!(scene.children(child).unwrap().is_empty());
+        assert_eq!(scene.children(parent).unwrap(), vec![child]);
     }
 
     #[test]
