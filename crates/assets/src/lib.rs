@@ -364,8 +364,16 @@ mod tests {
             source: Arc::from("shader"),
         });
 
-        let first = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default(), textures: vec![] });
-        let second = store.add_material(MaterialAsset { shader, parameters: MaterialParams::default(), textures: vec![] });
+        let first = store.add_material(MaterialAsset {
+            shader,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
+        let second = store.add_material(MaterialAsset {
+            shader,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
 
         assert_eq!(first.index(), 0);
         assert_eq!(second.index(), 1);
@@ -480,7 +488,9 @@ mod tests {
     #[test]
     fn material_with_textures_stores_pairs() {
         let mut store = AssetStore::new();
-        let shader = store.add_shader(ShaderAsset { source: Arc::from("s") });
+        let shader = store.add_shader(ShaderAsset {
+            source: Arc::from("s"),
+        });
         let tex = store.add_texture(TextureAsset {
             width: 1,
             height: 1,

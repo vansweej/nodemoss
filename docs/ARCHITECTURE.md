@@ -534,6 +534,8 @@ Add incrementally:
 - frustum culling
 - texture support
 - multiple objects and shared assets
+- **procedural mesh generation** — MeshFactory: box, sphere, plane, platonic solids
+  (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron)
 - offscreen passes if needed
 - physics integration later
 
@@ -553,6 +555,7 @@ This mapping is now informational only.
 | `PVWUpdater` | renderer extraction + frame upload step |
 | `CameraRig` / `TrackBall` | optional utilities in `rig-app` |
 | `Environment` | normal Rust config / paths |
+| `MeshFactory::CreateTetrahedron` etc. | `mesh_factory::create_tetrahedron()` etc. in `rig-assets` |
 
 ### Key differences from GTE
 

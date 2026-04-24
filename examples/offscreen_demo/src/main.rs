@@ -134,21 +134,33 @@ impl Application for OffscreenApp {
 
         // --- Scene nodes -----------------------------------------------------
         let box_node = ctx.scene.create_node("box");
-        ctx.scene.set_renderable(box_node, Renderable { mesh: box_mesh, material })?;
+        ctx.scene.set_renderable(
+            box_node,
+            Renderable {
+                mesh: box_mesh,
+                material,
+            },
+        )?;
 
         let camera = ctx.scene.create_node("camera");
-        ctx.scene.set_local_transform(camera, Transform {
-            translation: Vec3::new(0.0, 1.0, 3.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-        })?;
-        ctx.scene.set_camera(camera, CameraComponent {
-            projection: Projection::Perspective {
-                fov_y_radians: 60.0_f32.to_radians(),
-                near: 0.1,
-                far: 100.0,
+        ctx.scene.set_local_transform(
+            camera,
+            Transform {
+                translation: Vec3::new(0.0, 1.0, 3.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
             },
-        })?;
+        )?;
+        ctx.scene.set_camera(
+            camera,
+            CameraComponent {
+                projection: Projection::Perspective {
+                    fov_y_radians: 60.0_f32.to_radians(),
+                    near: 0.1,
+                    far: 100.0,
+                },
+            },
+        )?;
 
         // --- Offscreen render target -----------------------------------------
         let offscreen_target = ctx.renderer.create_render_target(&RenderTargetDescriptor {

@@ -282,11 +282,10 @@ impl SceneGraph {
     ///
     /// Returns `None` if no node with that name has a `CameraComponent`.
     pub fn camera_with_name(&self, name: &str) -> Option<NodeId> {
-        self.cameras.keys().copied().find(|&id| {
-            self.node(id)
-                .map(|n| n.name == name)
-                .unwrap_or(false)
-        })
+        self.cameras
+            .keys()
+            .copied()
+            .find(|&id| self.node(id).map(|n| n.name == name).unwrap_or(false))
     }
 
     /// Extract camera data for a given camera node.
@@ -294,10 +293,7 @@ impl SceneGraph {
     /// Returns `SceneError::InvalidNode` when `id` is not a valid node, and
     /// `SceneError::NotACamera` when the node exists but has no camera component.
     pub fn extract_active_camera(&self, id: NodeId) -> Result<ExtractedCamera> {
-        let camera = self
-            .cameras
-            .get(&id)
-            .ok_or(SceneError::NotACamera)?;
+        let camera = self.cameras.get(&id).ok_or(SceneError::NotACamera)?;
         let world_transform = self.node(id)?.world_transform;
         Ok(ExtractedCamera {
             node: id,
@@ -407,7 +403,8 @@ impl SceneGraph {
     ///
     /// For each node that has a `LightComponent`, reads the world transform
     /// and derives world-space position and forward direction (−Z in local space).
-    pub fn extract_lights(&self) -> Vec<ExtractedLight> {        self.lights
+    pub fn extract_lights(&self) -> Vec<ExtractedLight> {
+        self.lights
             .iter()
             .filter_map(|(&node, &light)| {
                 let world = self.node(node).ok()?.world_transform;
@@ -580,7 +577,11 @@ mod tests {
         let shader = assets.add_shader(ShaderAsset {
             source: Arc::from("shader"),
         });
-        let material = assets.add_material(MaterialAsset { shader, parameters: rig_assets::MaterialParams::default(), textures: vec![] });
+        let material = assets.add_material(MaterialAsset {
+            shader,
+            parameters: rig_assets::MaterialParams::default(),
+            textures: vec![],
+        });
         let mesh = assets.add_mesh(MeshAsset {
             vertex_layout: VertexLayout {
                 array_stride: 24,
@@ -931,8 +932,22 @@ mod tests {
         let a = scene.create_node("a");
         let b = scene.create_node("b");
         let c = scene.create_node("c");
-        scene.set_camera(a, CameraComponent { projection: perspective() }).unwrap();
-        scene.set_camera(b, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                a,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
+        scene
+            .set_camera(
+                b,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         // c has no camera
 
         let mut nodes = scene.camera_nodes();
@@ -955,7 +970,14 @@ mod tests {
     fn first_camera_returns_some_for_scene_with_camera() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("cam");
-        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                cam,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
 
         assert!(scene.first_camera().is_some());
     }
@@ -965,8 +987,22 @@ mod tests {
         let mut scene = SceneGraph::new();
         let main = scene.create_node("main");
         let debug = scene.create_node("debug");
-        scene.set_camera(main, CameraComponent { projection: perspective() }).unwrap();
-        scene.set_camera(debug, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                main,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
+        scene
+            .set_camera(
+                debug,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
 
         assert_eq!(scene.camera_with_name("main"), Some(main));
         assert_eq!(scene.camera_with_name("debug"), Some(debug));
@@ -984,7 +1020,14 @@ mod tests {
     fn camera_with_name_returns_none_for_missing_name() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("main");
-        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                cam,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
 
         assert!(scene.camera_with_name("other").is_none());
     }
@@ -1015,7 +1058,14 @@ mod tests {
                 },
             )
             .unwrap();
-        scene.set_camera(cam_node, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                cam_node,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         scene.update_world_transforms(parent).unwrap();
 
         let extracted = scene.extract_active_camera(cam_node).unwrap();
@@ -1042,7 +1092,10 @@ mod tests {
     #[test]
     fn extract_active_camera_errors_for_invalid_node() {
         let scene = SceneGraph::new();
-        let invalid = NodeId { index: 99, generation: 0 };
+        let invalid = NodeId {
+            index: 99,
+            generation: 0,
+        };
 
         // NodeId 99 does not exist — should get NotACamera (cameras map lookup fails first)
         // or InvalidNode depending on the lookup order. Either is an error.
@@ -1151,12 +1204,12 @@ mod tests {
     /// Signed distance convention: `dot(p, normal) + w ≥ 0` means inside.
     fn box_frustum(half: f32) -> [Vec4; 6] {
         [
-            Vec4::new( 1.0,  0.0,  0.0,  half),  // x ≥ −half
-            Vec4::new(-1.0,  0.0,  0.0,  half),  // x ≤  half
-            Vec4::new( 0.0,  1.0,  0.0,  half),  // y ≥ −half
-            Vec4::new( 0.0, -1.0,  0.0,  half),  // y ≤  half
-            Vec4::new( 0.0,  0.0,  1.0,  half),  // z ≥ −half
-            Vec4::new( 0.0,  0.0, -1.0,  half),  // z ≤  half
+            Vec4::new(1.0, 0.0, 0.0, half),  // x ≥ −half
+            Vec4::new(-1.0, 0.0, 0.0, half), // x ≤  half
+            Vec4::new(0.0, 1.0, 0.0, half),  // y ≥ −half
+            Vec4::new(0.0, -1.0, 0.0, half), // y ≤  half
+            Vec4::new(0.0, 0.0, 1.0, half),  // z ≥ −half
+            Vec4::new(0.0, 0.0, -1.0, half), // z ≤  half
         ]
     }
 
@@ -1166,11 +1219,15 @@ mod tests {
         let (assets, mesh, material) = sample_assets();
 
         let inside = scene.create_node("inside");
-        scene.set_renderable(inside, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(inside, Renderable { mesh, material })
+            .unwrap();
         // Default position is origin — inside [-10,10]³
 
         let outside = scene.create_node("outside");
-        scene.set_renderable(outside, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(outside, Renderable { mesh, material })
+            .unwrap();
         scene
             .set_local_transform(
                 outside,
@@ -1198,7 +1255,9 @@ mod tests {
         let (assets, mesh, material) = sample_assets();
 
         let node = scene.create_node("always");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         scene
             .set_local_transform(
                 node,
@@ -1209,7 +1268,9 @@ mod tests {
                 },
             )
             .unwrap();
-        scene.set_visibility(node, VisibilityMode::AlwaysVisible).unwrap();
+        scene
+            .set_visibility(node, VisibilityMode::AlwaysVisible)
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
 
@@ -1225,7 +1286,9 @@ mod tests {
         let (assets, mesh, material) = sample_assets();
 
         let node = scene.create_node("hidden");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         // Inside frustum but explicitly hidden
         scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         scene.update_all_world_transforms().unwrap();
@@ -1250,7 +1313,10 @@ mod tests {
         scene
             .set_visibility(node, VisibilityMode::AlwaysVisible)
             .unwrap();
-        assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::AlwaysVisible);
+        assert_eq!(
+            scene.visibility(node).unwrap(),
+            VisibilityMode::AlwaysVisible
+        );
     }
 
     #[test]

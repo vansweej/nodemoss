@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 description = "Immutable shared asset store for meshes, materials, shaders, and textures"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
+
 [dependencies]
 rig-math.workspace = true
 thiserror.workspace = true
