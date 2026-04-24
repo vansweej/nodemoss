@@ -341,6 +341,9 @@ impl Renderer {
     ///
     /// Writes draw calls into `frame.encoder` and renders to `frame.view`.
     /// The caller is responsible for calling [`Frame::present`] afterwards.
+    ///
+    /// Returns `Ok(())` when `active_camera` is `None` (nothing to render).
+    /// Returns `Err` when `active_camera` is `Some(invalid_id)`.
     #[cfg(not(tarpaulin_include))]
     pub fn render_scene(
         &mut self,
@@ -350,16 +353,17 @@ impl Renderer {
         assets: &AssetStore,
         active_camera: Option<NodeId>,
     ) -> Result<()> {
-        let extracted_camera = active_camera.and_then(|id| scene.extract_active_camera(id).ok());
+        let extracted_camera = active_camera
+            .map(|id| {
+                scene
+                    .extract_active_camera(id)
+                    .map_err(|e| RenderError::Asset(e.to_string()))
+            })
+            .transpose()?;
 
         let draw_list = if let Some(cam) = extracted_camera {
             let aspect = gpu.aspect();
-            let pose = decompose_pose(cam.world_transform);
-            let camera_value = rig_math::Camera {
-                pose,
-                projection: cam.projection,
-            };
-            let pv = camera_value.projection_view_matrix(aspect);
+            let pv = camera_projection_view(&cam, aspect);
             let planes = rig_scene::frustum_planes_from_projection_view(pv);
             scene.extract_renderables_culled(&planes)
         } else {
@@ -487,7 +491,7 @@ impl Renderer {
             multiview_mask: None,
         });
 
-        let mut current_pipeline: Option<ShaderHandle> = None;
+        let mut current_pipeline: Option<PipelineKey> = None;
         let mut current_mesh: Option<rig_assets::MeshHandle> = None;
 
         for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
@@ -502,18 +506,17 @@ impl Renderer {
                 .mesh(object.mesh)
                 .map_err(|err| RenderError::Asset(err.to_string()))?;
             let buffers = self.cache.mesh_buffers(&gpu.device, object.mesh, mesh);
-            let pipeline = self.pipeline_for_shader(
-                gpu,
-                material.shader,
-                shader,
-                &mesh.vertex_layout,
+            let pipeline_key = PipelineKey {
+                shader: material.shader,
+                vertex_layout: mesh.vertex_layout.clone(),
                 color_format,
                 depth_format,
-            )?;
+            };
+            let pipeline = self.pipeline_for_key(gpu, &pipeline_key, shader)?;
 
-            if current_pipeline != Some(material.shader) {
+            if current_pipeline.as_ref() != Some(&pipeline_key) {
                 pass.set_pipeline(&pipeline);
-                current_pipeline = Some(material.shader);
+                current_pipeline = Some(pipeline_key);
             }
             pass.set_bind_group(
                 0,
@@ -534,35 +537,26 @@ impl Renderer {
         Ok(())
     }
 
-    fn pipeline_for_shader(
+    fn pipeline_for_key(
         &mut self,
         gpu: &GpuContext,
-        shader_handle: ShaderHandle,
+        key: &PipelineKey,
         shader: &ShaderAsset,
-        vertex_layout: &VertexLayout,
-        color_format: wgpu::TextureFormat,
-        depth_format: Option<wgpu::TextureFormat>,
     ) -> Result<wgpu::RenderPipeline> {
-        let key = PipelineKey {
-            shader: shader_handle,
-            vertex_layout: vertex_layout.clone(),
-            color_format,
-            depth_format,
-        };
-        if let Some(pipeline) = self.pipelines.get(&key) {
+        if let Some(pipeline) = self.pipelines.get(key) {
             return Ok(pipeline.clone());
         }
 
-        let shader_module = self.cache.shader_module(&gpu.device, shader_handle, shader);
+        let shader_module = self.cache.shader_module(&gpu.device, key.shader, shader);
         let pipeline = create_pipeline(
             &gpu.device,
             &shader_module,
             &self.pipeline_layout,
-            color_format,
-            depth_format,
-            vertex_layout,
+            key.color_format,
+            key.depth_format,
+            &key.vertex_layout,
         )?;
-        self.pipelines.insert(key, pipeline.clone());
+        self.pipelines.insert(key.clone(), pipeline.clone());
         Ok(pipeline)
     }
 
@@ -625,6 +619,9 @@ impl Renderer {
     }
 
     /// Render a scene into an offscreen [`RenderTarget`].
+    ///
+    /// Returns `Ok(())` when `active_camera` is `None` (nothing to render).
+    /// Returns `Err` when `active_camera` is `Some(invalid_id)`.
     #[cfg(not(tarpaulin_include))]
     pub fn render_to_target(
         &mut self,
@@ -634,16 +631,13 @@ impl Renderer {
         assets: &AssetStore,
         active_camera: Option<NodeId>,
     ) -> Result<()> {
-        let extracted_camera = active_camera.and_then(|id| scene.extract_active_camera(id).ok());
-
-        let draw_list = if let Some(cam) = extracted_camera {
-            let aspect = target.width as f32 / target.height as f32;
-            let pv = camera_projection_view(&cam, aspect);
-            let planes = rig_scene::frustum_planes_from_projection_view(pv);
-            scene.extract_renderables_culled(&planes)
-        } else {
-            scene.extract_renderables()
-        };
+        let extracted_camera = active_camera
+            .map(|id| {
+                scene
+                    .extract_active_camera(id)
+                    .map_err(|e| RenderError::Asset(e.to_string()))
+            })
+            .transpose()?;
 
         let Some(camera) = extracted_camera else {
             return Ok(());
@@ -651,6 +645,8 @@ impl Renderer {
 
         let aspect = target.width as f32 / target.height as f32;
         let pv = camera_projection_view(&camera, aspect);
+        let planes = rig_scene::frustum_planes_from_projection_view(pv);
+        let draw_list = scene.extract_renderables_culled(&planes);
 
         let sorted_indices = self.prepare_draw_order(gpu, assets, &draw_list, pv);
 

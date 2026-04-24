@@ -449,9 +449,9 @@ impl SceneGraph {
     /// sphere is entirely outside the given frustum planes.
     ///
     /// - `VisibilityMode::Hidden` (effective) → always culled.
-    /// - `VisibilityMode::AlwaysVisible`       → skip frustum test, always included
-    ///                                           **unless** an ancestor is `Hidden`.
-    /// - `VisibilityMode::Inherit`             → normal frustum test.
+    /// - `VisibilityMode::AlwaysVisible` → skip frustum test, always included
+    ///   **unless** an ancestor is `Hidden`.
+    /// - `VisibilityMode::Inherit` → normal frustum test.
     pub fn extract_renderables_culled(
         &self,
         frustum_planes: &[Vec4; 6],
