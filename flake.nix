@@ -11,10 +11,6 @@
       url = "github:vansweej/architecture_prompts";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    nixgl = {
-      url = "github:nix-community/nixGL";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
@@ -23,7 +19,6 @@
       nixpkgs,
       rust-overlay,
       architecture-prompts,
-      nixgl,
     }:
     let
       supportedSystems = [
@@ -43,13 +38,6 @@
             overlays = [ (import rust-overlay) ];
           };
 
-          # nixGL requires allowUnfree to evaluate the NVIDIA wrapper package
-          nixglPkgs = import nixpkgs {
-            inherit system;
-            config.allowUnfree = true;
-            overlays = [ nixgl.overlay ];
-          };
-
           # Stable Rust: minimal profile + only the extensions we need
           rustToolchain = pkgs.rust-bin.stable.latest.minimal.override {
             extensions = [
@@ -66,7 +54,6 @@
           # --- Linux: Vulkan + X11 + Wayland for wgpu/winit ---
           linuxNativeBuildInputs = with pkgs; [
             pkg-config
-            nixglPkgs.nixgl.auto.nixGLDefault
           ];
 
           linuxBuildInputs = with pkgs; [
