@@ -239,7 +239,8 @@ and makes later refactors harder.
 Important invariants:
 
 - a node has at most one parent
-- child lists are acyclic
+- child lists are acyclic — `attach_child` returns `SceneError::CycleDetected` if the
+  proposed parent is already a descendant of the child
 - derived world state is recomputed through scene APIs
 - invalid or stale handles return an error instead of indexing blindly
 
@@ -295,6 +296,18 @@ pub enum VisibilityMode {
     Hidden,
 }
 ```
+
+`effective_visibility()` walks the parent chain to determine whether a node is actually
+rendered:
+
+- `Hidden` on any ancestor hides all descendants, regardless of their own mode.
+- `AlwaysVisible` skips frustum culling for that node but does **not** override a `Hidden`
+  ancestor.
+- `Inherit` defers to the nearest ancestor with an explicit mode; the root is treated as
+  visible by default.
+
+This means hiding a parent subtree is a single-write operation: set the parent to `Hidden`
+and all children disappear from extraction automatically.
 
 ### 8.3 Bound update
 

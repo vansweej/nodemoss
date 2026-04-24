@@ -106,7 +106,8 @@ The application trait separates startup, update, overlay update, and render resp
 pub trait Application: Sized {
     fn init(ctx: &mut StartupContext) -> anyhow::Result<Self>;
 
-    fn update(&mut self, ctx: &mut UpdateContext<'_>) -> anyhow::Result<()>;
+    /// Called every frame. `dt` is the elapsed time in seconds since the last frame.
+    fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> anyhow::Result<()>;
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> anyhow::Result<()>;
 
@@ -150,8 +151,12 @@ pub struct StartupContext<'a> {
     pub renderer: &'a mut Renderer,
     pub overlay: &'a mut Overlay,
     pub gpu: &'a GpuContext,
+    pub active_camera: &'a mut Option<NodeId>,
 }
 ```
+
+`active_camera` is exposed here so the application can set the initial camera during
+`init()` without needing a separate call.
 
 ### 4.2 UpdateContext
 
@@ -164,8 +169,22 @@ pub struct UpdateContext<'a> {
     pub input: &'a InputState,
     pub timer: &'a FrameTimer,
     pub active_camera: &'a mut Option<NodeId>,
+    // private: exit_requested
 }
 ```
+
+`UpdateContext` also exposes:
+
+```rust
+impl UpdateContext<'_> {
+    /// Signal the runner to exit cleanly after the current frame.
+    pub fn request_exit(&mut self);
+}
+```
+
+Call `ctx.request_exit()` from `update()` or `on_window_event()` to trigger a clean
+shutdown (e.g. on Escape key). The runner checks the flag after `update()` returns and
+calls `event_loop.exit()`.
 
 ### 4.3 RenderContext
 
@@ -280,28 +299,20 @@ match event {
 
 ## 6. Input Handling
 
-`InputState` tracks current keyboard and mouse state.
+`InputState` tracks current keyboard state.
 
 ```rust
 pub struct InputState {
     keys: HashSet<KeyCode>,
-    mouse_buttons: HashSet<MouseButton>,
-    mouse_x: f64,
-    mouse_y: f64,
-    mouse_dx: f64,
-    mouse_dy: f64,
 }
 ```
 
 Useful queries:
 
 - `is_key_pressed(key)`
-- `is_mouse_button_pressed(button)`
-- `mouse_position()`
-- `mouse_delta()`
 
-The runner updates input state from `winit` events. Application code reads it through
-`UpdateContext`.
+The runner updates input state from `winit` keyboard events. Application code reads it
+through `UpdateContext`. Mouse input is not yet tracked.
 
 ---
 
@@ -394,24 +405,8 @@ Recommended behavior:
 
 ### 9.2 TrackBall
 
-`TrackBall` maps mouse drags to object rotation.
-
-```rust
-pub struct TrackBall {
-    active: bool,
-    width: f32,
-    height: f32,
-    target_node: Option<NodeId>,
-    initial_point: Vec3,
-    initial_rotation: Quat,
-}
-```
-
-Recommended behavior:
-
-- opt-in utility
-- rotates a chosen scene node through scene mutation APIs
-- does not assume a hard-coded global root object
+`TrackBall` is a planned opt-in utility that maps mouse drags to object rotation around a
+target scene node. It is not yet implemented.
 
 ---
 
@@ -520,22 +515,22 @@ frame.present()
 
 The runtime should handle `wgpu` surface cases explicitly.
 
-### 11.1 Resize
+### 12.1 Resize
 
 - update window dimensions
 - reconfigure the surface
 - recreate depth/offscreen targets if needed
 
-### 11.2 Occlusion or minimization
+### 12.2 Occlusion or minimization
 
 - skip drawing gracefully
 - do not treat it as a hard error
 
-### 11.3 Outdated or lost surface
+### 12.3 Outdated or lost surface
 
 - reconfigure or recreate surface-dependent resources
 
-### 11.4 Out of memory
+### 12.4 Out of memory
 
 - return an error and exit cleanly
 
@@ -574,6 +569,7 @@ impl Application for TriangleApp {
                 },
             },
         )?;
+        // StartupContext exposes active_camera so we can set it during init.
         *ctx.active_camera = Some(camera);
 
         let fps_id = ctx.overlay.add_text(TextElement {
@@ -586,8 +582,13 @@ impl Application for TriangleApp {
         Ok(Self { triangle, camera, fps_id })
     }
 
-    fn update(&mut self, ctx: &mut UpdateContext<'_>) -> anyhow::Result<()> {
-        // update scene state here
+    fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> anyhow::Result<()> {
+        // Use dt (seconds since last frame) to drive animations.
+        let _ = dt;
+        // Signal clean exit on Escape.
+        if ctx.input.is_key_pressed(KeyCode::Escape) {
+            ctx.request_exit();
+        }
         Ok(())
     }
 
