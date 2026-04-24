@@ -1,7 +1,7 @@
 //! Concrete `wgpu` renderer for the rig framework.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     hash::{Hash, Hasher},
     num::NonZeroU64,
     sync::Arc,
@@ -1062,46 +1062,7 @@ pub fn validate_vertex_layout(vertex_layout: &VertexLayout) -> std::result::Resu
     Ok(())
 }
 
-fn validate_triangle_shader_layout(
-    vertex_layout: &VertexLayout,
-) -> std::result::Result<(), String> {
-    if vertex_layout.array_stride == 0 {
-        return Err("vertex layout must use a non-zero array stride".into());
-    }
 
-    let mut seen_locations = HashSet::new();
-    let mut has_position = false;
-    let mut has_color = false;
-
-    for attribute in &vertex_layout.attributes {
-        if !seen_locations.insert(attribute.shader_location) {
-            return Err(format!(
-                "vertex layout contains duplicate shader location {}",
-                attribute.shader_location
-            ));
-        }
-
-        let format_size = vertex_format_size(attribute.format);
-        if attribute.offset + format_size > vertex_layout.array_stride {
-            return Err(format!(
-                "vertex attribute at location {} exceeds the declared array stride",
-                attribute.shader_location
-            ));
-        }
-
-        match attribute.shader_location {
-            0 => has_position = true,
-            1 => has_color = true,
-            _ => {}
-        }
-    }
-
-    if !has_position || !has_color {
-        return Err("triangle shader requires position@0 and color@1 attributes".into());
-    }
-
-    Ok(())
-}
 
 fn vertex_format_size(format: VertexFormat) -> u64 {
     match format {
@@ -1176,9 +1137,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-pub fn validate_triangle_layout(mesh: &MeshAsset) -> bool {
-    validate_triangle_shader_layout(&mesh.vertex_layout).is_ok()
-}
+
 
 #[cfg(test)]
 mod tests {
@@ -1214,12 +1173,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_triangle_layout_accepts_position_color_layout() {
-        assert!(validate_triangle_layout(&sample_mesh()));
+    fn validate_vertex_layout_accepts_position_and_color() {
+        assert!(validate_vertex_layout(&sample_mesh().vertex_layout).is_ok());
     }
 
     #[test]
-    fn validate_triangle_layout_accepts_padded_and_reordered_layout() {
+    fn validate_vertex_layout_accepts_padded_and_reordered() {
         let mut mesh = sample_mesh();
         mesh.vertex_layout.array_stride = 32;
         mesh.vertex_layout.attributes = vec![
@@ -1235,23 +1194,15 @@ mod tests {
             },
         ];
 
-        assert!(validate_triangle_layout(&mesh));
+        assert!(validate_vertex_layout(&mesh.vertex_layout).is_ok());
     }
 
     #[test]
-    fn validate_triangle_layout_rejects_attribute_outside_stride() {
+    fn validate_vertex_layout_rejects_attribute_outside_stride() {
         let mut mesh = sample_mesh();
         mesh.vertex_layout.array_stride = 16;
 
-        assert!(!validate_triangle_layout(&mesh));
-    }
-
-    #[test]
-    fn validate_triangle_layout_rejects_missing_attribute() {
-        let mut mesh = sample_mesh();
-        mesh.vertex_layout.attributes.pop();
-
-        assert!(!validate_triangle_layout(&mesh));
+        assert!(validate_vertex_layout(&mesh.vertex_layout).is_err());
     }
 
     #[test]
