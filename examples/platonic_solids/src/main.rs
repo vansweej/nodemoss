@@ -30,9 +30,10 @@
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
+    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::NORMAL_COLOR_SHADER,
     rig_scene::{CameraComponent, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
@@ -69,6 +70,10 @@ struct PlatonicApp {
     solids: Vec<SolidState>,
     /// Monotonically increasing scene time in seconds.
     elapsed: f32,
+    fps_id: ElementId,
+    cam_pos_id: ElementId,
+    /// Camera position cached from update() for use in update_overlay().
+    camera_pos: Vec3,
 }
 
 impl Application for PlatonicApp {
@@ -199,6 +204,25 @@ impl Application for PlatonicApp {
             },
         )?;
 
+        let fps_id = ctx.overlay.add_text(TextElement {
+            text: "FPS: 0".into(),
+            position: Position::Anchor {
+                anchor: Anchor::TopRight,
+                offset: [8.0, 8.0],
+            },
+            color: [1.0, 1.0, 1.0, 1.0],
+            font_size: 16.0,
+        });
+        let cam_pos_id = ctx.overlay.add_text(TextElement {
+            text: "Cam: (0, 0, 0)".into(),
+            position: Position::Anchor {
+                anchor: Anchor::TopRight,
+                offset: [8.0, 32.0],
+            },
+            color: [0.8, 0.8, 0.8, 1.0],
+            font_size: 14.0,
+        });
+
         log::info!("Platonic solids demo initialised.");
         log::info!("Controls: WASD/QE move, arrow keys rotate, Escape quits.");
 
@@ -210,6 +234,9 @@ impl Application for PlatonicApp {
             },
             solids,
             elapsed: 0.0,
+            fps_id,
+            cam_pos_id,
+            camera_pos: Vec3::new(0.0, 4.0, 18.0),
         })
     }
 
@@ -242,6 +269,13 @@ impl Application for PlatonicApp {
         *ctx.active_camera = Some(self.camera_node);
         self.camera_rig.update(ctx, self.camera_node, dt)?;
 
+        // Cache camera position for overlay display.
+        self.camera_pos = ctx
+            .scene
+            .local_transform(self.camera_node)
+            .map(|t| t.translation)
+            .unwrap_or(Vec3::ZERO);
+
         Ok(())
     }
 
@@ -249,6 +283,17 @@ impl Application for PlatonicApp {
         ctx.renderer
             .render_scene(ctx.gpu, ctx.frame, ctx.scene, ctx.assets, ctx.active_camera)?;
         Ok(())
+    }
+
+    fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
+        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))?;
+        ctx.set_text(
+            self.cam_pos_id,
+            format!(
+                "Cam: ({:.1}, {:.1}, {:.1})",
+                self.camera_pos.x, self.camera_pos.y, self.camera_pos.z
+            ),
+        )
     }
 
     fn on_window_event(&mut self, _ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {

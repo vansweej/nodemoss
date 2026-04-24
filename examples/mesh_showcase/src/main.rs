@@ -24,9 +24,10 @@
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
+    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::NORMAL_COLOR_SHADER,
     rig_scene::{CameraComponent, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode, keyboard::PhysicalKey},
@@ -43,6 +44,7 @@ struct MeshShowcaseApp {
     sphere_node: NodeId,
     /// Monotonically increasing scene time in seconds.
     elapsed: f32,
+    fps_id: ElementId,
 }
 
 impl Application for MeshShowcaseApp {
@@ -141,12 +143,23 @@ impl Application for MeshShowcaseApp {
             },
         )?;
 
+        let fps_id = ctx.overlay.add_text(TextElement {
+            text: "FPS: 0".into(),
+            position: Position::Anchor {
+                anchor: Anchor::TopRight,
+                offset: [8.0, 8.0],
+            },
+            color: [1.0, 1.0, 1.0, 1.0],
+            font_size: 16.0,
+        });
+
         Ok(Self {
             camera_node,
             camera_rig: CameraRig::default(),
             box_node,
             sphere_node,
             elapsed: 0.0,
+            fps_id,
         })
     }
 
@@ -184,6 +197,10 @@ impl Application for MeshShowcaseApp {
         ctx.renderer
             .render_scene(ctx.gpu, ctx.frame, ctx.scene, ctx.assets, ctx.active_camera)?;
         Ok(())
+    }
+
+    fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
+        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
     }
 
     fn on_window_event(&mut self, _ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {

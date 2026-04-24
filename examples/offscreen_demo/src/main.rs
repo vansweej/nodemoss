@@ -12,9 +12,10 @@
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
+    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::{RenderTarget, RenderTargetDescriptor, wgpu},
     rig_scene::{CameraComponent, NodeId, Renderable},
 };
@@ -117,6 +118,7 @@ struct OffscreenApp {
     box_node: NodeId,
     offscreen_target: RenderTarget,
     blit: BlitResources,
+    fps_id: ElementId,
 }
 
 impl Application for OffscreenApp {
@@ -178,12 +180,23 @@ impl Application for OffscreenApp {
             &offscreen_target,
         );
 
+        let fps_id = ctx.overlay.add_text(TextElement {
+            text: "FPS: 0".into(),
+            position: Position::Anchor {
+                anchor: Anchor::TopRight,
+                offset: [8.0, 8.0],
+            },
+            color: [1.0, 1.0, 1.0, 1.0],
+            font_size: 16.0,
+        });
+
         Ok(Self {
             camera,
             camera_rig: CameraRig::default(),
             box_node,
             offscreen_target,
             blit,
+            fps_id,
         })
     }
 
@@ -214,6 +227,10 @@ impl Application for OffscreenApp {
             .blit_texture_to_screen(ctx.frame, &self.blit.pipeline, &self.blit.bind_group)?;
 
         Ok(())
+    }
+
+    fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
+        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
     }
 }
 

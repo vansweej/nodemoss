@@ -14,9 +14,10 @@
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
+    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::NORMAL_COLOR_SHADER,
     rig_scene::{CameraComponent, NodeId, Renderable, VisibilityMode},
     winit::{event::WindowEvent, keyboard::KeyCode},
@@ -34,6 +35,7 @@ struct MultiObjectApp {
     sphere_visible: bool,
     /// Debounce: was V held last frame?
     v_was_pressed: bool,
+    fps_id: ElementId,
 }
 
 impl Application for MultiObjectApp {
@@ -159,12 +161,23 @@ impl Application for MultiObjectApp {
             },
         )?;
 
+        let fps_id = ctx.overlay.add_text(TextElement {
+            text: "FPS: 0".into(),
+            position: Position::Anchor {
+                anchor: Anchor::TopRight,
+                offset: [8.0, 8.0],
+            },
+            color: [1.0, 1.0, 1.0, 1.0],
+            font_size: 16.0,
+        });
+
         Ok(Self {
             camera,
             camera_rig: CameraRig::default(),
             sphere,
             sphere_visible: true,
             v_was_pressed: false,
+            fps_id,
         })
     }
 
@@ -178,6 +191,10 @@ impl Application for MultiObjectApp {
         ctx.renderer
             .render_scene(ctx.gpu, ctx.frame, ctx.scene, ctx.assets, ctx.active_camera)?;
         Ok(())
+    }
+
+    fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
+        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
     }
 
     fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
