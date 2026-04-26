@@ -299,20 +299,31 @@ match event {
 
 ## 6. Input Handling
 
-`InputState` tracks current keyboard state.
+`InputState` tracks current keyboard and mouse state.
 
 ```rust
 pub struct InputState {
     keys: HashSet<KeyCode>,
+    pub mouse_buttons: HashSet<MouseButton>,
+    pub mouse_position: Vec2,  // current cursor position in pixels, origin top-left
+    pub mouse_delta: Vec2,     // per-frame accumulated movement, reset each frame
 }
 ```
 
 Useful queries:
 
-- `is_key_pressed(key)`
+- `is_key_pressed(key)` — keyboard
+- `is_mouse_button_pressed(button)` — mouse buttons
+- `mouse_position` — current cursor position
+- `mouse_delta` — movement since last frame reset
 
-The runner updates input state from `winit` keyboard events. Application code reads it
-through `UpdateContext`. Mouse input is not yet tracked.
+The runner updates input state from winit events:
+- `KeyboardInput` → `update_key()`
+- `CursorMoved` → `update_mouse_position()`
+- `MouseInput` → `update_mouse_button()`
+
+`reset_mouse_delta()` is called at the start of each frame so `mouse_delta` always
+reflects only the current frame's movement.
 
 ---
 
@@ -405,8 +416,35 @@ Recommended behavior:
 
 ### 9.2 TrackBall
 
-`TrackBall` is a planned opt-in utility that maps mouse drags to object rotation around a
-target scene node. It is not yet implemented.
+`TrackBall` is an opt-in arc-ball controller that maps mouse drags to camera rotation
+around a target scene node.
+
+```rust
+pub struct TrackBall {
+    pub target: NodeId,
+    pub distance: f32,
+    pub sensitivity: f32,
+    // yaw and pitch are private internal state
+}
+```
+
+Behavior:
+- **Left mouse drag**: orbit (yaw/pitch) around the target node's world position
+- **Right mouse drag**: dolly (adjust distance from target)
+- Pitch is clamped to ±89° to prevent gimbal flip
+
+Usage:
+
+```rust
+// In init():
+let trackball = TrackBall::new(target_node, 5.0);
+
+// In update():
+trackball.update(ctx.input, ctx.scene, camera_node, dt)?;
+```
+
+`TrackBall` and `CameraRig` are independent — `CameraRig` is a keyboard-driven fly
+camera while `TrackBall` is a mouse-driven orbit camera.
 
 ---
 

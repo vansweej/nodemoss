@@ -81,23 +81,26 @@ All public APIs and test modules stay in place.
 
 ---
 
-## Round 5 — Mouse input and TrackBall controller
+## Round 5 — Mouse input and TrackBall controller ✓
 
 **Goal**: implement the mouse input path and the TrackBall utility noted as "planned" in
 `APPLICATION.md`.  
 **Risk**: medium — new event wiring in the runner.  
 **Branch**: `feat/mouse-trackball`
 
-Steps:
+| Step | Description | Status |
+|------|-------------|--------|
+| 1 | Extend `InputState` with `mouse_buttons`, `mouse_position`, `mouse_delta` | ✓ |
+| 2 | Wire `CursorMoved` and `MouseInput` winit events in the runner | ✓ |
+| 3 | Implement `TrackBall` arc-ball controller in `crates/app/src/trackball.rs` | ✓ |
+| 4 | Expose `TrackBall` from `rig-app` alongside `CameraRig` | ✓ |
+| 5 | Add `trackball_demo` example (icosahedron + orbit camera) | ✓ |
+| 6 | Unit tests: mouse position/delta/button + trackball orbit | ✓ |
+| 7 | Update `APPLICATION.md` §6 and §9.2; update `README.md` | ✓ |
 
-1. Extend `InputState` with `mouse_buttons`, `mouse_position`, `mouse_delta`.
-2. Wire `CursorMoved` and `MouseInput` winit events in the runner.
-3. Implement `TrackBall`: arc-ball rotation around a target `NodeId` via scene mutation APIs.
-4. Expose `TrackBall` from `rig-app` alongside `CameraRig`.
-5. Wire it into `platonic_solids` or a new dedicated example.
-6. Update `APPLICATION.md` section 9.2 to remove the "not yet implemented" note.
-
-**Affected files**: `rig-app/src/input.rs`, `rig-app/src/runner.rs`, one example, `docs/APPLICATION.md`.
+**Affected files**: `rig-app/src/input.rs`, `rig-app/src/runner.rs`,
+`rig-app/src/trackball.rs`, `rig-app/src/lib.rs`, `examples/trackball_demo/`,
+`docs/APPLICATION.md`, `README.md`, `Cargo.toml`.
 
 ---
 
