@@ -20,7 +20,7 @@ mod tests {
     use rig_assets::{
         MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
     };
-    use rig_math::{BoundingSphere, Quat, Vec3};
+    use rig_math::{BoundingSphere, Quat, Transform, Vec3};
 
     use super::*;
 

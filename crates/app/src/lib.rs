@@ -57,6 +57,7 @@ mod tests {
     use super::*;
     use winit::{event::ElementState, keyboard::KeyCode};
     use rig_assets::AssetStore;
+    use rig_math::Quat;
     use rig_scene::SceneGraph;
 
     #[test]
