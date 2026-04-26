@@ -1,28 +1,26 @@
 //! Application runner and runtime shell for the rig framework.
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
+mod camera_rig;
+mod context;
+mod input;
+mod runner;
+mod timer;
+
+pub use camera_rig::CameraRig;
+pub use context::{OverlayUpdateContext, RenderContext, StartupContext, UpdateContext};
+pub use input::InputState;
+pub use runner::run;
+pub use timer::FrameTimer;
+
+pub use rig_assets;
+pub use rig_gpu;
+pub use rig_math;
+pub use rig_overlay;
+pub use rig_render;
+pub use rig_scene;
+pub use winit;
 
 use anyhow::Result;
-pub use rig_assets;
-use rig_assets::AssetStore;
-pub use rig_gpu;
-use rig_gpu::{Frame, GpuContext};
-pub use rig_math;
-use rig_math::{Quat, Vec3};
-pub use rig_overlay;
-use rig_overlay::{ElementId, Overlay, Position};
-pub use rig_render;
-use rig_render::Renderer;
-pub use rig_scene;
-use rig_scene::{NodeId, SceneGraph};
-pub use winit;
-use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::KeyCode,
-    window::{Window, WindowId},
-};
 
 // Re-export overlay types for convenience.
 pub use rig_overlay::{Anchor, OverlayError};
@@ -34,10 +32,6 @@ pub trait Application: Sized + 'static {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()>;
 
-    /// Called once per frame to update overlay text elements.
-    ///
-    /// Override this to update [`ElementId`] text via [`OverlayUpdateContext`].
-    /// The default implementation is a no-op.
     #[cfg(not(tarpaulin_include))]
     fn update_overlay(&mut self, _ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
         Ok(())
@@ -47,486 +41,28 @@ pub trait Application: Sized + 'static {
     fn on_window_event(
         &mut self,
         _ctx: &mut UpdateContext<'_>,
-        _event: &WindowEvent,
+        _event: &winit::event::WindowEvent,
     ) -> Result<()> {
         Ok(())
     }
 }
 
-pub struct StartupContext<'a> {
-    pub scene: &'a mut SceneGraph,
-    pub assets: &'a mut AssetStore,
-    pub gpu: &'a GpuContext,
-    pub renderer: &'a mut Renderer,
-    pub overlay: &'a mut Overlay,
-    pub window: &'a Window,
-}
 
-pub struct UpdateContext<'a> {
-    pub scene: &'a mut SceneGraph,
-    pub assets: &'a AssetStore,
-    pub input: &'a InputState,
-    pub timer: &'a FrameTimer,
-    pub active_camera: &'a mut Option<NodeId>,
-    exit_requested: &'a mut bool,
-}
-
-impl UpdateContext<'_> {
-    /// Request the runner to exit cleanly after the current frame.
-    pub fn request_exit(&mut self) {
-        *self.exit_requested = true;
-    }
-}
-
-pub struct RenderContext<'a> {
-    pub scene: &'a SceneGraph,
-    pub assets: &'a AssetStore,
-    pub gpu: &'a GpuContext,
-    pub frame: &'a mut Frame,
-    pub renderer: &'a mut Renderer,
-    pub active_camera: Option<NodeId>,
-}
-
-/// Context passed to [`Application::update_overlay`].
-pub struct OverlayUpdateContext<'a> {
-    pub overlay: &'a mut Overlay,
-    pub timer: &'a FrameTimer,
-}
-
-#[cfg(not(tarpaulin_include))]
-impl OverlayUpdateContext<'_> {
-    /// Convenience wrapper: update the text of an overlay element.
-    pub fn set_text(&mut self, id: ElementId, text: impl Into<String>) -> Result<()> {
-        self.overlay
-            .set_text(id, text)
-            .map_err(|e| anyhow::anyhow!("{e}"))
-    }
-
-    /// Convenience wrapper: update the position of an overlay element.
-    pub fn set_position(&mut self, id: ElementId, position: Position) -> Result<()> {
-        self.overlay
-            .set_position(id, position)
-            .map_err(|e| anyhow::anyhow!("{e}"))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct CameraRig {
-    pub translation_speed: f32,
-    pub rotation_speed: f32,
-}
-
-impl CameraRig {
-    pub fn update(
-        &self,
-        ctx: &mut UpdateContext<'_>,
-        node: NodeId,
-        dt: f32,
-    ) -> rig_scene::Result<()> {
-        let mut transform = ctx.scene.local_transform(node)?;
-
-        let yaw =
-            key_axis(ctx.input, KeyCode::ArrowLeft, KeyCode::ArrowRight) * self.rotation_speed * dt;
-        if yaw != 0.0 {
-            transform.rotation = Quat::from_rotation_y(-yaw) * transform.rotation;
-        }
-
-        let right = transform.rotation * Vec3::X;
-        let pitch =
-            key_axis(ctx.input, KeyCode::ArrowDown, KeyCode::ArrowUp) * self.rotation_speed * dt;
-        if pitch != 0.0 {
-            transform.rotation = Quat::from_axis_angle(right, pitch) * transform.rotation;
-        }
-        transform.rotation = transform.rotation.normalize();
-
-        let forward = -(transform.rotation * Vec3::Z);
-        let up = transform.rotation * Vec3::Y;
-        let translation = (forward * key_axis(ctx.input, KeyCode::KeyS, KeyCode::KeyW)
-            + right * key_axis(ctx.input, KeyCode::KeyA, KeyCode::KeyD)
-            + up * key_axis(ctx.input, KeyCode::KeyQ, KeyCode::KeyE))
-            * self.translation_speed
-            * dt;
-
-        if translation != Vec3::ZERO {
-            transform.translation += translation;
-        }
-
-        ctx.scene.set_local_transform(node, transform)
-    }
-}
-
-#[cfg(not(tarpaulin_include))]
-impl Default for CameraRig {
-    fn default() -> Self {
-        Self {
-            translation_speed: 2.5,
-            rotation_speed: 1.5,
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct InputState {
-    keys: HashSet<KeyCode>,
-}
-
-impl InputState {
-    pub fn is_key_pressed(&self, key: KeyCode) -> bool {
-        self.keys.contains(&key)
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    fn update(&mut self, event: &winit::event::KeyEvent) {
-        if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
-            self.update_key(code, event.state);
-        }
-    }
-
-    fn update_key(&mut self, code: KeyCode, state: winit::event::ElementState) {
-        match state {
-            winit::event::ElementState::Pressed => {
-                self.keys.insert(code);
-            }
-            winit::event::ElementState::Released => {
-                self.keys.remove(&code);
-            }
-        }
-    }
-}
-
-fn key_axis(input: &InputState, negative: KeyCode, positive: KeyCode) -> f32 {
-    let negative = input.is_key_pressed(negative) as i8;
-    let positive = input.is_key_pressed(positive) as i8;
-    (positive - negative) as f32
-}
-
-pub struct FrameTimer {
-    last_instant: Instant,
-    frame_count: u64,
-    current_fps: f32,
-    fps_accumulator: f32,
-    fps_frames: u32,
-}
-
-impl FrameTimer {
-    pub fn new() -> Self {
-        Self {
-            last_instant: Instant::now(),
-            frame_count: 0,
-            current_fps: 0.0,
-            fps_accumulator: 0.0,
-            fps_frames: 0,
-        }
-    }
-
-    pub fn tick(&mut self) -> f32 {
-        let now = Instant::now();
-        let dt = (now - self.last_instant).as_secs_f32();
-        self.last_instant = now;
-        self.apply_delta(dt);
-        dt
-    }
-
-    fn apply_delta(&mut self, dt: f32) {
-        self.frame_count += 1;
-        self.fps_accumulator += dt;
-        self.fps_frames += 1;
-
-        if self.fps_accumulator >= 1.0 {
-            self.current_fps = self.fps_frames as f32 / self.fps_accumulator;
-            self.fps_accumulator = 0.0;
-            self.fps_frames = 0;
-        }
-    }
-
-    pub fn fps(&self) -> f32 {
-        self.current_fps
-    }
-
-    pub fn frame_count(&self) -> u64 {
-        self.frame_count
-    }
-}
-
-impl Default for FrameTimer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-struct RunnerState<A: Application> {
-    app: A,
-    scene: SceneGraph,
-    assets: AssetStore,
-    gpu: GpuContext,
-    renderer: Renderer,
-    overlay: Overlay,
-    overlay_visible: bool,
-    input: InputState,
-    timer: FrameTimer,
-    active_camera: Option<NodeId>,
-    exit_requested: bool,
-}
-
-struct Runner<A: Application> {
-    title: String,
-    window: Option<Arc<Window>>,
-    state: Option<RunnerState<A>>,
-}
-
-impl<A: Application> Runner<A> {
-    fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            window: None,
-            state: None,
-        }
-    }
-}
-
-impl<A: Application> ApplicationHandler for Runner<A> {
-    #[cfg(not(tarpaulin_include))]
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-
-        let window = match event_loop.create_window(
-            Window::default_attributes()
-                .with_title(self.title.clone())
-                .with_inner_size(winit::dpi::PhysicalSize::new(800, 600)),
-        ) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                log::error!("failed to create window: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
-
-        let gpu = match pollster::block_on(GpuContext::new(window.clone())) {
-            Ok(g) => g,
-            Err(e) => {
-                log::error!("failed to initialize GPU context: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
-        let mut renderer = Renderer::new(&gpu);
-        let mut overlay = Overlay::new(
-            &gpu.device,
-            &gpu.queue,
-            gpu.surface_format(),
-            gpu.width(),
-            gpu.height(),
-        );
-        let mut scene = SceneGraph::new();
-        let mut assets = AssetStore::new();
-        let input = InputState::default();
-        let timer = FrameTimer::new();
-        let exit_requested = false;
-        let mut startup = StartupContext {
-            scene: &mut scene,
-            assets: &mut assets,
-            gpu: &gpu,
-            renderer: &mut renderer,
-            overlay: &mut overlay,
-            window: window.as_ref(),
-        };
-        let app = match A::init(&mut startup) {
-            Ok(a) => a,
-            Err(e) => {
-                log::error!("failed to initialize application: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
-
-        let active_camera = scene.first_camera();
-
-        self.window = Some(window);
-        self.state = Some(RunnerState {
-            app,
-            scene,
-            assets,
-            gpu,
-            renderer,
-            overlay,
-            overlay_visible: true,
-            input,
-            timer,
-            active_camera,
-            exit_requested,
-        });
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
-        let Some(state) = self.state.as_mut() else {
-            return;
-        };
-
-        match &event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-                return;
-            }
-            WindowEvent::Resized(size) => {
-                state.gpu.resize(*size);
-                state.renderer.resize(&state.gpu);
-                state.overlay.resize(size.width, size.height);
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // F3 toggles the overlay — intercept before forwarding to app.
-                if let winit::keyboard::PhysicalKey::Code(KeyCode::F3) = event.physical_key {
-                    if event.state == winit::event::ElementState::Pressed {
-                        state.overlay_visible = !state.overlay_visible;
-                    }
-                }
-                state.input.update(event);
-            }
-            _ => {}
-        }
-
-        match event {
-            WindowEvent::RedrawRequested => {
-                let dt = state.timer.tick();
-                {
-                    let input_snapshot = &state.input;
-                    let timer_snapshot = &state.timer;
-                    let mut update_ctx = UpdateContext {
-                        scene: &mut state.scene,
-                        assets: &state.assets,
-                        input: input_snapshot,
-                        timer: timer_snapshot,
-                        active_camera: &mut state.active_camera,
-                        exit_requested: &mut state.exit_requested,
-                    };
-                    if let Err(e) = state.app.update(&mut update_ctx, dt) {
-                        log::error!("application update failed: {e}");
-                        event_loop.exit();
-                        return;
-                    }
-                }
-
-                if state.exit_requested {
-                    event_loop.exit();
-                    return;
-                }
-
-                // Let the app update overlay text elements.
-                {
-                    let mut overlay_ctx = OverlayUpdateContext {
-                        overlay: &mut state.overlay,
-                        timer: &state.timer,
-                    };
-                    if let Err(e) = state.app.update_overlay(&mut overlay_ctx) {
-                        log::error!("application update_overlay failed: {e}");
-                        event_loop.exit();
-                        return;
-                    }
-                }
-
-                if let Err(e) = state.scene.update_all_world_transforms() {
-                    log::error!("failed to update world transforms: {e}");
-                    event_loop.exit();
-                    return;
-                }
-                if let Err(e) = state.scene.update_all_world_bounds(&state.assets) {
-                    log::error!("failed to update world bounds: {e}");
-                    event_loop.exit();
-                    return;
-                }
-
-                if let Some(mut frame) = state.gpu.begin_frame() {
-                    let mut render_ctx = RenderContext {
-                        scene: &state.scene,
-                        assets: &state.assets,
-                        gpu: &state.gpu,
-                        frame: &mut frame,
-                        renderer: &mut state.renderer,
-                        active_camera: state.active_camera,
-                    };
-                    if let Err(e) = state.app.render(&mut render_ctx) {
-                        log::error!("application render failed: {e}");
-                        event_loop.exit();
-                        return;
-                    }
-
-                    // Render overlay on top of the scene.
-                    if state.overlay_visible {
-                        if let Err(e) = state.overlay.render_pass(
-                            &state.gpu.device,
-                            &state.gpu.queue,
-                            &mut frame.encoder,
-                            &frame.view,
-                        ) {
-                            log::error!("overlay render failed: {e}");
-                            event_loop.exit();
-                            return;
-                        }
-                    }
-
-                    frame.present();
-                }
-            }
-            other => {
-                let input_snapshot = &state.input;
-                let timer_snapshot = &state.timer;
-                let mut update_ctx = UpdateContext {
-                    scene: &mut state.scene,
-                    assets: &state.assets,
-                    input: input_snapshot,
-                    timer: timer_snapshot,
-                    active_camera: &mut state.active_camera,
-                    exit_requested: &mut state.exit_requested,
-                };
-                if let Err(e) = state.app.on_window_event(&mut update_ctx, &other) {
-                    log::error!("application window event failed: {e}");
-                    event_loop.exit();
-                    return;
-                }
-                if state.exit_requested {
-                    event_loop.exit();
-                    return;
-                }
-            }
-        }
-
-        window.request_redraw();
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
-    }
-}
-
-#[cfg(not(tarpaulin_include))]
-pub fn run<A: Application>(title: impl Into<String>) -> Result<()> {
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-    let mut runner = Runner::<A>::new(title);
-    event_loop.run_app(&mut runner)?;
-    Ok(())
-}
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use runner::Runner;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use winit::{event::ElementState, keyboard::KeyCode};
+    use rig_assets::AssetStore;
+    use rig_scene::SceneGraph;
 
     #[test]
     fn input_state_tracks_pressed_key() {
         let mut input = InputState::default();
-
         input.update_key(KeyCode::KeyW, ElementState::Pressed);
-
         assert!(input.is_key_pressed(KeyCode::KeyW));
     }
 
@@ -534,26 +70,23 @@ mod tests {
     fn input_state_releases_key() {
         let mut input = InputState::default();
         input.update_key(KeyCode::KeyW, ElementState::Pressed);
-
         input.update_key(KeyCode::KeyW, ElementState::Released);
-
         assert!(!input.is_key_pressed(KeyCode::KeyW));
     }
 
     #[test]
     fn key_axis_tracks_positive_and_negative_input() {
         let mut input = InputState::default();
-
         input.update_key(KeyCode::KeyA, ElementState::Pressed);
-        assert_eq!(key_axis(&input, KeyCode::KeyA, KeyCode::KeyD), -1.0);
-
+        assert_eq!(input::key_axis(&input, KeyCode::KeyA, KeyCode::KeyD), -1.0);
         input.update_key(KeyCode::KeyA, ElementState::Released);
         input.update_key(KeyCode::KeyD, ElementState::Pressed);
-        assert_eq!(key_axis(&input, KeyCode::KeyA, KeyCode::KeyD), 1.0);
+        assert_eq!(input::key_axis(&input, KeyCode::KeyA, KeyCode::KeyD), 1.0);
     }
 
     #[test]
     fn camera_rig_moves_camera_forward() {
+        use rig_math::Vec3;
         let mut scene = SceneGraph::new();
         let camera = scene.create_node("camera");
         let assets = AssetStore::new();
@@ -573,24 +106,14 @@ mod tests {
             active_camera: &mut active_camera,
             exit_requested: &mut exit_requested,
         };
-
-        CameraRig {
-            translation_speed: 4.0,
-            rotation_speed: 1.0,
-        }
-        .update(&mut ctx, camera, 0.5)
-        .unwrap();
-
+        CameraRig { translation_speed: 4.0, rotation_speed: 1.0 }.update(&mut ctx, camera, 0.5).unwrap();
         let transform = scene.local_transform(camera).unwrap();
-        assert!(
-            transform
-                .translation
-                .abs_diff_eq(Vec3::new(0.0, 0.0, -2.0), 1e-5)
-        );
+        assert!(transform.translation.abs_diff_eq(Vec3::new(0.0, 0.0, -2.0), 1e-5));
     }
 
     #[test]
     fn camera_rig_rotates_camera_with_arrow_keys() {
+        use rig_math::{Quat, Vec3};
         let mut scene = SceneGraph::new();
         let camera = scene.create_node("camera");
         let assets = AssetStore::new();
@@ -610,26 +133,14 @@ mod tests {
             active_camera: &mut active_camera,
             exit_requested: &mut exit_requested,
         };
-
-        CameraRig {
-            translation_speed: 1.0,
-            rotation_speed: 2.0,
-        }
-        .update(&mut ctx, camera, 0.25)
-        .unwrap();
-
+        CameraRig { translation_speed: 1.0, rotation_speed: 2.0 }.update(&mut ctx, camera, 0.25).unwrap();
         let transform = scene.local_transform(camera).unwrap();
-        assert!(
-            transform
-                .rotation
-                .abs_diff_eq(Quat::from_rotation_y(-0.5), 1e-5)
-        );
+        assert!(transform.rotation.abs_diff_eq(Quat::from_rotation_y(-0.5), 1e-5));
     }
 
     #[test]
     fn frame_timer_defaults_match_new() {
         let timer = FrameTimer::default();
-
         assert_eq!(timer.frame_count(), 0);
         assert_eq!(timer.fps(), 0.0);
     }
@@ -637,9 +148,7 @@ mod tests {
     #[test]
     fn frame_timer_tick_advances_frame_count() {
         let mut timer = FrameTimer::new();
-
         let dt = timer.tick();
-
         assert!(dt >= 0.0);
         assert_eq!(timer.frame_count(), 1);
     }
@@ -647,12 +156,10 @@ mod tests {
     #[test]
     fn frame_timer_updates_fps_after_one_second_of_accumulated_time() {
         let mut timer = FrameTimer::new();
-
         timer.apply_delta(0.25);
         timer.apply_delta(0.25);
         timer.apply_delta(0.25);
         timer.apply_delta(0.25);
-
         assert_eq!(timer.frame_count(), 4);
         assert!((timer.fps() - 4.0).abs() <= 1e-5);
     }
@@ -660,9 +167,7 @@ mod tests {
     #[test]
     fn frame_timer_accumulator_resets_after_fps_update() {
         let mut timer = FrameTimer::new();
-
         timer.apply_delta(1.5);
-
         assert_eq!(timer.frame_count(), 1);
         assert!((timer.fps() - (1.0 / 1.5)).abs() <= 1e-5);
         assert_eq!(timer.fps_accumulator, 0.0);
@@ -672,7 +177,6 @@ mod tests {
     #[test]
     fn runner_new_starts_empty() {
         let runner = Runner::<TestApp>::new("test");
-
         assert_eq!(runner.title, "test");
         assert!(runner.window.is_none());
         assert!(runner.state.is_none());
@@ -694,24 +198,20 @@ mod tests {
             active_camera: &mut active_camera,
             exit_requested: &mut exit_requested,
         };
-
         ctx.request_exit();
-
         assert!(exit_requested);
     }
 
     struct TestApp;
 
     impl Application for TestApp {
-        fn init(_ctx: &mut StartupContext<'_>) -> Result<Self> {
+        fn init(_ctx: &mut StartupContext<'_>) -> anyhow::Result<Self> {
             Ok(Self)
         }
-
-        fn update(&mut self, _ctx: &mut UpdateContext<'_>, _dt: f32) -> Result<()> {
+        fn update(&mut self, _ctx: &mut UpdateContext<'_>, _dt: f32) -> anyhow::Result<()> {
             Ok(())
         }
-
-        fn render(&mut self, _ctx: &mut RenderContext<'_>) -> Result<()> {
+        fn render(&mut self, _ctx: &mut RenderContext<'_>) -> anyhow::Result<()> {
             Ok(())
         }
     }
