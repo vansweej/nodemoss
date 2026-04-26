@@ -24,27 +24,30 @@ Branch: `fix/review-round-1`
 
 ---
 
-## Round 2 — Coverage completeness
+## Round 2 — Coverage completeness (complete ✓)
 
 **Goal**: reach 100% on the lines that are reachable without a GPU.  
 **Risk**: low — pure unit tests, no API changes.  
 **Branch**: `fix/coverage-round-2`
 
-The 21 remaining uncovered lines all exercise pure-Rust logic:
+| Slice | Crate | Tests added | Missing scenario covered |
+|---|---|---|---|
+| 1 | `rig-scene` | `create_node_reuses_free_list_slot` | free-list reuse path |
+| 2 | `rig-scene` | `detach_middle_child_updates_sibling_chain` | middle-child prev-sibling pointer |
+| 3 | `rig-scene` | `renderable_nodes_returns_all_renderable_node_ids` | `renderable_nodes()` iterator |
+| 4 | `rig-scene` | `world_transforms_propagate_to_grandchild` | recursive grandchild transform |
+| 5 | `rig-render` | `aligned_uniform_size_alignment_zero_or_one` | `alignment <= 1` edge case |
+| 6 | `rig-render` | `vertex_format_size_all_variants` | `Float32`, `Float32x2` match arms |
+| 7 | `rig-render` | `wgpu_vertex_format_all_variants` | all four format variants |
+| 8 | `rig-render` | `decompose_pose_identity` | identity matrix decomposition |
+| 9 | `rig-render` | `decompose_pose_translation_only` | translation-only decomposition |
+| 10 | `rig-render` | `camera_projection_view_produces_finite_matrix` | `camera_projection_view` function |
+| 11 | `rig-math` | `bounding_sphere_union_coincident_centers` | distance==0 fallback direction branch |
+| 12 | `rig-app` | `camera_rig_pitch_changes_rotation` | ArrowUp pitch branch in `CameraRig::update` |
 
-| Crate | Lines | Missing scenario |
-|---|---|---|
-| `rig-scene` | 138 | `create_node` free-list reuse path (destroy a node, then create another) |
-| `rig-scene` | 151, 218, 224–225 | `detach_child` with a middle-of-list child (prev-sibling pointer update) |
-| `rig-scene` | 289–290 | `renderable_nodes()` iterator — never called in tests |
-| `rig-scene` | 361 | `update_world_transforms_with_parent` recursive grandchild path (only one level tested) |
-| `rig-render` | 858 | `aligned_uniform_size` with `alignment <= 1` edge case |
-| `rig-render` | 967, 975–976, 991–992, 995, 997 | `vertex_format_size` / `wgpu_vertex_format` for `Float32`, `Float32x2`, `Float32x4`; `decompose_pose`; `camera_projection_view` — partial match-arm coverage |
-| `rig-assets` | 36, 56, 66 | `AssetStore::mesh/material/shader` getters for missing handles (error path) |
-| `rig-math` | 76 | One uncovered branch in `BoundingSphere` or `Projection` |
-| `rig-app` | 138 | `CameraRig::update` pitch branch (requires scene node + input state) |
+**Deliverable**: 12 targeted unit tests across 4 crates.
 
-**Deliverable**: ~15 targeted unit tests, one commit.
+| gate | `7badcb7` | `cargo fmt`; all tests pass; clippy clean |
 
 ---
 
