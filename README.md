@@ -9,16 +9,20 @@ NodeMoss is a personal 3D and physics research framework in Rust built around a 
 - Current milestones implemented:
   - `hello_triangle` — minimal direct `wgpu` triangle
   - `triangle_scenegraph` — triangle rendered through `scene + assets + render + app`
+  - `mesh_showcase` — procedural mesh primitives (box, sphere, plane, platonic solids)
   - `multi_object` — multiple objects with shared assets, depth, and visibility toggling
   - `offscreen_demo` — offscreen render target with fullscreen blit pass
   - `platonic_solids` — five platonic solids orbiting with fly-camera navigation
+  - All framework examples include an FPS counter overlay (press **F3** to toggle)
 
 ## Workspace
 
 - `crates/math` — math primitives and camera/projection helpers
 - `crates/scene` — arena-based scene graph with generational node handles
 - `crates/assets` — immutable shared assets and procedural mesh generation (box, sphere, plane, platonic solids)
+- `crates/gpu` — wgpu device/queue/surface context (`rig-gpu`)
 - `crates/render` — concrete `wgpu` renderer
+- `crates/overlay` — 2D text overlay via glyphon, retained element registry (`rig-overlay`)
 - `crates/app` — runtime runner and app shell
 
 ## Reference Code
