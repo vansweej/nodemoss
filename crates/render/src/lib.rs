@@ -7,11 +7,11 @@ mod pipeline;
 mod renderer;
 
 pub use helpers::{
-    create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
     DEPTH_FORMAT, NORMAL_COLOR_SHADER, PHONG_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
+    create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
 };
-pub use helpers::{FrameUniforms, LightUniform, LightsBuffer, MaterialUniforms, MAX_LIGHTS};
-pub use renderer::{pack_lights_buffer, Renderer};
+pub use helpers::{FrameUniforms, LightUniform, LightsBuffer, MAX_LIGHTS, MaterialUniforms};
+pub use renderer::{Renderer, pack_lights_buffer};
 
 pub use rig_gpu;
 pub use wgpu;
@@ -107,8 +107,16 @@ mod tests {
         let mut mesh = sample_mesh();
         mesh.vertex_layout.array_stride = 32;
         mesh.vertex_layout.attributes = vec![
-            VertexAttribute { shader_location: 1, format: VertexFormat::Float32x3, offset: 16 },
-            VertexAttribute { shader_location: 0, format: VertexFormat::Float32x3, offset: 0 },
+            VertexAttribute {
+                shader_location: 1,
+                format: VertexFormat::Float32x3,
+                offset: 16,
+            },
+            VertexAttribute {
+                shader_location: 0,
+                format: VertexFormat::Float32x3,
+                offset: 0,
+            },
         ];
         assert!(validate_vertex_layout(&mesh.vertex_layout).is_ok());
     }
@@ -157,14 +165,22 @@ mod tests {
     #[test]
     fn encode_object_uniforms_respects_stride_padding() {
         let uniforms = [
-            ObjectUniforms { world: Mat4::IDENTITY.to_cols_array_2d() },
-            ObjectUniforms { world: Mat4::from_translation(rig_math::Vec3::new(1.0, 2.0, 3.0)).to_cols_array_2d() },
+            ObjectUniforms {
+                world: Mat4::IDENTITY.to_cols_array_2d(),
+            },
+            ObjectUniforms {
+                world: Mat4::from_translation(rig_math::Vec3::new(1.0, 2.0, 3.0))
+                    .to_cols_array_2d(),
+            },
         ];
         let bytes = encode_object_uniforms(&uniforms, 256);
         let object_size = std::mem::size_of::<ObjectUniforms>();
         assert_eq!(bytes.len(), 512);
         assert_eq!(&bytes[..object_size], bytemuck::bytes_of(&uniforms[0]));
-        assert_eq!(&bytes[256..256 + object_size], bytemuck::bytes_of(&uniforms[1]));
+        assert_eq!(
+            &bytes[256..256 + object_size],
+            bytemuck::bytes_of(&uniforms[1])
+        );
         assert!(bytes[object_size..256].iter().all(|byte| *byte == 0));
     }
 
@@ -217,11 +233,29 @@ mod tests {
     #[test]
     fn pipeline_key_differs_with_depth_format() {
         use rig_assets::ShaderHandle;
-        let layout = VertexLayout { array_stride: 24, attributes: vec![] };
+        let layout = VertexLayout {
+            array_stride: 24,
+            attributes: vec![],
+        };
         let shader = ShaderHandle::from_raw(1);
-        let key_no_depth = PipelineKey { shader, vertex_layout: layout.clone(), color_format: wgpu::TextureFormat::Bgra8UnormSrgb, depth_format: None };
-        let key_with_depth = PipelineKey { shader, vertex_layout: layout.clone(), color_format: wgpu::TextureFormat::Bgra8UnormSrgb, depth_format: Some(wgpu::TextureFormat::Depth32Float) };
-        let key_diff_depth = PipelineKey { shader, vertex_layout: layout, color_format: wgpu::TextureFormat::Bgra8UnormSrgb, depth_format: Some(wgpu::TextureFormat::Depth24Plus) };
+        let key_no_depth = PipelineKey {
+            shader,
+            vertex_layout: layout.clone(),
+            color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            depth_format: None,
+        };
+        let key_with_depth = PipelineKey {
+            shader,
+            vertex_layout: layout.clone(),
+            color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            depth_format: Some(wgpu::TextureFormat::Depth32Float),
+        };
+        let key_diff_depth = PipelineKey {
+            shader,
+            vertex_layout: layout,
+            color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            depth_format: Some(wgpu::TextureFormat::Depth24Plus),
+        };
         assert_ne!(key_no_depth, key_with_depth);
         assert_ne!(key_with_depth, key_diff_depth);
         assert_eq!(key_no_depth, key_no_depth.clone());
@@ -230,10 +264,23 @@ mod tests {
     #[test]
     fn pipeline_key_differs_by_color_format() {
         use rig_assets::ShaderHandle;
-        let layout = VertexLayout { array_stride: 24, attributes: vec![] };
+        let layout = VertexLayout {
+            array_stride: 24,
+            attributes: vec![],
+        };
         let shader = ShaderHandle::from_raw(1);
-        let key_bgra = PipelineKey { shader, vertex_layout: layout.clone(), color_format: wgpu::TextureFormat::Bgra8UnormSrgb, depth_format: None };
-        let key_rgba16 = PipelineKey { shader, vertex_layout: layout, color_format: wgpu::TextureFormat::Rgba16Float, depth_format: None };
+        let key_bgra = PipelineKey {
+            shader,
+            vertex_layout: layout.clone(),
+            color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            depth_format: None,
+        };
+        let key_rgba16 = PipelineKey {
+            shader,
+            vertex_layout: layout,
+            color_format: wgpu::TextureFormat::Rgba16Float,
+            depth_format: None,
+        };
         assert_ne!(key_bgra, key_rgba16);
     }
 
@@ -246,14 +293,21 @@ mod tests {
     fn validate_vertex_layout_accepts_normals_only() {
         let layout = VertexLayout {
             array_stride: 12,
-            attributes: vec![VertexAttribute { shader_location: 2, format: VertexFormat::Float32x3, offset: 0 }],
+            attributes: vec![VertexAttribute {
+                shader_location: 2,
+                format: VertexFormat::Float32x3,
+                offset: 0,
+            }],
         };
         assert!(validate_vertex_layout(&layout).is_ok());
     }
 
     #[test]
     fn validate_vertex_layout_rejects_empty_layout() {
-        let layout = VertexLayout { array_stride: 12, attributes: vec![] };
+        let layout = VertexLayout {
+            array_stride: 12,
+            attributes: vec![],
+        };
         assert!(validate_vertex_layout(&layout).is_err());
     }
 
@@ -261,7 +315,11 @@ mod tests {
     fn validate_vertex_layout_rejects_zero_stride() {
         let layout = VertexLayout {
             array_stride: 0,
-            attributes: vec![VertexAttribute { shader_location: 0, format: VertexFormat::Float32x3, offset: 0 }],
+            attributes: vec![VertexAttribute {
+                shader_location: 0,
+                format: VertexFormat::Float32x3,
+                offset: 0,
+            }],
         };
         assert!(validate_vertex_layout(&layout).is_err());
     }
@@ -271,8 +329,16 @@ mod tests {
         let layout = VertexLayout {
             array_stride: 24,
             attributes: vec![
-                VertexAttribute { shader_location: 0, format: VertexFormat::Float32x3, offset: 0 },
-                VertexAttribute { shader_location: 0, format: VertexFormat::Float32x3, offset: 12 },
+                VertexAttribute {
+                    shader_location: 0,
+                    format: VertexFormat::Float32x3,
+                    offset: 0,
+                },
+                VertexAttribute {
+                    shader_location: 0,
+                    format: VertexFormat::Float32x3,
+                    offset: 12,
+                },
             ],
         };
         assert!(validate_vertex_layout(&layout).is_err());
@@ -290,7 +356,10 @@ mod tests {
 
     #[test]
     fn wgpu_vertex_format_maps_float32x4() {
-        assert_eq!(wgpu_vertex_format(VertexFormat::Float32x4), wgpu::VertexFormat::Float32x4);
+        assert_eq!(
+            wgpu_vertex_format(VertexFormat::Float32x4),
+            wgpu::VertexFormat::Float32x4
+        );
     }
 
     #[test]
@@ -309,29 +378,78 @@ mod tests {
         use rig_scene::ExtractedRenderable;
 
         let mut assets = AssetStore::new();
-        let shader_a = assets.add_shader(ShaderAsset { source: Arc::from("a") });
-        let shader_b = assets.add_shader(ShaderAsset { source: Arc::from("b") });
-        let material_a1 = assets.add_material(MaterialAsset { shader: shader_a, parameters: MaterialParams::default(), textures: vec![] });
-        let material_b1 = assets.add_material(MaterialAsset { shader: shader_b, parameters: MaterialParams::default(), textures: vec![] });
-        let material_a2 = assets.add_material(MaterialAsset { shader: shader_a, parameters: MaterialParams::default(), textures: vec![] });
+        let shader_a = assets.add_shader(ShaderAsset {
+            source: Arc::from("a"),
+        });
+        let shader_b = assets.add_shader(ShaderAsset {
+            source: Arc::from("b"),
+        });
+        let material_a1 = assets.add_material(MaterialAsset {
+            shader: shader_a,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
+        let material_b1 = assets.add_material(MaterialAsset {
+            shader: shader_b,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
+        let material_a2 = assets.add_material(MaterialAsset {
+            shader: shader_a,
+            parameters: MaterialParams::default(),
+            textures: vec![],
+        });
         let mesh_x = assets.add_mesh(sample_mesh());
-        let mesh_y = { let mut m = sample_mesh(); m.vertex_data = Arc::from([2_u8; 24]); assets.add_mesh(m) };
+        let mesh_y = {
+            let mut m = sample_mesh();
+            m.vertex_data = Arc::from([2_u8; 24]);
+            assets.add_mesh(m)
+        };
 
         use rig_assets::ShaderHandle;
         let draw_list = vec![
-            ExtractedRenderable { node: rig_scene::NodeId::from_raw(0, 0), mesh: mesh_x, material: material_b1, world_transform: Mat4::IDENTITY, world_bound: BoundingSphere::ZERO },
-            ExtractedRenderable { node: rig_scene::NodeId::from_raw(1, 0), mesh: mesh_y, material: material_a1, world_transform: Mat4::IDENTITY, world_bound: BoundingSphere::ZERO },
-            ExtractedRenderable { node: rig_scene::NodeId::from_raw(2, 0), mesh: mesh_x, material: material_a2, world_transform: Mat4::IDENTITY, world_bound: BoundingSphere::ZERO },
+            ExtractedRenderable {
+                node: rig_scene::NodeId::from_raw(0, 0),
+                mesh: mesh_x,
+                material: material_b1,
+                world_transform: Mat4::IDENTITY,
+                world_bound: BoundingSphere::ZERO,
+            },
+            ExtractedRenderable {
+                node: rig_scene::NodeId::from_raw(1, 0),
+                mesh: mesh_y,
+                material: material_a1,
+                world_transform: Mat4::IDENTITY,
+                world_bound: BoundingSphere::ZERO,
+            },
+            ExtractedRenderable {
+                node: rig_scene::NodeId::from_raw(2, 0),
+                mesh: mesh_x,
+                material: material_a2,
+                world_transform: Mat4::IDENTITY,
+                world_bound: BoundingSphere::ZERO,
+            },
         ];
 
         let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
         sorted_indices.sort_by_key(|&i| {
             let object = &draw_list[i];
-            let shader_key = assets.material(object.material).map(|m| m.shader).unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
+            let shader_key = assets
+                .material(object.material)
+                .map(|m| m.shader)
+                .unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
             (shader_key, object.mesh)
         });
 
-        let sorted_shaders: Vec<ShaderHandle> = sorted_indices.iter().map(|&i| assets.material(draw_list[i].material).map(|m| m.shader).unwrap()).collect();
+        let sorted_shaders: Vec<ShaderHandle> = sorted_indices
+            .iter()
+            .map(|&i| {
+                assets
+                    .material(draw_list[i].material)
+                    .map(|m| m.shader)
+                    .unwrap()
+            })
+            .collect();
         let first_b = sorted_shaders.iter().position(|&s| s == shader_b).unwrap();
         assert!(sorted_shaders[..first_b].iter().all(|&s| s == shader_a));
         assert!(sorted_shaders[first_b..].iter().all(|&s| s == shader_b));
@@ -367,7 +485,13 @@ mod tests {
 
     #[test]
     fn render_target_descriptor_no_depth() {
-        let desc = RenderTargetDescriptor { width: 1920, height: 1080, color_format: wgpu::TextureFormat::Bgra8UnormSrgb, depth_format: None, label: "no depth" };
+        let desc = RenderTargetDescriptor {
+            width: 1920,
+            height: 1080,
+            color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            depth_format: None,
+            label: "no depth",
+        };
         assert!(desc.depth_format.is_none());
     }
 
@@ -396,7 +520,10 @@ mod tests {
         use rig_scene::{ExtractedLight, LightKind};
 
         let light = ExtractedLight {
-            kind: LightKind::Directional { color: Vec3::new(1.0, 1.0, 1.0), intensity: 1.0 },
+            kind: LightKind::Directional {
+                color: Vec3::new(1.0, 1.0, 1.0),
+                intensity: 1.0,
+            },
             world_position: Vec3::ZERO,
             world_direction: Vec3::new(0.0, -1.0, 0.0),
         };
@@ -411,7 +538,11 @@ mod tests {
         use rig_scene::{ExtractedLight, LightKind};
 
         let light = ExtractedLight {
-            kind: LightKind::Point { color: Vec3::new(1.0, 0.0, 0.0), intensity: 2.0, range: 10.0 },
+            kind: LightKind::Point {
+                color: Vec3::new(1.0, 0.0, 0.0),
+                intensity: 2.0,
+                range: 10.0,
+            },
             world_position: Vec3::new(1.0, 2.0, 3.0),
             world_direction: Vec3::new(0.0, -1.0, 0.0),
         };
@@ -427,7 +558,10 @@ mod tests {
         use rig_scene::{ExtractedLight, LightKind};
 
         let light = ExtractedLight {
-            kind: LightKind::Directional { color: Vec3::ONE, intensity: 1.0 },
+            kind: LightKind::Directional {
+                color: Vec3::ONE,
+                intensity: 1.0,
+            },
             world_position: Vec3::ZERO,
             world_direction: Vec3::new(0.0, -1.0, 0.0),
         };

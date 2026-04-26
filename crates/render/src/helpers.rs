@@ -390,7 +390,10 @@ pub(crate) fn object_uniform_offset(index: usize, stride: u64) -> Result<u32> {
         .map_err(|_| RenderError::Asset("object uniform offset exceeds u32 range".into()))
 }
 
-pub(crate) fn encode_object_uniforms(uniforms: &[crate::frame::ObjectUniforms], stride: u64) -> Vec<u8> {
+pub(crate) fn encode_object_uniforms(
+    uniforms: &[crate::frame::ObjectUniforms],
+    stride: u64,
+) -> Vec<u8> {
     let object_size = std::mem::size_of::<crate::frame::ObjectUniforms>();
     let stride = stride as usize;
     let mut bytes = vec![0_u8; stride * uniforms.len()];
@@ -526,37 +529,39 @@ pub(crate) fn create_pipeline(
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     });
-    Ok(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("rig render pipeline"),
-        layout: Some(pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[buffer_layout],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: color_format,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+    Ok(
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rig render pipeline"),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[buffer_layout],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
         }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            polygon_mode: wgpu::PolygonMode::Fill,
-            unclipped_depth: false,
-            conservative: false,
-        },
-        depth_stencil,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    }))
+    )
 }

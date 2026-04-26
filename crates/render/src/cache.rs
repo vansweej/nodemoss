@@ -93,7 +93,11 @@ impl ImmutableResourceCache {
             let wgpu_format = map_texture_format(asset.format);
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("cached texture"),
-                size: wgpu::Extent3d { width: asset.width, height: asset.height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: asset.width,
+                    height: asset.height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -114,7 +118,11 @@ impl ImmutableResourceCache {
                     bytes_per_row: Some(asset.width * 4),
                     rows_per_image: Some(asset.height),
                 },
-                wgpu::Extent3d { width: asset.width, height: asset.height, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: asset.width,
+                    height: asset.height,
+                    depth_or_array_layers: 1,
+                },
             );
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             self.textures.insert(handle, texture);

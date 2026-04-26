@@ -4,8 +4,8 @@ use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::helpers::{aligned_uniform_size, encode_object_uniforms, object_uniform_offset};
 use crate::Result;
+use crate::helpers::{aligned_uniform_size, encode_object_uniforms, object_uniform_offset};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -48,7 +48,12 @@ impl ObjectUniformBuffer {
                 }),
             }],
         });
-        Self { buffer, bind_group, stride, capacity }
+        Self {
+            buffer,
+            bind_group,
+            stride,
+            capacity,
+        }
     }
 
     pub(crate) fn ensure_capacity(
