@@ -105,7 +105,13 @@ graphics/                           # workspace root
       src/lib.rs
     scene/                          # rig-scene
       Cargo.toml
-      src/lib.rs
+      src/
+        lib.rs                      # thin facade: mod declarations + pub use *
+        node.rs                     # NodeId, NodeSlot, SceneNode, SceneError
+        graph.rs                    # SceneGraph struct + arena + topology ops
+        components.rs               # Renderable, CameraComponent, LightComponent + impl SceneGraph
+        extraction.rs               # ExtractedRenderable/Camera/Light, frustum helpers
+        traversal.rs                # update_world_transforms, update_world_bounds
     assets/                         # rig-assets
       Cargo.toml
       src/lib.rs
@@ -114,13 +120,25 @@ graphics/                           # workspace root
       src/lib.rs
     render/                         # rig-render
       Cargo.toml
-      src/lib.rs
+      src/
+        lib.rs                      # thin facade: error types, RenderTarget, pub use, tests
+        cache.rs                    # ImmutableResourceCache, CachedMeshBuffers
+        frame.rs                    # ObjectUniforms, ObjectUniformBuffer, FrameResources
+        helpers.rs                  # aligned_uniform_size, TRIANGLE_SHADER, NORMAL_COLOR_SHADER, etc.
+        pipeline.rs                 # PipelineKey
+        renderer.rs                 # Renderer struct + all impl blocks
     overlay/                        # rig-overlay
       Cargo.toml
       src/lib.rs
     app/                            # rig-app
       Cargo.toml
-      src/lib.rs
+      src/
+        lib.rs                      # thin facade: Application trait, pub use, tests
+        camera_rig.rs               # CameraRig struct + update()
+        context.rs                  # StartupContext, UpdateContext, RenderContext, OverlayUpdateContext
+        input.rs                    # InputState, key_axis, KeyCode handling
+        runner.rs                   # run(), Runner, RunnerState, winit event loop
+        timer.rs                    # FrameTimer, delta time, FPS tracking
   examples/
     hello_triangle/                 # milestone 1 (raw wgpu+winit)
       Cargo.toml
@@ -128,10 +146,10 @@ graphics/                           # workspace root
     triangle_scenegraph/            # milestone 2
       Cargo.toml
       src/main.rs
-    mesh_showcase/                  # milestone 3+
-    multi_object/
-    offscreen_demo/
-    platonic_solids/
+    mesh_showcase/                  # milestone 3+ - procedural mesh primitives
+    multi_object/                   # milestone 3+ - multiple objects, camera rig
+    offscreen_demo/                 # milestone 3+ - offscreen render target + blit
+    platonic_solids/                # milestone 3+ - animated solids, fly-camera, overlay
   GeometricTools/                   # reference only, not part of the workspace
 ```
 

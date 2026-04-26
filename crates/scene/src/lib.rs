@@ -1,611 +1,17 @@
 //! Scene graph and world model for the rig framework.
 
-use std::collections::HashMap;
-
-use rig_assets::{AssetStore, MaterialHandle, MeshHandle};
-use rig_math::{BoundingSphere, Mat4, Projection, Transform, Vec3, Vec4};
-use thiserror::Error;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct NodeId {
-    index: u32,
-    generation: u32,
-}
-
-impl NodeId {
-    /// Construct a `NodeId` directly from raw index and generation values.
-    ///
-    /// Primarily intended for tests that need to construct scene-independent
-    /// `NodeId` values without going through the scene graph allocator.
-    pub fn from_raw(index: u32, generation: u32) -> Self {
-        Self { index, generation }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VisibilityMode {
-    Inherit,
-    AlwaysVisible,
-    Hidden,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Renderable {
-    pub mesh: MeshHandle,
-    pub material: MaterialHandle,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CameraComponent {
-    pub projection: Projection,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LightKind {
-    Directional {
-        color: Vec3,
-        intensity: f32,
-    },
-    Point {
-        color: Vec3,
-        intensity: f32,
-        range: f32,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LightComponent {
-    pub kind: LightKind,
-}
-
-#[derive(Clone, Debug)]
-pub struct SceneNode {
-    name: String,
-    parent: Option<NodeId>,
-    first_child: Option<NodeId>,
-    next_sibling: Option<NodeId>,
-    local_transform: Transform,
-    world_transform: Mat4,
-    world_bound: BoundingSphere,
-    visibility: VisibilityMode,
-}
-
-impl SceneNode {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            parent: None,
-            first_child: None,
-            next_sibling: None,
-            local_transform: Transform::IDENTITY,
-            world_transform: Mat4::IDENTITY,
-            world_bound: BoundingSphere::ZERO,
-            visibility: VisibilityMode::Inherit,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct NodeSlot {
-    generation: u32,
-    node: Option<SceneNode>,
-}
-
-#[derive(Debug, Error)]
-pub enum SceneError {
-    #[error("invalid node handle")]
-    InvalidNode,
-    #[error("cannot attach a node to itself")]
-    SelfParent,
-    #[error("attaching parent to its own descendant would create a cycle")]
-    CycleDetected,
-    #[error("missing mesh asset for renderable node")]
-    MissingMeshAsset,
-    #[error("node does not have a camera component")]
-    NotACamera,
-}
-
-pub type Result<T> = std::result::Result<T, SceneError>;
-
-#[derive(Default)]
-pub struct SceneGraph {
-    nodes: Vec<NodeSlot>,
-    free_list: Vec<u32>,
-    renderables: HashMap<NodeId, Renderable>,
-    cameras: HashMap<NodeId, CameraComponent>,
-    lights: HashMap<NodeId, LightComponent>,
-}
-
-impl SceneGraph {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn create_node(&mut self, name: impl Into<String>) -> NodeId {
-        let name = name.into();
-
-        if let Some(index) = self.free_list.pop() {
-            let slot = &mut self.nodes[index as usize];
-            let id = NodeId {
-                index,
-                generation: slot.generation,
-            };
-            slot.node = Some(SceneNode::new(name));
-            id
-        } else {
-            let index = self.nodes.len() as u32;
-            self.nodes.push(NodeSlot {
-                generation: 0,
-                node: Some(SceneNode::new(name)),
-            });
-            NodeId {
-                index,
-                generation: 0,
-            }
-        }
-    }
-
-    pub fn destroy_node(&mut self, id: NodeId) -> Result<()> {
-        let children = self.children(id)?;
-        for child in children {
-            self.destroy_node(child)?;
-        }
-
-        self.detach_child(id)?;
-        self.renderables.remove(&id);
-        self.cameras.remove(&id);
-        self.lights.remove(&id);
-
-        let slot = self.slot_mut(id)?;
-        slot.node = None;
-        slot.generation = slot.generation.wrapping_add(1);
-        self.free_list.push(id.index);
-        Ok(())
-    }
-
-    pub fn attach_child(&mut self, parent: NodeId, child: NodeId) -> Result<()> {
-        if parent == child {
-            return Err(SceneError::SelfParent);
-        }
-
-        // Validate both nodes exist before any mutation.
-        self.node(parent)?;
-        self.node(child)?;
-
-        // Reject if parent is already a descendant of child (would create a cycle).
-        if self.is_ancestor(child, parent)? {
-            return Err(SceneError::CycleDetected);
-        }
-
-        self.detach_child(child)?;
-
-        let first_child = self.node(parent)?.first_child;
-        {
-            let child_node = self.node_mut(child)?;
-            child_node.parent = Some(parent);
-            child_node.next_sibling = first_child;
-        }
-        self.node_mut(parent)?.first_child = Some(child);
-        Ok(())
-    }
-
-    /// Returns `true` if `ancestor` is an ancestor of `descendant` (i.e. walking
-    /// the parent chain from `descendant` reaches `ancestor`).
-    fn is_ancestor(&self, ancestor: NodeId, descendant: NodeId) -> Result<bool> {
-        let mut current = self.node(descendant)?.parent;
-        while let Some(id) = current {
-            if id == ancestor {
-                return Ok(true);
-            }
-            current = self.node(id)?.parent;
-        }
-        Ok(false)
-    }
-
-    pub fn detach_child(&mut self, child: NodeId) -> Result<()> {
-        let parent = self.node(child)?.parent;
-        let Some(parent) = parent else {
-            return Ok(());
-        };
-
-        let mut current = self.node(parent)?.first_child;
-        let mut previous = None;
-
-        while let Some(node_id) = current {
-            let next = self.node(node_id)?.next_sibling;
-            if node_id == child {
-                if let Some(prev) = previous {
-                    self.node_mut(prev)?.next_sibling = next;
-                } else {
-                    self.node_mut(parent)?.first_child = next;
-                }
-                break;
-            }
-            previous = Some(node_id);
-            current = next;
-        }
-
-        let child_node = self.node_mut(child)?;
-        child_node.parent = None;
-        child_node.next_sibling = None;
-        Ok(())
-    }
-
-    pub fn set_local_transform(&mut self, node: NodeId, transform: Transform) -> Result<()> {
-        self.node_mut(node)?.local_transform = transform;
-        Ok(())
-    }
-
-    pub fn local_transform(&self, node: NodeId) -> Result<Transform> {
-        Ok(self.node(node)?.local_transform)
-    }
-
-    pub fn set_renderable(&mut self, node: NodeId, renderable: Renderable) -> Result<()> {
-        self.node(node)?;
-        self.renderables.insert(node, renderable);
-        Ok(())
-    }
-
-    pub fn set_camera(&mut self, node: NodeId, camera: CameraComponent) -> Result<()> {
-        self.node(node)?;
-        self.cameras.insert(node, camera);
-        Ok(())
-    }
-
-    pub fn set_light(&mut self, node: NodeId, light: LightComponent) -> Result<()> {
-        self.node(node)?;
-        self.lights.insert(node, light);
-        Ok(())
-    }
-
-    pub fn world_transform(&self, node: NodeId) -> Result<Mat4> {
-        Ok(self.node(node)?.world_transform)
-    }
-
-    pub fn renderable(&self, node: NodeId) -> Result<Option<&Renderable>> {
-        self.node(node)?;
-        Ok(self.renderables.get(&node))
-    }
-
-    pub fn camera(&self, node: NodeId) -> Result<Option<&CameraComponent>> {
-        self.node(node)?;
-        Ok(self.cameras.get(&node))
-    }
-
-    pub fn node_name(&self, node: NodeId) -> Result<&str> {
-        Ok(&self.node(node)?.name)
-    }
-
-    pub fn children(&self, node: NodeId) -> Result<Vec<NodeId>> {
-        let mut out = Vec::new();
-        let mut current = self.node(node)?.first_child;
-        while let Some(id) = current {
-            out.push(id);
-            current = self.node(id)?.next_sibling;
-        }
-        Ok(out)
-    }
-
-    pub fn renderable_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.renderables.keys().copied()
-    }
-
-    /// All node IDs that have a `CameraComponent` attached.
-    pub fn camera_nodes(&self) -> Vec<NodeId> {
-        self.cameras.keys().copied().collect()
-    }
-
-    /// The first camera node found in the scene, if any.
-    ///
-    /// Useful for single-camera apps that do not need explicit selection.
-    pub fn first_camera(&self) -> Option<NodeId> {
-        self.cameras.keys().next().copied()
-    }
-
-    /// Find a camera node by the name of its scene node.
-    ///
-    /// Returns `None` if no node with that name has a `CameraComponent`.
-    pub fn camera_with_name(&self, name: &str) -> Option<NodeId> {
-        self.cameras
-            .keys()
-            .copied()
-            .find(|&id| self.node(id).map(|n| n.name == name).unwrap_or(false))
-    }
-
-    /// Extract camera data for a given camera node.
-    ///
-    /// Returns `SceneError::InvalidNode` when `id` is not a valid node, and
-    /// `SceneError::NotACamera` when the node exists but has no camera component.
-    pub fn extract_active_camera(&self, id: NodeId) -> Result<ExtractedCamera> {
-        // Validate node existence first so stale handles get InvalidNode, not NotACamera.
-        let world_transform = self.node(id)?.world_transform;
-        let camera = self.cameras.get(&id).ok_or(SceneError::NotACamera)?;
-        Ok(ExtractedCamera {
-            node: id,
-            projection: camera.projection,
-            world_transform,
-        })
-    }
-
-    pub fn update_world_transforms(&mut self, root: NodeId) -> Result<()> {
-        let root_local = self.node(root)?.local_transform.to_mat4();
-        self.node_mut(root)?.world_transform = root_local;
-
-        let children = self.children(root)?;
-        for child in children {
-            self.update_world_transforms_with_parent(child, root_local)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn update_all_world_transforms(&mut self) -> Result<()> {
-        let roots = self.root_nodes();
-        for root in roots {
-            self.update_world_transforms(root)?;
-        }
-        Ok(())
-    }
-
-    fn update_world_transforms_with_parent(
-        &mut self,
-        node: NodeId,
-        parent_world: Mat4,
-    ) -> Result<()> {
-        let local = self.node(node)?.local_transform.to_mat4();
-        let world = parent_world * local;
-        self.node_mut(node)?.world_transform = world;
-
-        let children = self.children(node)?;
-        for child in children {
-            self.update_world_transforms_with_parent(child, world)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn update_world_bounds(&mut self, root: NodeId, assets: &AssetStore) -> Result<()> {
-        let _ = self.compute_world_bounds(root, assets)?;
-        Ok(())
-    }
-
-    pub fn update_all_world_bounds(&mut self, assets: &AssetStore) -> Result<()> {
-        let roots = self.root_nodes();
-        for root in roots {
-            self.update_world_bounds(root, assets)?;
-        }
-        Ok(())
-    }
-
-    fn compute_world_bounds(
-        &mut self,
-        node: NodeId,
-        assets: &AssetStore,
-    ) -> Result<BoundingSphere> {
-        let child_ids = self.children(node)?;
-        let mut bound = if let Some(renderable) = self.renderables.get(&node).copied() {
-            let mesh = assets
-                .mesh(renderable.mesh)
-                .map_err(|_| SceneError::MissingMeshAsset)?;
-            mesh.local_bounds
-                .transform_by(self.node(node)?.world_transform)
-        } else {
-            BoundingSphere::ZERO
-        };
-
-        for child in child_ids {
-            let child_bound = self.compute_world_bounds(child, assets)?;
-            bound = bound.union(child_bound);
-        }
-
-        self.node_mut(node)?.world_bound = bound;
-        Ok(bound)
-    }
-
-    pub fn extract_renderables(&self) -> Vec<ExtractedRenderable> {
-        self.renderables
-            .iter()
-            .filter_map(|(&node, &renderable)| {
-                let world = self.node(node).ok()?.world_transform;
-                let world_bound = self.node(node).ok()?.world_bound;
-                let visibility = self.effective_visibility(node).ok()?;
-                if matches!(visibility, VisibilityMode::Hidden) {
-                    return None;
-                }
-
-                Some(ExtractedRenderable {
-                    node,
-                    mesh: renderable.mesh,
-                    material: renderable.material,
-                    world_transform: world,
-                    world_bound,
-                })
-            })
-            .collect()
-    }
-
-    /// Extract all lights from the scene.
-    ///
-    /// For each node that has a `LightComponent`, reads the world transform
-    /// and derives world-space position and forward direction (−Z in local space).
-    pub fn extract_lights(&self) -> Vec<ExtractedLight> {
-        self.lights
-            .iter()
-            .filter_map(|(&node, &light)| {
-                let world = self.node(node).ok()?.world_transform;
-                let world_position = world.transform_point3(Vec3::ZERO);
-                // The light points in −Z local space (same convention as camera)
-                let world_direction = world.transform_vector3(-Vec3::Z).normalize_or_zero();
-                Some(ExtractedLight {
-                    kind: light.kind,
-                    world_position,
-                    world_direction,
-                })
-            })
-            .collect()
-    }
-
-    /// Like [`extract_renderables`] but skips objects whose world bounding
-    /// sphere is entirely outside the given frustum planes.
-    ///
-    /// - `VisibilityMode::Hidden` (effective) → always culled.
-    /// - `VisibilityMode::AlwaysVisible` → skip frustum test, always included
-    ///   **unless** an ancestor is `Hidden`.
-    /// - `VisibilityMode::Inherit` → normal frustum test.
-    pub fn extract_renderables_culled(
-        &self,
-        frustum_planes: &[Vec4; 6],
-    ) -> Vec<ExtractedRenderable> {
-        self.renderables
-            .iter()
-            .filter_map(|(&node, &renderable)| {
-                let node_data = self.node(node).ok()?;
-                let effective = self.effective_visibility(node).ok()?;
-                match effective {
-                    VisibilityMode::Hidden => return None,
-                    VisibilityMode::AlwaysVisible => {}
-                    VisibilityMode::Inherit => {
-                        if node_data.world_bound.is_outside_frustum(frustum_planes) {
-                            return None;
-                        }
-                    }
-                }
-                Some(ExtractedRenderable {
-                    node,
-                    mesh: renderable.mesh,
-                    material: renderable.material,
-                    world_transform: node_data.world_transform,
-                    world_bound: node_data.world_bound,
-                })
-            })
-            .collect()
-    }
-
-    fn slot(&self, id: NodeId) -> Result<&NodeSlot> {
-        let slot = self
-            .nodes
-            .get(id.index as usize)
-            .ok_or(SceneError::InvalidNode)?;
-        if slot.generation != id.generation || slot.node.is_none() {
-            return Err(SceneError::InvalidNode);
-        }
-        Ok(slot)
-    }
-
-    fn slot_mut(&mut self, id: NodeId) -> Result<&mut NodeSlot> {
-        let slot = self
-            .nodes
-            .get_mut(id.index as usize)
-            .ok_or(SceneError::InvalidNode)?;
-        if slot.generation != id.generation || slot.node.is_none() {
-            return Err(SceneError::InvalidNode);
-        }
-        Ok(slot)
-    }
-
-    fn node(&self, id: NodeId) -> Result<&SceneNode> {
-        self.slot(id)?.node.as_ref().ok_or(SceneError::InvalidNode)
-    }
-
-    fn node_mut(&mut self, id: NodeId) -> Result<&mut SceneNode> {
-        self.slot_mut(id)?
-            .node
-            .as_mut()
-            .ok_or(SceneError::InvalidNode)
-    }
-
-    /// Return the visibility mode of a node.
-    pub fn visibility(&self, id: NodeId) -> Result<VisibilityMode> {
-        Ok(self.node(id)?.visibility)
-    }
-
-    /// Set the visibility mode of a node.
-    pub fn set_visibility(&mut self, id: NodeId, mode: VisibilityMode) -> Result<()> {
-        self.node_mut(id)?.visibility = mode;
-        Ok(())
-    }
-
-    /// Resolve the effective visibility of a node by walking the parent chain.
-    ///
-    /// - If any ancestor is `Hidden`, the effective visibility is `Hidden`
-    ///   regardless of the node's own mode (hidden ancestor wins).
-    /// - Otherwise the node's own `VisibilityMode` is returned.
-    pub fn effective_visibility(&self, id: NodeId) -> Result<VisibilityMode> {
-        let own = self.node(id)?.visibility;
-        // Walk ancestors; if any is Hidden, this node is effectively hidden.
-        let mut current = self.node(id)?.parent;
-        while let Some(parent_id) = current {
-            let parent = self.node(parent_id)?;
-            if parent.visibility == VisibilityMode::Hidden {
-                return Ok(VisibilityMode::Hidden);
-            }
-            current = parent.parent;
-        }
-        Ok(own)
-    }
-
-    fn root_nodes(&self) -> Vec<NodeId> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let node = slot.node.as_ref()?;
-                if node.parent.is_none() {
-                    Some(NodeId {
-                        index: index as u32,
-                        generation: slot.generation,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExtractedRenderable {
-    pub node: NodeId,
-    pub mesh: MeshHandle,
-    pub material: MaterialHandle,
-    pub world_transform: Mat4,
-    pub world_bound: BoundingSphere,
-}
-
-/// Camera data extracted from the scene, ready for the renderer.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExtractedCamera {
-    pub node: NodeId,
-    pub projection: Projection,
-    pub world_transform: Mat4,
-}
-
-/// Light data extracted from the scene, ready for the renderer.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExtractedLight {
-    pub kind: LightKind,
-    /// World-space position (relevant for `Point` lights).
-    pub world_position: Vec3,
-    /// World-space forward direction of the light node (−Z axis in local space).
-    pub world_direction: Vec3,
-}
-
-pub fn frustum_planes_from_projection_view(matrix: Mat4) -> [Vec4; 6] {
-    let left = matrix.col(3) + matrix.col(0);
-    let right = matrix.col(3) - matrix.col(0);
-    let bottom = matrix.col(3) + matrix.col(1);
-    let top = matrix.col(3) - matrix.col(1);
-    let near = matrix.col(3) + matrix.col(2);
-    let far = matrix.col(3) - matrix.col(2);
-
-    [left, right, bottom, top, near, far].map(normalize_plane)
-}
-
-fn normalize_plane(plane: Vec4) -> Vec4 {
-    let normal = plane.truncate();
-    let length = normal.length();
-    if length > 0.0 { plane / length } else { plane }
-}
+mod node;
+mod graph;
+mod components;
+mod extraction;
+mod traversal;
+
+pub use node::*;
+pub use graph::*;
+pub use components::*;
+pub use extraction::*;
+// Re-export asset handle types for use in the public API
+pub use rig_assets::{MaterialHandle, MeshHandle};
 
 #[cfg(test)]
 mod tests {
@@ -614,12 +20,12 @@ mod tests {
     use rig_assets::{
         MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
     };
-    use rig_math::{Quat, Vec3};
+    use rig_math::{BoundingSphere, Quat, Vec3};
 
     use super::*;
 
-    fn sample_assets() -> (AssetStore, MeshHandle, MaterialHandle) {
-        let mut assets = AssetStore::new();
+    fn sample_assets() -> (rig_assets::AssetStore, MeshHandle, MaterialHandle) {
+        let mut assets = rig_assets::AssetStore::new();
         let shader = assets.add_shader(ShaderAsset {
             source: Arc::from("shader"),
         });
@@ -665,24 +71,17 @@ mod tests {
     #[test]
     fn create_node_starts_with_generation_zero() {
         let mut scene = SceneGraph::new();
-
         let node = scene.create_node("node");
-
         assert_eq!(scene.node_name(node).unwrap(), "node");
     }
 
     #[test]
     fn destroy_node_invalidates_old_handle_and_reuses_slot_with_new_generation() {
         let mut scene = SceneGraph::new();
-
         let first = scene.create_node("first");
         scene.destroy_node(first).unwrap();
         let second = scene.create_node("second");
-
-        assert!(matches!(
-            scene.node_name(first),
-            Err(SceneError::InvalidNode)
-        ));
+        assert!(matches!(scene.node_name(first), Err(SceneError::InvalidNode)));
         assert_eq!(scene.node_name(second).unwrap(), "second");
         assert_ne!(first, second);
     }
@@ -692,9 +91,7 @@ mod tests {
         let mut scene = SceneGraph::new();
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
-
         scene.attach_child(parent, child).unwrap();
-
         assert_eq!(scene.children(parent).unwrap(), vec![child]);
     }
 
@@ -704,10 +101,8 @@ mod tests {
         let first_parent = scene.create_node("first_parent");
         let second_parent = scene.create_node("second_parent");
         let child = scene.create_node("child");
-
         scene.attach_child(first_parent, child).unwrap();
         scene.attach_child(second_parent, child).unwrap();
-
         assert!(scene.children(first_parent).unwrap().is_empty());
         assert_eq!(scene.children(second_parent).unwrap(), vec![child]);
     }
@@ -720,13 +115,7 @@ mod tests {
         let child = scene.create_node("child");
         scene.attach_child(grandparent, parent).unwrap();
         scene.attach_child(parent, child).unwrap();
-
-        // Trying to make grandparent a child of child would create a cycle.
-        assert!(matches!(
-            scene.attach_child(child, grandparent),
-            Err(SceneError::CycleDetected)
-        ));
-        // Tree must be unchanged.
+        assert!(matches!(scene.attach_child(child, grandparent), Err(SceneError::CycleDetected)));
         assert_eq!(scene.children(grandparent).unwrap(), vec![parent]);
         assert_eq!(scene.children(parent).unwrap(), vec![child]);
         assert!(scene.children(child).unwrap().is_empty());
@@ -738,16 +127,8 @@ mod tests {
         let real_parent = scene.create_node("real_parent");
         let child = scene.create_node("child");
         scene.attach_child(real_parent, child).unwrap();
-
-        let invalid = NodeId {
-            index: 99,
-            generation: 0,
-        };
-        assert!(matches!(
-            scene.attach_child(invalid, child),
-            Err(SceneError::InvalidNode)
-        ));
-        // Child must still be attached to real_parent.
+        let invalid = NodeId { index: 99, generation: 0 };
+        assert!(matches!(scene.attach_child(invalid, child), Err(SceneError::InvalidNode)));
         assert_eq!(scene.children(real_parent).unwrap(), vec![child]);
     }
 
@@ -757,11 +138,8 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-
-        // Trying to make parent a child of child would create a cycle.
         let result = scene.attach_child(child, parent);
         assert!(matches!(result, Err(SceneError::CycleDetected)));
-        // parent must still be a root (not detached from its position).
         assert!(scene.children(child).unwrap().is_empty());
         assert_eq!(scene.children(parent).unwrap(), vec![child]);
     }
@@ -770,11 +148,7 @@ mod tests {
     fn attach_child_rejects_self_parenting() {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("node");
-
-        assert!(matches!(
-            scene.attach_child(node, node),
-            Err(SceneError::SelfParent)
-        ));
+        assert!(matches!(scene.attach_child(node, node), Err(SceneError::SelfParent)));
     }
 
     #[test]
@@ -783,49 +157,22 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-
         scene.detach_child(child).unwrap();
-
         assert!(scene.children(parent).unwrap().is_empty());
     }
 
     #[test]
     fn set_renderable_camera_and_light_require_valid_node() {
         let mut scene = SceneGraph::new();
-        let invalid = NodeId {
-            index: 99,
-            generation: 0,
-        };
+        let invalid = NodeId { index: 99, generation: 0 };
         let (_, mesh, material) = sample_assets();
-
+        assert!(matches!(scene.set_renderable(invalid, Renderable { mesh, material }), Err(SceneError::InvalidNode)));
         assert!(matches!(
-            scene.set_renderable(invalid, Renderable { mesh, material }),
+            scene.set_camera(invalid, CameraComponent { projection: rig_math::Projection::Perspective { fov_y_radians: 1.0, near: 0.1, far: 10.0 } }),
             Err(SceneError::InvalidNode)
         ));
         assert!(matches!(
-            scene.set_camera(
-                invalid,
-                CameraComponent {
-                    projection: Projection::Perspective {
-                        fov_y_radians: 1.0,
-                        near: 0.1,
-                        far: 10.0,
-                    },
-                }
-            ),
-            Err(SceneError::InvalidNode)
-        ));
-        assert!(matches!(
-            scene.set_light(
-                invalid,
-                LightComponent {
-                    kind: LightKind::Point {
-                        color: Vec3::ONE,
-                        intensity: 1.0,
-                        range: 5.0,
-                    },
-                }
-            ),
+            scene.set_light(invalid, LightComponent { kind: LightKind::Point { color: Vec3::ONE, intensity: 1.0, range: 5.0 } }),
             Err(SceneError::InvalidNode)
         ));
     }
@@ -835,24 +182,11 @@ mod tests {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("triangle");
         let (_, mesh, material) = sample_assets();
-        let camera_component = CameraComponent {
-            projection: Projection::Perspective {
-                fov_y_radians: 1.0,
-                near: 0.1,
-                far: 10.0,
-            },
-        };
-
-        scene
-            .set_renderable(node, Renderable { mesh, material })
-            .unwrap();
+        let camera_component = CameraComponent { projection: rig_math::Projection::Perspective { fov_y_radians: 1.0, near: 0.1, far: 10.0 } };
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
         scene.set_camera(node, camera_component).unwrap();
-
         assert_eq!(scene.node_name(node).unwrap(), "triangle");
-        assert_eq!(
-            scene.renderable(node).unwrap().copied(),
-            Some(Renderable { mesh, material })
-        );
+        assert_eq!(scene.renderable(node).unwrap().copied(), Some(Renderable { mesh, material }));
         assert_eq!(scene.camera(node).unwrap().copied(), Some(camera_component));
     }
 
@@ -862,36 +196,10 @@ mod tests {
         let root = scene.create_node("root");
         let child = scene.create_node("child");
         scene.attach_child(root, child).unwrap();
-        scene
-            .set_local_transform(
-                root,
-                Transform {
-                    translation: Vec3::new(1.0, 0.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_local_transform(
-                child,
-                Transform {
-                    translation: Vec3::new(0.0, 2.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-
+        scene.set_local_transform(root, rig_math::Transform { translation: Vec3::new(1.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene.set_local_transform(child, rig_math::Transform { translation: Vec3::new(0.0, 2.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
         scene.update_world_transforms(root).unwrap();
-
-        approx_eq_vec3(
-            scene
-                .world_transform(child)
-                .unwrap()
-                .transform_point3(Vec3::ZERO),
-            Vec3::new(1.0, 2.0, 0.0),
-        );
+        approx_eq_vec3(scene.world_transform(child).unwrap().transform_point3(Vec3::ZERO), Vec3::new(1.0, 2.0, 0.0));
     }
 
     #[test]
@@ -899,43 +207,11 @@ mod tests {
         let mut scene = SceneGraph::new();
         let left = scene.create_node("left");
         let right = scene.create_node("right");
-        scene
-            .set_local_transform(
-                left,
-                Transform {
-                    translation: Vec3::new(1.0, 0.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_local_transform(
-                right,
-                Transform {
-                    translation: Vec3::new(0.0, 1.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-
+        scene.set_local_transform(left, rig_math::Transform { translation: Vec3::new(1.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene.set_local_transform(right, rig_math::Transform { translation: Vec3::new(0.0, 1.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
         scene.update_all_world_transforms().unwrap();
-
-        approx_eq_vec3(
-            scene
-                .world_transform(left)
-                .unwrap()
-                .transform_point3(Vec3::ZERO),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
-        approx_eq_vec3(
-            scene
-                .world_transform(right)
-                .unwrap()
-                .transform_point3(Vec3::ZERO),
-            Vec3::new(0.0, 1.0, 0.0),
-        );
+        approx_eq_vec3(scene.world_transform(left).unwrap().transform_point3(Vec3::ZERO), Vec3::new(1.0, 0.0, 0.0));
+        approx_eq_vec3(scene.world_transform(right).unwrap().transform_point3(Vec3::ZERO), Vec3::new(0.0, 1.0, 0.0));
     }
 
     #[test]
@@ -945,23 +221,10 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene
-            .set_renderable(child, Renderable { mesh, material })
-            .unwrap();
-        scene
-            .set_local_transform(
-                child,
-                Transform {
-                    translation: Vec3::new(3.0, 0.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
+        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
+        scene.set_local_transform(child, rig_math::Transform { translation: Vec3::new(3.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
         scene.update_all_world_transforms().unwrap();
-
         scene.update_world_bounds(parent, &assets).unwrap();
-
         let extracted = scene.extract_renderables();
         assert_eq!(extracted.len(), 1);
         approx_eq_vec3(extracted[0].world_bound.center, Vec3::new(3.0, 0.0, 0.0));
@@ -972,16 +235,10 @@ mod tests {
     fn update_world_bounds_errors_when_mesh_asset_is_missing() {
         let mut scene = SceneGraph::new();
         let (_source_assets, mesh, material) = sample_assets();
-        let assets = AssetStore::new();
+        let assets = rig_assets::AssetStore::new();
         let node = scene.create_node("node");
-        scene
-            .set_renderable(node, Renderable { mesh, material })
-            .unwrap();
-
-        assert!(matches!(
-            scene.update_world_bounds(node, &assets),
-            Err(SceneError::MissingMeshAsset)
-        ));
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        assert!(matches!(scene.update_world_bounds(node, &assets), Err(SceneError::MissingMeshAsset)));
     }
 
     #[test]
@@ -989,22 +246,16 @@ mod tests {
         let mut scene = SceneGraph::new();
         let (_, mesh, material) = sample_assets();
         let node = scene.create_node("hidden");
-        scene
-            .set_renderable(node, Renderable { mesh, material })
-            .unwrap();
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
         scene.node_mut(node).unwrap().visibility = VisibilityMode::Hidden;
-
         let extracted = scene.extract_renderables();
-
         assert!(extracted.is_empty());
     }
 
     #[test]
     fn frustum_plane_extraction_normalizes_planes() {
-        let matrix = Mat4::IDENTITY;
-
+        let matrix = rig_math::Mat4::IDENTITY;
         let planes = frustum_planes_from_projection_view(matrix);
-
         for plane in planes {
             let normal_length = plane.truncate().length();
             assert!((normal_length - 1.0).abs() <= 1e-5 || normal_length == 0.0);
@@ -1013,17 +264,12 @@ mod tests {
 
     #[test]
     fn normalize_plane_leaves_zero_plane_unchanged() {
-        let plane = Vec4::ZERO;
-
+        let plane = rig_math::Vec4::ZERO;
         assert_eq!(normalize_plane(plane), plane);
     }
 
-    fn perspective() -> Projection {
-        Projection::Perspective {
-            fov_y_radians: 1.0,
-            near: 0.1,
-            far: 100.0,
-        }
+    fn perspective() -> rig_math::Projection {
+        rig_math::Projection::Perspective { fov_y_radians: 1.0, near: 0.1, far: 100.0 }
     }
 
     #[test]
@@ -1032,27 +278,10 @@ mod tests {
         let a = scene.create_node("a");
         let b = scene.create_node("b");
         let c = scene.create_node("c");
-        scene
-            .set_camera(
-                a,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
-        scene
-            .set_camera(
-                b,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
-        // c has no camera
-
+        scene.set_camera(a, CameraComponent { projection: perspective() }).unwrap();
+        scene.set_camera(b, CameraComponent { projection: perspective() }).unwrap();
         let mut nodes = scene.camera_nodes();
         nodes.sort_by_key(|n| n.index);
-
         assert_eq!(nodes.len(), 2);
         assert!(nodes.contains(&a));
         assert!(nodes.contains(&b));
@@ -1062,7 +291,6 @@ mod tests {
     #[test]
     fn first_camera_returns_none_for_empty_scene() {
         let scene = SceneGraph::new();
-
         assert!(scene.first_camera().is_none());
     }
 
@@ -1070,15 +298,7 @@ mod tests {
     fn first_camera_returns_some_for_scene_with_camera() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("cam");
-        scene
-            .set_camera(
-                cam,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
-
+        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
         assert!(scene.first_camera().is_some());
     }
 
@@ -1087,23 +307,8 @@ mod tests {
         let mut scene = SceneGraph::new();
         let main = scene.create_node("main");
         let debug = scene.create_node("debug");
-        scene
-            .set_camera(
-                main,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
-        scene
-            .set_camera(
-                debug,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
-
+        scene.set_camera(main, CameraComponent { projection: perspective() }).unwrap();
+        scene.set_camera(debug, CameraComponent { projection: perspective() }).unwrap();
         assert_eq!(scene.camera_with_name("main"), Some(main));
         assert_eq!(scene.camera_with_name("debug"), Some(debug));
     }
@@ -1112,7 +317,6 @@ mod tests {
     fn camera_with_name_returns_none_for_non_camera_node() {
         let mut scene = SceneGraph::new();
         let _node = scene.create_node("present");
-
         assert!(scene.camera_with_name("present").is_none());
     }
 
@@ -1120,15 +324,7 @@ mod tests {
     fn camera_with_name_returns_none_for_missing_name() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("main");
-        scene
-            .set_camera(
-                cam,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
-
+        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
         assert!(scene.camera_with_name("other").is_none());
     }
 
@@ -1138,97 +334,42 @@ mod tests {
         let parent = scene.create_node("parent");
         let cam_node = scene.create_node("cam");
         scene.attach_child(parent, cam_node).unwrap();
-        scene
-            .set_local_transform(
-                parent,
-                Transform {
-                    translation: Vec3::new(1.0, 0.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_local_transform(
-                cam_node,
-                Transform {
-                    translation: Vec3::new(0.0, 2.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_camera(
-                cam_node,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
+        scene.set_local_transform(parent, rig_math::Transform { translation: Vec3::new(1.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene.set_local_transform(cam_node, rig_math::Transform { translation: Vec3::new(0.0, 2.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene.set_camera(cam_node, CameraComponent { projection: perspective() }).unwrap();
         scene.update_world_transforms(parent).unwrap();
-
         let extracted = scene.extract_active_camera(cam_node).unwrap();
-
         assert_eq!(extracted.node, cam_node);
         assert_eq!(extracted.projection, perspective());
-        approx_eq_vec3(
-            extracted.world_transform.transform_point3(Vec3::ZERO),
-            Vec3::new(1.0, 2.0, 0.0),
-        );
+        approx_eq_vec3(extracted.world_transform.transform_point3(Vec3::ZERO), Vec3::new(1.0, 2.0, 0.0));
     }
 
     #[test]
     fn extract_active_camera_errors_for_non_camera_node() {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("node");
-
-        assert!(matches!(
-            scene.extract_active_camera(node),
-            Err(SceneError::NotACamera)
-        ));
+        assert!(matches!(scene.extract_active_camera(node), Err(SceneError::NotACamera)));
     }
 
     #[test]
     fn extract_active_camera_errors_for_invalid_node() {
         let scene = SceneGraph::new();
-        let invalid = NodeId {
-            index: 99,
-            generation: 0,
-        };
-
-        // NodeId 99 does not exist — should get InvalidNode (node check runs first).
-        assert!(matches!(
-            scene.extract_active_camera(invalid),
-            Err(SceneError::InvalidNode)
-        ));
+        let invalid = NodeId { index: 99, generation: 0 };
+        assert!(matches!(scene.extract_active_camera(invalid), Err(SceneError::InvalidNode)));
     }
 
     #[test]
     fn extract_active_camera_returns_invalid_node_for_stale_handle() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("cam");
-        scene
-            .set_camera(
-                cam,
-                CameraComponent {
-                    projection: perspective(),
-                },
-            )
-            .unwrap();
+        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
         scene.destroy_node(cam).unwrap();
-
-        // Stale handle — node no longer exists, must get InvalidNode not NotACamera.
-        assert!(matches!(
-            scene.extract_active_camera(cam),
-            Err(SceneError::InvalidNode)
-        ));
+        assert!(matches!(scene.extract_active_camera(cam), Err(SceneError::InvalidNode)));
     }
 
     #[test]
     fn extract_lights_returns_empty_for_scene_with_no_lights() {
         let scene = SceneGraph::new();
-
         assert!(scene.extract_lights().is_empty());
     }
 
@@ -1236,33 +377,10 @@ mod tests {
     fn extract_lights_computes_world_direction_for_directional_light() {
         let mut scene = SceneGraph::new();
         let light_node = scene.create_node("sun");
-        // Rotate 90° around X: local Y→Z, Z→−Y.
-        // So local −Z maps to +Y in world space.
-        scene
-            .set_local_transform(
-                light_node,
-                Transform {
-                    translation: Vec3::ZERO,
-                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_light(
-                light_node,
-                LightComponent {
-                    kind: LightKind::Directional {
-                        color: Vec3::ONE,
-                        intensity: 1.0,
-                    },
-                },
-            )
-            .unwrap();
+        scene.set_local_transform(light_node, rig_math::Transform { translation: Vec3::ZERO, rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), scale: Vec3::ONE }).unwrap();
+        scene.set_light(light_node, LightComponent { kind: LightKind::Directional { color: Vec3::ONE, intensity: 1.0 } }).unwrap();
         scene.update_world_transforms(light_node).unwrap();
-
         let lights = scene.extract_lights();
-
         assert_eq!(lights.len(), 1);
         approx_eq_vec3(lights[0].world_direction, Vec3::new(0.0, 1.0, 0.0));
     }
@@ -1271,32 +389,10 @@ mod tests {
     fn extract_lights_includes_world_position_for_point_light() {
         let mut scene = SceneGraph::new();
         let light_node = scene.create_node("lamp");
-        scene
-            .set_local_transform(
-                light_node,
-                Transform {
-                    translation: Vec3::new(3.0, 5.0, -2.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_light(
-                light_node,
-                LightComponent {
-                    kind: LightKind::Point {
-                        color: Vec3::ONE,
-                        intensity: 2.0,
-                        range: 10.0,
-                    },
-                },
-            )
-            .unwrap();
+        scene.set_local_transform(light_node, rig_math::Transform { translation: Vec3::new(3.0, 5.0, -2.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene.set_light(light_node, LightComponent { kind: LightKind::Point { color: Vec3::ONE, intensity: 2.0, range: 10.0 } }).unwrap();
         scene.update_world_transforms(light_node).unwrap();
-
         let lights = scene.extract_lights();
-
         assert_eq!(lights.len(), 1);
         approx_eq_vec3(lights[0].world_position, Vec3::new(3.0, 5.0, -2.0));
     }
@@ -1306,33 +402,20 @@ mod tests {
         let mut scene = SceneGraph::new();
         for i in 0..3 {
             let node = scene.create_node(format!("light_{i}"));
-            scene
-                .set_light(
-                    node,
-                    LightComponent {
-                        kind: LightKind::Directional {
-                            color: Vec3::ONE,
-                            intensity: 1.0,
-                        },
-                    },
-                )
-                .unwrap();
+            scene.set_light(node, LightComponent { kind: LightKind::Directional { color: Vec3::ONE, intensity: 1.0 } }).unwrap();
             scene.update_world_transforms(node).unwrap();
         }
-
         assert_eq!(scene.extract_lights().len(), 3);
     }
 
-    /// Build 6 frustum planes for a box [−half, +half]³ centred at the origin.
-    /// Signed distance convention: `dot(p, normal) + w ≥ 0` means inside.
-    fn box_frustum(half: f32) -> [Vec4; 6] {
+    fn box_frustum(half: f32) -> [rig_math::Vec4; 6] {
         [
-            Vec4::new(1.0, 0.0, 0.0, half),  // x ≥ −half
-            Vec4::new(-1.0, 0.0, 0.0, half), // x ≤  half
-            Vec4::new(0.0, 1.0, 0.0, half),  // y ≥ −half
-            Vec4::new(0.0, -1.0, 0.0, half), // y ≤  half
-            Vec4::new(0.0, 0.0, 1.0, half),  // z ≥ −half
-            Vec4::new(0.0, 0.0, -1.0, half), // z ≤  half
+            rig_math::Vec4::new(1.0, 0.0, 0.0, half),
+            rig_math::Vec4::new(-1.0, 0.0, 0.0, half),
+            rig_math::Vec4::new(0.0, 1.0, 0.0, half),
+            rig_math::Vec4::new(0.0, -1.0, 0.0, half),
+            rig_math::Vec4::new(0.0, 0.0, 1.0, half),
+            rig_math::Vec4::new(0.0, 0.0, -1.0, half),
         ]
     }
 
@@ -1340,34 +423,15 @@ mod tests {
     fn extract_renderables_culled_excludes_outside_objects() {
         let mut scene = SceneGraph::new();
         let (assets, mesh, material) = sample_assets();
-
         let inside = scene.create_node("inside");
-        scene
-            .set_renderable(inside, Renderable { mesh, material })
-            .unwrap();
-        // Default position is origin — inside [-10,10]³
-
+        scene.set_renderable(inside, Renderable { mesh, material }).unwrap();
         let outside = scene.create_node("outside");
-        scene
-            .set_renderable(outside, Renderable { mesh, material })
-            .unwrap();
-        scene
-            .set_local_transform(
-                outside,
-                Transform {
-                    translation: Vec3::new(50.0, 0.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-
+        scene.set_renderable(outside, Renderable { mesh, material }).unwrap();
+        scene.set_local_transform(outside, rig_math::Transform { translation: Vec3::new(50.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
-
         let planes = box_frustum(10.0);
         let extracted = scene.extract_renderables_culled(&planes);
-
         assert_eq!(extracted.len(), 1);
         assert_eq!(extracted[0].node, inside);
     }
@@ -1376,30 +440,14 @@ mod tests {
     fn extract_renderables_culled_always_includes_always_visible() {
         let mut scene = SceneGraph::new();
         let (assets, mesh, material) = sample_assets();
-
         let node = scene.create_node("always");
-        scene
-            .set_renderable(node, Renderable { mesh, material })
-            .unwrap();
-        scene
-            .set_local_transform(
-                node,
-                Transform {
-                    translation: Vec3::new(50.0, 0.0, 0.0),
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                },
-            )
-            .unwrap();
-        scene
-            .set_visibility(node, VisibilityMode::AlwaysVisible)
-            .unwrap();
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene.set_local_transform(node, rig_math::Transform { translation: Vec3::new(50.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene.set_visibility(node, VisibilityMode::AlwaysVisible).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
-
         let planes = box_frustum(10.0);
         let extracted = scene.extract_renderables_culled(&planes);
-
         assert_eq!(extracted.len(), 1);
     }
 
@@ -1407,19 +455,13 @@ mod tests {
     fn extract_renderables_culled_always_excludes_hidden() {
         let mut scene = SceneGraph::new();
         let (assets, mesh, material) = sample_assets();
-
         let node = scene.create_node("hidden");
-        scene
-            .set_renderable(node, Renderable { mesh, material })
-            .unwrap();
-        // Inside frustum but explicitly hidden
+        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
         scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
-
         let planes = box_frustum(10.0);
         let extracted = scene.extract_renderables_culled(&planes);
-
         assert!(extracted.is_empty());
     }
 
@@ -1427,19 +469,11 @@ mod tests {
     fn set_visibility_changes_node_visibility() {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("test");
-
         assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::Inherit);
-
         scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::Hidden);
-
-        scene
-            .set_visibility(node, VisibilityMode::AlwaysVisible)
-            .unwrap();
-        assert_eq!(
-            scene.visibility(node).unwrap(),
-            VisibilityMode::AlwaysVisible
-        );
+        scene.set_visibility(node, VisibilityMode::AlwaysVisible).unwrap();
+        assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::AlwaysVisible);
     }
 
     #[test]
@@ -1447,7 +481,6 @@ mod tests {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("temp");
         scene.destroy_node(node).unwrap();
-
         assert!(scene.set_visibility(node, VisibilityMode::Hidden).is_err());
         assert!(scene.visibility(node).is_err());
     }
@@ -1458,11 +491,7 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-
-        assert_eq!(
-            scene.effective_visibility(child).unwrap(),
-            VisibilityMode::Inherit
-        );
+        assert_eq!(scene.effective_visibility(child).unwrap(), VisibilityMode::Inherit);
     }
 
     #[test]
@@ -1471,14 +500,8 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene
-            .set_visibility(parent, VisibilityMode::Hidden)
-            .unwrap();
-
-        assert_eq!(
-            scene.effective_visibility(child).unwrap(),
-            VisibilityMode::Hidden
-        );
+        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+        assert_eq!(scene.effective_visibility(child).unwrap(), VisibilityMode::Hidden);
     }
 
     #[test]
@@ -1488,15 +511,9 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene
-            .set_renderable(child, Renderable { mesh, material })
-            .unwrap();
-        scene
-            .set_visibility(parent, VisibilityMode::Hidden)
-            .unwrap();
-
+        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
+        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
         let extracted = scene.extract_renderables();
-
         assert!(extracted.is_empty(), "child should be hidden via parent");
     }
 
@@ -1507,25 +524,14 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene
-            .set_renderable(child, Renderable { mesh, material })
-            .unwrap();
-        scene
-            .set_visibility(parent, VisibilityMode::Hidden)
-            .unwrap();
-        scene
-            .set_visibility(child, VisibilityMode::AlwaysVisible)
-            .unwrap();
+        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
+        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+        scene.set_visibility(child, VisibilityMode::AlwaysVisible).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
-
         let planes = box_frustum(10.0);
         let extracted = scene.extract_renderables_culled(&planes);
-
-        assert!(
-            extracted.is_empty(),
-            "AlwaysVisible child should still be hidden when parent is Hidden"
-        );
+        assert!(extracted.is_empty(), "AlwaysVisible child should still be hidden when parent is Hidden");
     }
 
     #[test]

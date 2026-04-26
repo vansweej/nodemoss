@@ -51,20 +51,22 @@ Branch: `fix/review-round-1`
 
 ---
 
-## Round 3 — Module splitting (refactor, behaviour-neutral)
+## Round 3 — Module splitting (refactor, behaviour-neutral) (complete ✓)
+
+Branch: `refactor/module-split`
 
 **Goal**: break up the three large `lib.rs` files into focused submodules.  
-**Risk**: low — pure file moves, zero logic changes.  
-**Branch**: `refactor/module-split`
+**Risk**: low — pure file moves, zero logic changes.
 
-| Crate | Current size | Proposed submodules |
+| Slice | Commit | Summary |
 |---|---|---|
-| `rig-scene` | ~1530 lines | `node.rs`, `graph.rs`, `components.rs`, `extraction.rs`, `traversal.rs` |
-| `rig-render` | ~1460 lines | `cache.rs`, `pipeline.rs`, `frame.rs`, `renderer.rs`, `helpers.rs` |
-| `rig-app` | ~715 lines | `runner.rs`, `context.rs`, `input.rs`, `timer.rs`, `camera_rig.rs` |
+| 1 | `fe00b16` | `rig-scene`: split into `node.rs`, `graph.rs`, `components.rs`, `extraction.rs`, `traversal.rs` |
+| 2 | `d7b1767` | `rig-render`: split into `cache.rs`, `pipeline.rs`, `frame.rs`, `renderer.rs`, `helpers.rs` |
+| 3 | `1fffcdb` | `rig-app`: split into `runner.rs`, `context.rs`, `input.rs`, `timer.rs`, `camera_rig.rs` |
+| docs | — | `ARCHITECTURE.md` §3 workspace tree, `README.md` workspace + examples list |
 
 Each crate keeps its `lib.rs` as a thin re-export facade (`pub use submodule::*`).
-All public APIs and test modules stay in place. One commit per crate.
+All public APIs and test modules stay in place.
 
 ---
 
@@ -83,7 +85,7 @@ Steps:
    extracted list.
 5. Optional: add a `culled_count` field to a frame stats struct for overlay display.
 
-**Affected files**: `rig-render/src/lib.rs`, `rig-app/src/lib.rs`, one example.
+**Affected files**: `rig-render/src/renderer.rs`, `rig-app/src/runner.rs`, one example.
 
 ---
 
@@ -103,7 +105,7 @@ Steps:
 5. Wire it into `platonic_solids` or a new dedicated example.
 6. Update `APPLICATION.md` section 9.2 to remove the "not yet implemented" note.
 
-**Affected files**: `rig-app/src/lib.rs`, one example, `docs/APPLICATION.md`.
+**Affected files**: `rig-app/src/input.rs`, `rig-app/src/runner.rs`, one example, `docs/APPLICATION.md`.
 
 ---
 
