@@ -1,5 +1,6 @@
-//! Pure utility functions and embedded WGSL shader constants.
+//! Pure utility functions, uniform types, and embedded WGSL shader constants.
 
+use bytemuck::{Pod, Zeroable};
 use rig_assets::{VertexFormat, VertexLayout};
 use rig_math::{Camera, Mat4};
 use rig_scene::ExtractedCamera;
@@ -9,28 +10,70 @@ use crate::{RenderError, Result};
 /// The depth format used for all main render passes.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-pub const TRIANGLE_SHADER: &str = r#"
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
-};
+// ── Uniform structs ──────────────────────────────────────────────────────────
 
-@group(0) @binding(0)
-var<uniform> object: ObjectUniforms;
+/// Per-frame uniform data: camera matrices uploaded once per frame.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct FrameUniforms {
+    pub view: [[f32; 4]; 4],
+    pub proj: [[f32; 4]; 4],
+    /// xyz = camera world position, w = padding.
+    pub camera_pos: [f32; 4],
+}
+
+/// Per-material uniform data.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MaterialUniforms {
+    pub base_color: [f32; 4],
+    pub flags: u32,
+    pub _pad: [u32; 3],
+}
+
+// ── Embedded shaders ─────────────────────────────────────────────────────────
+
+/// Vertex-color triangle shader — 3-group layout (group 0 = frame, 1 = material, 2 = object).
+pub const TRIANGLE_SHADER: &str = r#"
+struct FrameUniforms {
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+}
+
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    flags: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+struct ObjectUniforms {
+    world: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
+@group(1) @binding(2) var s_diffuse: sampler;
+@group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
-};
+}
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec3<f32>,
-};
+}
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
+    let pv = frame.proj * frame.view;
+    out.clip_position = pv * object.world * vec4<f32>(in.position, 1.0);
     out.color = in.color;
     return out;
 }
@@ -41,33 +84,51 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// WGSL shader that maps vertex normals to RGB colour.
+/// WGSL shader that maps vertex normals to RGB colour — 3-group layout.
 ///
 /// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
 /// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
 pub const NORMAL_COLOR_SHADER: &str = r#"
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
-};
+struct FrameUniforms {
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+}
 
-@group(0) @binding(0)
-var<uniform> object: ObjectUniforms;
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    flags: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+struct ObjectUniforms {
+    world: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
+@group(1) @binding(2) var s_diffuse: sampler;
+@group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
     @location(2) uv:       vec2<f32>,
-};
+}
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0)       color:         vec3<f32>,
-};
+}
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
+    let pv = frame.proj * frame.view;
+    out.clip_position = pv * object.world * vec4<f32>(in.position, 1.0);
     out.color = in.normal * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
     return out;
 }
@@ -77,6 +138,64 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color, 1.0);
 }
 "#;
+
+/// WGSL shader that samples a diffuse texture — 3-group layout.
+///
+/// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
+/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+pub const TEXTURED_SHADER: &str = r#"
+struct FrameUniforms {
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+}
+
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    flags: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+struct ObjectUniforms {
+    world: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
+@group(1) @binding(2) var s_diffuse: sampler;
+@group(2) @binding(0) var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) uv:       vec2<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0)       uv:            vec2<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let pv = frame.proj * frame.view;
+    out.clip_position = pv * object.world * vec4<f32>(in.position, 1.0);
+    out.uv = in.uv;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
+    return tex_color * material.base_color;
+}
+"#;
+
+// ── Helper functions ─────────────────────────────────────────────────────────
 
 pub(crate) fn aligned_uniform_size(size: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
@@ -96,8 +215,8 @@ pub(crate) fn object_uniform_offset(index: usize, stride: u64) -> Result<u32> {
         .map_err(|_| RenderError::Asset("object uniform offset exceeds u32 range".into()))
 }
 
-pub(crate) fn encode_object_uniforms(uniforms: &[crate::ObjectUniforms], stride: u64) -> Vec<u8> {
-    let object_size = std::mem::size_of::<crate::ObjectUniforms>();
+pub(crate) fn encode_object_uniforms(uniforms: &[crate::frame::ObjectUniforms], stride: u64) -> Vec<u8> {
+    let object_size = std::mem::size_of::<crate::frame::ObjectUniforms>();
     let stride = stride as usize;
     let mut bytes = vec![0_u8; stride * uniforms.len()];
     for (index, uniform) in uniforms.iter().enumerate() {
