@@ -19,7 +19,7 @@ use rig_app::{
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::NORMAL_COLOR_SHADER,
-    rig_scene::{CameraComponent, NodeId, Renderable, VisibilityMode},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable, VisibilityMode},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
 
@@ -65,7 +65,7 @@ impl Application for MultiObjectApp {
         ctx.scene.set_renderable(
             plane,
             Renderable {
-                mesh: plane_mesh,
+                mesh: MeshSource::Static(plane_mesh),
                 material,
             },
         )?;
@@ -90,7 +90,7 @@ impl Application for MultiObjectApp {
             ctx.scene.set_renderable(
                 node,
                 Renderable {
-                    mesh: box_mesh,
+                    mesh: MeshSource::Static(box_mesh),
                     material,
                 },
             )?;
@@ -109,7 +109,7 @@ impl Application for MultiObjectApp {
         ctx.scene.set_renderable(
             behind,
             Renderable {
-                mesh: box_mesh,
+                mesh: MeshSource::Static(box_mesh),
                 material,
             },
         )?;
@@ -127,7 +127,7 @@ impl Application for MultiObjectApp {
         ctx.scene.set_renderable(
             sphere,
             Renderable {
-                mesh: sphere_mesh,
+                mesh: MeshSource::Static(sphere_mesh),
                 material,
             },
         )?;

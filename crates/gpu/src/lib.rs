@@ -73,6 +73,9 @@ pub struct GpuContext {
     /// Full adapter info (name, vendor, device type, backend, driver, …).
     /// Captured once at startup from the selected wgpu adapter.
     pub adapter_info: wgpu::AdapterInfo,
+    /// Whether the adapter supports `POLYGON_MODE_LINE` (wireframe rendering).
+    /// `false` on WebGPU and some mobile adapters.
+    pub supports_wireframe: bool,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -111,10 +114,19 @@ impl GpuContext {
             adapter_info.backend,
         );
 
+        let supports_wireframe = adapter
+            .features()
+            .contains(wgpu::Features::POLYGON_MODE_LINE);
+        let required_features = if supports_wireframe {
+            wgpu::Features::POLYGON_MODE_LINE
+        } else {
+            wgpu::Features::empty()
+        };
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("rig gpu device"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                     .using_resolution(adapter.limits()),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -160,6 +172,7 @@ impl GpuContext {
             surface_config,
             window,
             adapter_info,
+            supports_wireframe,
         })
     }
 

@@ -29,7 +29,7 @@ use rig_app::{
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::NORMAL_COLOR_SHADER,
-    rig_scene::{CameraComponent, NodeId, Renderable},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode, keyboard::PhysicalKey},
 };
 
@@ -81,7 +81,7 @@ impl Application for MeshShowcaseApp {
         ctx.scene.set_renderable(
             box_node,
             Renderable {
-                mesh: box_mesh,
+                mesh: MeshSource::Static(box_mesh),
                 material,
             },
         )?;
@@ -99,7 +99,7 @@ impl Application for MeshShowcaseApp {
         ctx.scene.set_renderable(
             sphere_node,
             Renderable {
-                mesh: sphere_mesh,
+                mesh: MeshSource::Static(sphere_mesh),
                 material,
             },
         )?;
@@ -117,7 +117,7 @@ impl Application for MeshShowcaseApp {
         ctx.scene.set_renderable(
             plane_node,
             Renderable {
-                mesh: plane_mesh,
+                mesh: MeshSource::Static(plane_mesh),
                 material,
             },
         )?;

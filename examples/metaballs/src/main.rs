@@ -1,0 +1,290 @@
+//! Metaballs demo — CPU Marching Cubes isosurface extraction.
+//!
+//! Four bouncing metaballs are animated in real time.  The scalar field is
+//! evaluated on a 48³ grid every frame; the Marching Cubes algorithm extracts
+//! a triangle mesh that is uploaded to the GPU as a `DynamicMesh`.
+//!
+//! The surface is rendered with Blinn-Phong shading (white material, one
+//! directional light) for a "liquid metal" / polished chrome look.
+//!
+//! # Controls
+//!
+//! | Key(s)      | Action                        |
+//! |-------------|-------------------------------|
+//! | W / S       | Move forward / backward       |
+//! | A / D       | Strafe left / right           |
+//! | Q / E       | Move up / down                |
+//! | Arrow keys  | Rotate camera (yaw / pitch)   |
+//! | F3          | Toggle overlay                |
+//! | F4          | Toggle wireframe              |
+//! | Escape      | Close window                  |
+
+use std::sync::Arc;
+
+use anyhow::Result;
+use rig_app::{
+    Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
+    UpdateContext,
+    rig_assets::{
+        DynamicMeshData, DynamicMeshId, MaterialAsset, MeshSource, ShaderAsset,
+        marching_cubes::{GridParams, extract},
+    },
+    rig_math::{Projection, Quat, Transform, Vec3},
+    rig_render::PHONG_SHADER,
+    rig_scene::{CameraComponent, LightComponent, LightKind, NodeId, Renderable},
+    winit::{event::WindowEvent, keyboard::KeyCode},
+};
+
+// ---------------------------------------------------------------------------
+// Grid configuration
+// ---------------------------------------------------------------------------
+
+const GRID_RES: u32 = 48;
+const ISO_VALUE: f32 = 1.0;
+const GRID_HALF: f32 = 4.0;
+
+fn grid_params() -> GridParams {
+    GridParams {
+        min: Vec3::splat(-GRID_HALF),
+        max: Vec3::splat(GRID_HALF),
+        resolution: [GRID_RES, GRID_RES, GRID_RES],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Metaball field
+// ---------------------------------------------------------------------------
+
+/// A single metaball: position + radius.
+struct Ball {
+    pos: Vec3,
+    radius: f32,
+}
+
+/// Evaluate the combined metaball scalar field at `p`.
+/// Each ball contributes `r² / |p - center|²`.
+fn metaball_field(balls: &[Ball], p: Vec3) -> f32 {
+    balls
+        .iter()
+        .map(|b| {
+            let d2 = (p - b.pos).length_squared().max(1e-6);
+            b.radius * b.radius / d2
+        })
+        .sum()
+}
+
+// ---------------------------------------------------------------------------
+// Application state
+// ---------------------------------------------------------------------------
+
+struct MetaballsApp {
+    camera_node: NodeId,
+    camera_rig: CameraRig,
+    metaball_node: NodeId,
+    dyn_id: DynamicMeshId,
+    /// Latest MC output — computed in `update()`, uploaded in `render()`.
+    pending_mesh: Option<DynamicMeshData>,
+    elapsed: f64,
+    triangle_count: u32,
+    debug_hud: DebugHud,
+}
+
+impl Application for MetaballsApp {
+    fn init(ctx: &mut StartupContext<'_>) -> Result<Self> {
+        // --- Phong shader & white material -----------------------------------
+        let shader = ctx.assets.add_shader(ShaderAsset {
+            source: Arc::from(PHONG_SHADER),
+        });
+        let material = ctx.assets.add_material(MaterialAsset {
+            shader,
+            parameters: Default::default(),
+            textures: vec![],
+        });
+
+        // --- Dynamic mesh slot -----------------------------------------------
+        let dyn_id = DynamicMeshId::from_raw(0);
+
+        // Register the GPU buffers (grow-on-demand; initial size is a guess).
+        // Vertex stride = 32 bytes; 48³ cells can produce at most ~5 * 48³ vertices.
+        let initial_vertex_bytes = (32 * 5 * (GRID_RES as u64).pow(3)).next_power_of_two();
+        let initial_index_bytes = (4 * 15 * (GRID_RES as u64).pow(3)).next_power_of_two();
+        ctx.renderer.register_dynamic_mesh(
+            &ctx.gpu.device,
+            dyn_id,
+            initial_vertex_bytes,
+            initial_index_bytes,
+        );
+
+        // --- Scene node for the metaball surface -----------------------------
+        let metaball_node = ctx.scene.create_node("metaballs");
+        ctx.scene.set_renderable(
+            metaball_node,
+            Renderable {
+                mesh: MeshSource::Dynamic(dyn_id),
+                material,
+            },
+        )?;
+        // Identity transform — the field is already in world space.
+        ctx.scene.set_local_transform(
+            metaball_node,
+            Transform {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        )?;
+
+        // --- Directional light (white, top-front) ----------------------------
+        let light_node = ctx.scene.create_node("sun");
+        ctx.scene.set_local_transform(
+            light_node,
+            Transform {
+                translation: Vec3::ZERO,
+                rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4),
+                scale: Vec3::ONE,
+            },
+        )?;
+        ctx.scene.set_light(
+            light_node,
+            LightComponent {
+                kind: LightKind::Directional {
+                    color: Vec3::new(1.0, 1.0, 1.0),
+                    intensity: 1.2,
+                },
+            },
+        )?;
+
+        // --- Camera ----------------------------------------------------------
+        let camera_node = ctx.scene.create_node("camera");
+        ctx.scene.set_local_transform(
+            camera_node,
+            Transform {
+                translation: Vec3::new(0.0, 4.0, 12.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        )?;
+        ctx.scene.set_camera(
+            camera_node,
+            CameraComponent {
+                projection: Projection::Perspective {
+                    fov_y_radians: 60.0_f32.to_radians(),
+                    near: 0.1,
+                    far: 200.0,
+                },
+            },
+        )?;
+
+        let debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
+
+        log::info!("Metaballs demo initialised. F4 = wireframe, F3 = overlay, Escape = quit.");
+
+        Ok(Self {
+            camera_node,
+            camera_rig: CameraRig {
+                translation_speed: 5.0,
+                rotation_speed: 1.5,
+            },
+            metaball_node,
+            dyn_id,
+            pending_mesh: None,
+            elapsed: 0.0,
+            triangle_count: 0,
+            debug_hud,
+        })
+    }
+
+    fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> Result<()> {
+        self.elapsed += dt as f64;
+        let t = self.elapsed as f32;
+
+        // Animate 4 balls along Lissajous-like paths inside the grid.
+        let balls = [
+            Ball {
+                pos: Vec3::new(
+                    2.0 * (t * 0.7).sin(),
+                    1.5 * (t * 0.5).cos(),
+                    2.0 * (t * 0.9).sin(),
+                ),
+                radius: 1.4,
+            },
+            Ball {
+                pos: Vec3::new(
+                    -2.0 * (t * 0.6).cos(),
+                    1.8 * (t * 0.8).sin(),
+                    -1.5 * (t * 0.4).cos(),
+                ),
+                radius: 1.3,
+            },
+            Ball {
+                pos: Vec3::new(
+                    1.5 * (t * 1.1).sin(),
+                    -1.5 * (t * 0.7).cos(),
+                    1.5 * (t * 0.6).cos(),
+                ),
+                radius: 1.2,
+            },
+            Ball {
+                pos: Vec3::new(
+                    -1.5 * (t * 0.9).cos(),
+                    -1.8 * (t * 0.5).sin(),
+                    -2.0 * (t * 1.0).sin(),
+                ),
+                radius: 1.1,
+            },
+        ];
+
+        // Run Marching Cubes on the CPU.
+        let params = grid_params();
+        let field = |p: Vec3| metaball_field(&balls, p);
+        let mesh_data = extract(&field, &params, ISO_VALUE);
+
+        // Update dynamic bounds for frustum culling.
+        ctx.scene
+            .set_dynamic_bounds(self.metaball_node, mesh_data.local_bounds)?;
+
+        self.triangle_count = mesh_data.index_count / 3;
+        self.pending_mesh = Some(mesh_data);
+
+        *ctx.active_camera = Some(self.camera_node);
+        self.camera_rig.update(ctx, self.camera_node, dt)?;
+
+        Ok(())
+    }
+
+    fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
+        // Upload the latest MC output to the GPU before rendering.
+        if let Some(data) = self.pending_mesh.take() {
+            ctx.renderer
+                .update_dynamic_mesh(&ctx.gpu.device, &ctx.gpu.queue, self.dyn_id, &data);
+        }
+        ctx.renderer
+            .render_scene(ctx.gpu, ctx.frame, ctx.scene, ctx.assets, ctx.active_camera)?;
+        Ok(())
+    }
+
+    fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
+        self.debug_hud.update(ctx)
+    }
+
+    fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
+        if let WindowEvent::KeyboardInput { event, .. } = event
+            && matches!(
+                event.physical_key,
+                rig_app::winit::keyboard::PhysicalKey::Code(KeyCode::Escape)
+            )
+            && event.state == rig_app::winit::event::ElementState::Pressed
+        {
+            ctx.request_exit();
+        }
+        Ok(())
+    }
+}
+
+fn main() -> Result<()> {
+    env_logger::init();
+    rig_app::run::<MetaballsApp>(rig_app::RunConfig {
+        title: "Metaballs".into(),
+        ..Default::default()
+    })
+}

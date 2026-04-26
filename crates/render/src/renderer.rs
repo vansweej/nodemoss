@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use rig_assets::{AssetStore, ShaderHandle};
+use rig_assets::{AssetStore, DynamicMeshId, MeshSource, ShaderHandle};
 use rig_gpu::{Frame, GpuContext};
 use rig_math::Mat4;
 use rig_scene::{
@@ -18,6 +18,17 @@ use crate::helpers::{
 };
 use crate::pipeline::PipelineKey;
 use crate::{RenderError, RenderTarget, RenderTargetDescriptor, Result};
+
+/// GPU vertex + index buffers for a single dynamic mesh.
+///
+/// Buffers are grown on demand (next_power_of_two) when new data exceeds capacity.
+pub struct DynamicMesh {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub index_count: u32,
+    vertex_capacity_bytes: u64,
+    index_capacity_bytes: u64,
+}
 
 /// Scene renderer.
 pub struct Renderer {
@@ -45,6 +56,10 @@ pub struct Renderer {
     pub(crate) cache: ImmutableResourceCache,
     pub(crate) depth_texture: wgpu::Texture,
     pub(crate) depth_view: wgpu::TextureView,
+    /// Dynamic mesh GPU buffers, keyed by `DynamicMeshId`.
+    pub(crate) dynamic_meshes: HashMap<DynamicMeshId, DynamicMesh>,
+    /// Whether wireframe rendering is currently active.
+    pub wireframe: bool,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -275,6 +290,8 @@ impl Renderer {
             cache: ImmutableResourceCache::default(),
             depth_texture,
             depth_view,
+            dynamic_meshes: HashMap::new(),
+            wireframe: false,
         }
     }
 
@@ -282,6 +299,128 @@ impl Renderer {
     pub fn resize(&mut self, gpu: &GpuContext) {
         (self.depth_texture, self.depth_view) =
             create_depth_texture(&gpu.device, gpu.width(), gpu.height());
+    }
+
+    /// Register a new dynamic mesh slot.  Call once per `DynamicMeshId` at startup.
+    ///
+    /// `initial_vertex_bytes` and `initial_index_bytes` set the initial GPU buffer sizes.
+    /// Both buffers grow automatically in `update_dynamic_mesh()` when needed.
+    #[cfg(not(tarpaulin_include))]
+    pub fn register_dynamic_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        id: DynamicMeshId,
+        initial_vertex_bytes: u64,
+        initial_index_bytes: u64,
+    ) {
+        let vertex_capacity_bytes = initial_vertex_bytes.max(32).next_power_of_two();
+        let index_capacity_bytes = initial_index_bytes.max(4).next_power_of_two();
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dynamic mesh vertex buffer"),
+            size: vertex_capacity_bytes,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dynamic mesh index buffer"),
+            size: index_capacity_bytes,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.dynamic_meshes.insert(
+            id,
+            DynamicMesh {
+                vertex_buffer,
+                index_buffer,
+                index_count: 0,
+                vertex_capacity_bytes,
+                index_capacity_bytes,
+            },
+        );
+    }
+
+    /// Upload new vertex and index data for a registered dynamic mesh.
+    ///
+    /// Grows the GPU buffers if the new data exceeds current capacity.
+    /// Call this in `render()` before `render_scene()`.
+    #[cfg(not(tarpaulin_include))]
+    pub fn update_dynamic_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: DynamicMeshId,
+        data: &rig_assets::DynamicMeshData,
+    ) {
+        let vertex_bytes = data.vertex_data.len() as u64;
+        let index_bytes = data.index_data.len() as u64;
+
+        let entry = self.dynamic_meshes.entry(id).or_insert_with(|| {
+            let vc = vertex_bytes.max(32).next_power_of_two();
+            let ic = index_bytes.max(4).next_power_of_two();
+            DynamicMesh {
+                vertex_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("dynamic mesh vertex buffer"),
+                    size: vc,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                index_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("dynamic mesh index buffer"),
+                    size: ic,
+                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                index_count: 0,
+                vertex_capacity_bytes: vc,
+                index_capacity_bytes: ic,
+            }
+        });
+
+        // Grow vertex buffer if needed
+        if vertex_bytes > entry.vertex_capacity_bytes {
+            let new_cap = vertex_bytes.next_power_of_two();
+            entry.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("dynamic mesh vertex buffer"),
+                size: new_cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            entry.vertex_capacity_bytes = new_cap;
+        }
+        // Grow index buffer if needed
+        if index_bytes > entry.index_capacity_bytes {
+            let new_cap = index_bytes.next_power_of_two();
+            entry.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("dynamic mesh index buffer"),
+                size: new_cap,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            entry.index_capacity_bytes = new_cap;
+        }
+
+        if !data.vertex_data.is_empty() {
+            queue.write_buffer(&entry.vertex_buffer, 0, &data.vertex_data);
+        }
+        if !data.index_data.is_empty() {
+            queue.write_buffer(&entry.index_buffer, 0, &data.index_data);
+        }
+        entry.index_count = data.index_count;
+    }
+
+    /// Toggle wireframe rendering on/off.
+    ///
+    /// If `supports_wireframe` is `false` (adapter lacks `POLYGON_MODE_LINE`),
+    /// this is a no-op and the function returns `false` to indicate the toggle
+    /// was not applied.
+    pub fn toggle_wireframe(&mut self, supports_wireframe: bool) -> bool {
+        if !supports_wireframe {
+            return false;
+        }
+        self.wireframe = !self.wireframe;
+        // Invalidate pipeline cache so pipelines are rebuilt with new polygon_mode
+        self.pipelines.clear();
+        true
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -476,7 +615,12 @@ impl Renderer {
         });
 
         let mut current_pipeline: Option<PipelineKey> = None;
-        let mut current_mesh: Option<rig_assets::MeshHandle> = None;
+        let mut current_mesh: Option<MeshSource> = None;
+        let polygon_mode = if self.wireframe {
+            wgpu::PolygonMode::Line
+        } else {
+            wgpu::PolygonMode::Fill
+        };
 
         for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
             let object = &draw_list[draw_index];
@@ -486,15 +630,44 @@ impl Renderer {
             let shader = assets
                 .shader(material.shader)
                 .map_err(|err| RenderError::Asset(err.to_string()))?;
-            let mesh = assets
-                .mesh(object.mesh)
-                .map_err(|err| RenderError::Asset(err.to_string()))?;
-            let buffers = self.cache.mesh_buffers(&gpu.device, object.mesh, mesh);
+
+            // Resolve mesh buffers based on MeshSource.
+            // Clone the wgpu::Buffer handles (Arc-backed) so they outlive the match.
+            let (vertex_buf, index_buf, index_format, index_count, vertex_layout) =
+                match object.mesh {
+                    MeshSource::Static(handle) => {
+                        let mesh = assets
+                            .mesh(handle)
+                            .map_err(|err| RenderError::Asset(err.to_string()))?;
+                        let buffers = self.cache.mesh_buffers(&gpu.device, handle, mesh);
+                        (
+                            buffers.vertex.clone(),
+                            buffers.index.clone(),
+                            buffers.index_format,
+                            buffers.index_count,
+                            mesh.vertex_layout.clone(),
+                        )
+                    }
+                    MeshSource::Dynamic(id) => {
+                        let Some(dyn_mesh) = self.dynamic_meshes.get(&id) else {
+                            continue; // not yet registered — skip
+                        };
+                        (
+                            dyn_mesh.vertex_buffer.clone(),
+                            dyn_mesh.index_buffer.clone(),
+                            wgpu::IndexFormat::Uint32,
+                            dyn_mesh.index_count,
+                            rig_assets::standard_vertex_layout(),
+                        )
+                    }
+                };
+
             let pipeline_key = PipelineKey {
                 shader: material.shader,
-                vertex_layout: mesh.vertex_layout.clone(),
+                vertex_layout,
                 color_format,
                 depth_format,
+                polygon_mode,
             };
             let pipeline = self.pipeline_for_key(gpu, &pipeline_key, shader)?;
             if current_pipeline.as_ref() != Some(&pipeline_key) {
@@ -579,11 +752,11 @@ impl Renderer {
             );
 
             if current_mesh != Some(object.mesh) {
-                pass.set_vertex_buffer(0, buffers.vertex.slice(..));
-                pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
+                pass.set_vertex_buffer(0, vertex_buf.slice(..));
+                pass.set_index_buffer(index_buf.slice(..), index_format);
                 current_mesh = Some(object.mesh);
             }
-            pass.draw_indexed(0..buffers.index_count, 0, 0..1);
+            pass.draw_indexed(0..index_count, 0, 0..1);
         }
         Ok(())
     }
@@ -605,6 +778,7 @@ impl Renderer {
             key.color_format,
             key.depth_format,
             &key.vertex_layout,
+            key.polygon_mode,
         )?;
         self.pipelines.insert(key.clone(), pipeline.clone());
         Ok(pipeline)

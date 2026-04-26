@@ -1,5 +1,6 @@
 //! Immutable shared asset store for the rig framework.
 
+pub mod marching_cubes;
 pub mod mesh_factory;
 
 use std::sync::Arc;
@@ -70,6 +71,52 @@ impl SamplerHandle {
     pub fn index(self) -> usize {
         self.0 as usize
     }
+}
+
+/// Opaque handle to a dynamic (per-frame mutable) mesh registered with the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DynamicMeshId(u32);
+
+impl DynamicMeshId {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Identifies the source of mesh geometry for a renderable node.
+///
+/// - `Static` — an immutable [`MeshAsset`] cached by the renderer; never changes after upload.
+/// - `Dynamic` — a per-frame mutable mesh managed by the renderer; updated via
+///   [`Renderer::update_dynamic_mesh`] each frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MeshSource {
+    Static(MeshHandle),
+    Dynamic(DynamicMeshId),
+}
+
+/// Output of a dynamic mesh generator (e.g. Marching Cubes).
+///
+/// Vertex data uses the framework's `standard_layout()` (pos + normal + uv, stride 32).
+/// Index data is `u32` (Uint32 format).
+pub struct DynamicMeshData {
+    /// Raw vertex bytes in `standard_layout()` format (stride 32).
+    pub vertex_data: Vec<u8>,
+    /// Raw index bytes as packed `u32` little-endian values.
+    pub index_data: Vec<u8>,
+    /// Number of indices (triangles = index_count / 3).
+    pub index_count: u32,
+    /// Axis-aligned bounding sphere of the output vertices, in local space.
+    pub local_bounds: BoundingSphere,
+}
+
+/// Returns the standard vertex layout used by `MeshFactory` and dynamic meshes:
+/// `Position: Float32x3` @ 0, `Normal: Float32x3` @ 12, `UV: Float32x2` @ 24, stride 32.
+pub fn standard_vertex_layout() -> VertexLayout {
+    mesh_factory::standard_layout()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -483,6 +530,35 @@ mod tests {
             store.sampler(SamplerHandle(99)),
             Err(AssetError::InvalidSampler)
         ));
+    }
+
+    #[test]
+    fn dynamic_mesh_id_from_raw_round_trips() {
+        let id = DynamicMeshId::from_raw(7);
+        assert_eq!(id.index(), 7);
+        assert_eq!(id, DynamicMeshId::from_raw(7));
+        assert_ne!(id, DynamicMeshId::from_raw(0));
+    }
+
+    #[test]
+    fn mesh_source_static_and_dynamic_are_not_equal() {
+        let static_src = MeshSource::Static(MeshHandle::from_raw(0));
+        let dynamic_src = MeshSource::Dynamic(DynamicMeshId::from_raw(0));
+        assert_ne!(static_src, dynamic_src);
+    }
+
+    #[test]
+    fn mesh_source_same_variant_same_handle_are_equal() {
+        let a = MeshSource::Static(MeshHandle::from_raw(3));
+        let b = MeshSource::Static(MeshHandle::from_raw(3));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn mesh_source_ord_static_before_dynamic() {
+        let s = MeshSource::Static(MeshHandle::from_raw(99));
+        let d = MeshSource::Dynamic(DynamicMeshId::from_raw(0));
+        assert!(s < d);
     }
 
     #[test]

@@ -12,7 +12,7 @@ pub use camera_rig::CameraRig;
 pub use context::{OverlayUpdateContext, RenderContext, StartupContext, UpdateContext};
 pub use debug_hud::{DebugHud, Side};
 pub use input::InputState;
-pub use runner::{run, RunConfig};
+pub use runner::{RunConfig, run};
 pub use timer::FrameTimer;
 pub use trackball::TrackBall;
 
