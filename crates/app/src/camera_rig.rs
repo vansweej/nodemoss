@@ -22,13 +22,15 @@ impl CameraRig {
         use winit::keyboard::KeyCode;
         let mut transform = ctx.scene.local_transform(node)?;
 
-        let yaw = key_axis(ctx.input, KeyCode::ArrowLeft, KeyCode::ArrowRight) * self.rotation_speed * dt;
+        let yaw =
+            key_axis(ctx.input, KeyCode::ArrowLeft, KeyCode::ArrowRight) * self.rotation_speed * dt;
         if yaw != 0.0 {
             transform.rotation = Quat::from_rotation_y(-yaw) * transform.rotation;
         }
 
         let right = transform.rotation * Vec3::X;
-        let pitch = key_axis(ctx.input, KeyCode::ArrowDown, KeyCode::ArrowUp) * self.rotation_speed * dt;
+        let pitch =
+            key_axis(ctx.input, KeyCode::ArrowDown, KeyCode::ArrowUp) * self.rotation_speed * dt;
         if pitch != 0.0 {
             transform.rotation = Quat::from_axis_angle(right, pitch) * transform.rotation;
         }

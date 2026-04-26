@@ -54,10 +54,14 @@ pub struct OverlayUpdateContext<'a> {
 #[cfg(not(tarpaulin_include))]
 impl OverlayUpdateContext<'_> {
     pub fn set_text(&mut self, id: ElementId, text: impl Into<String>) -> Result<()> {
-        self.overlay.set_text(id, text).map_err(|e| anyhow::anyhow!("{e}"))
+        self.overlay
+            .set_text(id, text)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     pub fn set_position(&mut self, id: ElementId, position: Position) -> Result<()> {
-        self.overlay.set_position(id, position).map_err(|e| anyhow::anyhow!("{e}"))
+        self.overlay
+            .set_position(id, position)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 }
