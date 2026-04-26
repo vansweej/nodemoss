@@ -17,10 +17,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
+    UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
-    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::PHONG_SHADER,
     rig_scene::{CameraComponent, LightComponent, LightKind, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
@@ -36,7 +36,7 @@ struct LitSceneApp {
     solid_nodes: Vec<NodeId>,
     point_light_nodes: [NodeId; 2],
     elapsed: f64,
-    fps_id: ElementId,
+    debug_hud: DebugHud,
     camera_pos: Vec3,
 }
 
@@ -60,14 +60,26 @@ impl Application for LitSceneApp {
             ctx.assets.add_mesh(mesh_factory::create_dodecahedron()),
             ctx.assets.add_mesh(mesh_factory::create_icosahedron()),
         ];
-        let names = ["tetrahedron", "hexahedron", "octahedron", "dodecahedron", "icosahedron"];
+        let names = [
+            "tetrahedron",
+            "hexahedron",
+            "octahedron",
+            "dodecahedron",
+            "icosahedron",
+        ];
         let radius = 4.0_f32;
         let two_pi_over_5 = 2.0 * std::f32::consts::PI / 5.0;
 
         let mut solid_nodes = Vec::with_capacity(5);
         for (i, (mesh, name)) in meshes.iter().zip(names.iter()).enumerate() {
             let node = ctx.scene.create_node(*name);
-            ctx.scene.set_renderable(node, Renderable { mesh: *mesh, material })?;
+            ctx.scene.set_renderable(
+                node,
+                Renderable {
+                    mesh: *mesh,
+                    material,
+                },
+            )?;
             let angle = i as f32 * two_pi_over_5;
             ctx.scene.set_local_transform(
                 node,
@@ -114,7 +126,11 @@ impl Application for LitSceneApp {
         ctx.scene.set_light(
             point_light_node_red,
             LightComponent {
-                kind: LightKind::Point { color: Vec3::new(1.0, 0.2, 0.2), intensity: 3.0, range: 12.0 },
+                kind: LightKind::Point {
+                    color: Vec3::new(1.0, 0.2, 0.2),
+                    intensity: 3.0,
+                    range: 12.0,
+                },
             },
         )?;
 
@@ -130,7 +146,11 @@ impl Application for LitSceneApp {
         ctx.scene.set_light(
             point_light_node_blue,
             LightComponent {
-                kind: LightKind::Point { color: Vec3::new(0.2, 0.4, 1.0), intensity: 3.0, range: 12.0 },
+                kind: LightKind::Point {
+                    color: Vec3::new(0.2, 0.4, 1.0),
+                    intensity: 3.0,
+                    range: 12.0,
+                },
             },
         )?;
 
@@ -155,22 +175,22 @@ impl Application for LitSceneApp {
             },
         )?;
 
-        let fps_id = ctx.overlay.add_text(TextElement {
-            text: "FPS: 0".into(),
-            position: Position::Anchor { anchor: Anchor::TopRight, offset: [8.0, 8.0] },
-            color: [1.0, 1.0, 1.0, 1.0],
-            font_size: 16.0,
-        });
+        let debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
 
-        log::info!("Lit scene demo initialised. Controls: WASD/QE move, arrows rotate, Escape quits.");
+        log::info!(
+            "Lit scene demo initialised. Controls: WASD/QE move, arrows rotate, Escape quits."
+        );
 
         Ok(Self {
             camera_node,
-            camera_rig: CameraRig { translation_speed: 5.0, rotation_speed: 1.5 },
+            camera_rig: CameraRig {
+                translation_speed: 5.0,
+                rotation_speed: 1.5,
+            },
             solid_nodes,
             point_light_nodes: [point_light_node_red, point_light_node_blue],
             elapsed: 0.0,
-            fps_id,
+            debug_hud,
             camera_pos: Vec3::new(0.0, 5.0, 14.0),
         })
     }
@@ -231,14 +251,11 @@ impl Application for LitSceneApp {
     }
 
     fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
-        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
+        self.debug_hud.update(ctx)
     }
 
     fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
-        if let WindowEvent::KeyboardInput {
-            event,
-            ..
-        } = event
+        if let WindowEvent::KeyboardInput { event, .. } = event
             && matches!(
                 event.physical_key,
                 rig_app::winit::keyboard::PhysicalKey::Code(KeyCode::Escape)

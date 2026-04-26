@@ -2,6 +2,7 @@
 
 mod camera_rig;
 mod context;
+mod debug_hud;
 mod input;
 mod runner;
 mod timer;
@@ -9,6 +10,7 @@ mod trackball;
 
 pub use camera_rig::CameraRig;
 pub use context::{OverlayUpdateContext, RenderContext, StartupContext, UpdateContext};
+pub use debug_hud::{DebugHud, Side};
 pub use input::InputState;
 pub use runner::run;
 pub use timer::FrameTimer;
@@ -49,7 +51,6 @@ pub trait Application: Sized + 'static {
     }
 }
 
-
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use runner::Runner;
@@ -57,11 +58,11 @@ pub(crate) use runner::Runner;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_math::glam;
-    use winit::{event::ElementState, keyboard::KeyCode};
     use rig_assets::AssetStore;
     use rig_math::Quat;
+    use rig_math::glam;
     use rig_scene::SceneGraph;
+    use winit::{event::ElementState, keyboard::KeyCode};
 
     #[test]
     fn input_state_tracks_pressed_key() {
@@ -110,9 +111,18 @@ mod tests {
             active_camera: &mut active_camera,
             exit_requested: &mut exit_requested,
         };
-        CameraRig { translation_speed: 4.0, rotation_speed: 1.0 }.update(&mut ctx, camera, 0.5).unwrap();
+        CameraRig {
+            translation_speed: 4.0,
+            rotation_speed: 1.0,
+        }
+        .update(&mut ctx, camera, 0.5)
+        .unwrap();
         let transform = scene.local_transform(camera).unwrap();
-        assert!(transform.translation.abs_diff_eq(Vec3::new(0.0, 0.0, -2.0), 1e-5));
+        assert!(
+            transform
+                .translation
+                .abs_diff_eq(Vec3::new(0.0, 0.0, -2.0), 1e-5)
+        );
     }
 
     #[test]
@@ -137,9 +147,18 @@ mod tests {
             active_camera: &mut active_camera,
             exit_requested: &mut exit_requested,
         };
-        CameraRig { translation_speed: 1.0, rotation_speed: 2.0 }.update(&mut ctx, camera, 0.25).unwrap();
+        CameraRig {
+            translation_speed: 1.0,
+            rotation_speed: 2.0,
+        }
+        .update(&mut ctx, camera, 0.25)
+        .unwrap();
         let transform = scene.local_transform(camera).unwrap();
-        assert!(transform.rotation.abs_diff_eq(Quat::from_rotation_y(-0.5), 1e-5));
+        assert!(
+            transform
+                .rotation
+                .abs_diff_eq(Quat::from_rotation_y(-0.5), 1e-5)
+        );
     }
 
     #[test]

@@ -14,10 +14,10 @@
 
 use anyhow::Result;
 use rig_app::{
-    Application, OverlayUpdateContext, RenderContext, StartupContext, TrackBall, UpdateContext,
+    Application, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext, TrackBall,
+    UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
-    rig_math::{Projection, Transform, Vec3, Quat},
-    rig_overlay::{Anchor, ElementId, Position, TextElement},
+    rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::NORMAL_COLOR_SHADER,
     rig_scene::{CameraComponent, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
@@ -28,8 +28,7 @@ struct TrackballApp {
     #[allow(dead_code)]
     target_node: NodeId,
     trackball: TrackBall,
-    fps_id: ElementId,
-    hint_id: ElementId,
+    debug_hud: DebugHud,
 }
 
 impl Application for TrackballApp {
@@ -47,13 +46,8 @@ impl Application for TrackballApp {
         // Icosahedron mesh at origin
         let mesh = ctx.assets.add_mesh(mesh_factory::create_icosahedron());
         let target_node = ctx.scene.create_node("icosahedron");
-        ctx.scene.set_renderable(
-            target_node,
-            Renderable {
-                mesh,
-                material,
-            },
-        )?;
+        ctx.scene
+            .set_renderable(target_node, Renderable { mesh, material })?;
         ctx.scene.set_local_transform(
             target_node,
             Transform {
@@ -85,24 +79,12 @@ impl Application for TrackballApp {
         )?;
 
         // Overlay elements
-        let fps_id = ctx.overlay.add_text(TextElement {
-            text: "FPS: 0".into(),
-            position: Position::Anchor {
-                anchor: Anchor::TopRight,
-                offset: [8.0, 8.0],
-            },
-            color: [1.0, 1.0, 1.0, 1.0],
-            font_size: 16.0,
-        });
-        let hint_id = ctx.overlay.add_text(TextElement {
-            text: "LMB drag: orbit  RMB drag: dolly  Esc: quit".into(),
-            position: Position::Anchor {
-                anchor: Anchor::TopLeft,
-                offset: [8.0, 8.0],
-            },
-            color: [0.9, 0.9, 0.9, 1.0],
-            font_size: 14.0,
-        });
+        let mut debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
+        debug_hud.add_element(
+            ctx.overlay,
+            Side::Left,
+            "LMB drag: orbit  RMB drag: dolly  Esc: quit",
+        );
 
         log::info!("Trackball demo initialised. LMB=orbit RMB=dolly Esc=quit.");
 
@@ -110,8 +92,7 @@ impl Application for TrackballApp {
             camera_node,
             target_node,
             trackball: TrackBall::new(target_node, 5.0),
-            fps_id,
-            hint_id,
+            debug_hud,
         })
     }
 
@@ -129,10 +110,7 @@ impl Application for TrackballApp {
     }
 
     fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
-        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))?;
-        // Keep hint visible; no-op update just to satisfy the borrow
-        let _ = self.hint_id;
-        Ok(())
+        self.debug_hud.update(ctx)
     }
 
     fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {

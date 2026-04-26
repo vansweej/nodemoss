@@ -3,13 +3,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use rig_app::{
-    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
+    UpdateContext,
     rig_assets::{
         IndexFormat, MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat,
         VertexLayout,
     },
     rig_math::{BoundingSphere, Projection, Quat, Transform, Vec3},
-    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_scene::{CameraComponent, NodeId, Renderable},
 };
 
@@ -42,7 +42,7 @@ struct TriangleSceneApp {
     triangle: NodeId,
     camera: NodeId,
     camera_rig: CameraRig,
-    fps_id: ElementId,
+    debug_hud: DebugHud,
 }
 
 impl Application for TriangleSceneApp {
@@ -104,21 +104,13 @@ impl Application for TriangleSceneApp {
             },
         )?;
 
-        let fps_id = ctx.overlay.add_text(TextElement {
-            text: "FPS: 0".into(),
-            position: Position::Anchor {
-                anchor: Anchor::TopRight,
-                offset: [8.0, 8.0],
-            },
-            color: [1.0, 1.0, 1.0, 1.0],
-            font_size: 16.0,
-        });
+        let debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
 
         Ok(Self {
             triangle,
             camera,
             camera_rig: CameraRig::default(),
-            fps_id,
+            debug_hud,
         })
     }
 
@@ -143,7 +135,7 @@ impl Application for TriangleSceneApp {
     }
 
     fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
-        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
+        self.debug_hud.update(ctx)
     }
 }
 
