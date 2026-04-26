@@ -1527,4 +1527,109 @@ mod tests {
             "AlwaysVisible child should still be hidden when parent is Hidden"
         );
     }
+
+    #[test]
+    fn create_node_reuses_free_list_slot() {
+        let mut scene = SceneGraph::new();
+        let id1 = scene.create_node("first");
+        scene.destroy_node(id1).unwrap();
+        let id2 = scene.create_node("second");
+        // Same slot index reused, generation incremented → ids differ
+        assert_ne!(id1, id2);
+        // Old handle is stale
+        assert!(scene.node_name(id1).is_err());
+        assert_eq!(scene.node_name(id2).unwrap(), "second");
+    }
+
+    #[test]
+    fn detach_middle_child_updates_sibling_chain() {
+        let mut scene = SceneGraph::new();
+        let parent = scene.create_node("parent");
+        let a = scene.create_node("a");
+        let b = scene.create_node("b");
+        let c = scene.create_node("c");
+        // attach_child inserts at head, so order becomes c → b → a
+        scene.attach_child(parent, a).unwrap();
+        scene.attach_child(parent, b).unwrap();
+        scene.attach_child(parent, c).unwrap();
+        // Detach the middle child b
+        scene.detach_child(b).unwrap();
+        let children = scene.children(parent).unwrap();
+        assert!(!children.contains(&b));
+        assert!(children.contains(&a));
+        assert!(children.contains(&c));
+        // b should be root now; re-attaching to a new parent must succeed
+        let new_parent = scene.create_node("new_parent");
+        scene.attach_child(new_parent, b).unwrap();
+        assert_eq!(scene.children(new_parent).unwrap(), vec![b]);
+    }
+
+    #[test]
+    fn renderable_nodes_returns_all_renderable_node_ids() {
+        let mut scene = SceneGraph::new();
+        let (_, mesh, material) = sample_assets();
+        let n1 = scene.create_node("r1");
+        let n2 = scene.create_node("r2");
+        let n3 = scene.create_node("plain");
+        scene
+            .set_renderable(n1, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_renderable(n2, Renderable { mesh, material })
+            .unwrap();
+        let ids: Vec<_> = scene.renderable_nodes().collect();
+        assert!(ids.contains(&n1));
+        assert!(ids.contains(&n2));
+        assert!(!ids.contains(&n3));
+    }
+
+    #[test]
+    fn world_transforms_propagate_to_grandchild() {
+        let mut scene = SceneGraph::new();
+        let root = scene.create_node("root");
+        let child = scene.create_node("child");
+        let grandchild = scene.create_node("grandchild");
+        scene.attach_child(root, child).unwrap();
+        scene.attach_child(child, grandchild).unwrap();
+
+        scene
+            .set_local_transform(
+                root,
+                Transform {
+                    translation: Vec3::new(1.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                child,
+                Transform {
+                    translation: Vec3::new(0.0, 2.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                grandchild,
+                Transform {
+                    translation: Vec3::new(0.0, 0.0, 3.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene.update_world_transforms(root).unwrap();
+
+        approx_eq_vec3(
+            scene
+                .world_transform(grandchild)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+    }
 }

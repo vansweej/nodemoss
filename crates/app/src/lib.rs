@@ -679,6 +679,41 @@ mod tests {
     }
 
     #[test]
+    fn camera_rig_pitch_changes_rotation() {
+        let mut scene = SceneGraph::new();
+        let camera = scene.create_node("camera");
+        let assets = AssetStore::new();
+        let input = {
+            let mut input = InputState::default();
+            // ArrowUp triggers positive pitch
+            input.update_key(KeyCode::ArrowUp, ElementState::Pressed);
+            input
+        };
+        let timer = FrameTimer::new();
+        let mut active_camera = None;
+        let mut exit_requested = false;
+        let mut ctx = UpdateContext {
+            scene: &mut scene,
+            assets: &assets,
+            input: &input,
+            timer: &timer,
+            active_camera: &mut active_camera,
+            exit_requested: &mut exit_requested,
+        };
+
+        CameraRig {
+            translation_speed: 1.0,
+            rotation_speed: 2.0,
+        }
+        .update(&mut ctx, camera, 0.25)
+        .unwrap();
+
+        let transform = scene.local_transform(camera).unwrap();
+        // Identity rotation plus a pitch means rotation should differ from identity
+        assert!(!transform.rotation.abs_diff_eq(Quat::IDENTITY, 1e-5));
+    }
+
+    #[test]
     fn update_context_request_exit_sets_flag() {
         let mut scene = SceneGraph::new();
         let assets = AssetStore::new();
