@@ -142,7 +142,6 @@ impl<A: Application> ApplicationHandler for Runner<A> {
         }
         match event {
             WindowEvent::RedrawRequested => {
-                state.input.reset_mouse_delta();
                 let dt = state.timer.tick();
                 {
                     let input_snapshot = &state.input;
@@ -209,6 +208,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                     }
                     frame.present();
                 }
+                state.input.reset_mouse_delta();
             }
             other => {
                 let input_snapshot = &state.input;

@@ -45,7 +45,7 @@ impl TrackBall {
             distance,
             sensitivity: 0.005,
             yaw: 0.0,
-            pitch: 0.3,
+            pitch: 0.0,
         }
     }
 
@@ -87,15 +87,9 @@ impl TrackBall {
         let offset = rotation * Vec3::new(0.0, 0.0, self.distance);
         let camera_pos = target_world + offset;
 
-        // Look at target
-        let forward = (target_world - camera_pos).normalize_or_zero();
-        let look_rotation = if forward.length_squared() > 1e-6 {
-            let right = Vec3::Y.cross(forward).normalize_or_zero();
-            let up = forward.cross(right).normalize_or_zero();
-            Quat::from_mat3(&rig_math::glam::Mat3::from_cols(right, up, -forward))
-        } else {
-            Quat::IDENTITY
-        };
+        // The orbit rotation already orients the camera's -Z axis toward the target.
+        // Using it directly avoids look-at edge cases and is mathematically equivalent.
+        let look_rotation = rotation;
 
         scene.set_local_transform(
             camera_node,
