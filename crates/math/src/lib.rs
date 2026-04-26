@@ -409,4 +409,21 @@ mod tests {
         };
         assert!(!sphere.is_outside_frustum(&planes));
     }
+
+    #[test]
+    fn bounding_sphere_union_coincident_centers() {
+        // Two spheres at same position — distance == 0 triggers the fallback direction branch
+        let a = BoundingSphere {
+            center: Vec3::new(1.0, 2.0, 3.0),
+            radius: 1.0,
+        };
+        let b = BoundingSphere {
+            center: Vec3::new(1.0, 2.0, 3.0),
+            radius: 2.0,
+        };
+        // b.radius (2) >= distance (0) + a.radius (1), so b contains a → result is b
+        let u = a.union(b);
+        assert!(u.radius >= 2.0);
+        assert!((u.center - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+    }
 }

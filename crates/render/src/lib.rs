@@ -1456,4 +1456,72 @@ mod tests {
         let err = RenderError::Asset("test".into());
         assert!(err.to_string().contains("test"));
     }
+
+    #[test]
+    fn aligned_uniform_size_alignment_zero_or_one() {
+        assert_eq!(aligned_uniform_size(100, 0), 100);
+        assert_eq!(aligned_uniform_size(100, 1), 100);
+        assert_eq!(aligned_uniform_size(0, 0), 0);
+    }
+
+    #[test]
+    fn vertex_format_size_all_variants() {
+        assert_eq!(vertex_format_size(VertexFormat::Float32), 4);
+        assert_eq!(vertex_format_size(VertexFormat::Float32x2), 8);
+        assert_eq!(vertex_format_size(VertexFormat::Float32x3), 12);
+        assert_eq!(vertex_format_size(VertexFormat::Float32x4), 16);
+    }
+
+    #[test]
+    fn wgpu_vertex_format_all_variants() {
+        assert!(matches!(
+            wgpu_vertex_format(VertexFormat::Float32),
+            wgpu::VertexFormat::Float32
+        ));
+        assert!(matches!(
+            wgpu_vertex_format(VertexFormat::Float32x2),
+            wgpu::VertexFormat::Float32x2
+        ));
+        assert!(matches!(
+            wgpu_vertex_format(VertexFormat::Float32x3),
+            wgpu::VertexFormat::Float32x3
+        ));
+        assert!(matches!(
+            wgpu_vertex_format(VertexFormat::Float32x4),
+            wgpu::VertexFormat::Float32x4
+        ));
+    }
+
+    #[test]
+    fn decompose_pose_identity() {
+        let result = decompose_pose(Mat4::IDENTITY);
+        assert!(result.translation.abs_diff_eq(Vec3::ZERO, 1e-6));
+        assert!(result.rotation.abs_diff_eq(Quat::IDENTITY, 1e-6));
+    }
+
+    #[test]
+    fn decompose_pose_translation_only() {
+        let t = Vec3::new(1.0, 2.0, 3.0);
+        let mat = Mat4::from_translation(t);
+        let result = decompose_pose(mat);
+        assert!(result.translation.abs_diff_eq(t, 1e-5));
+        assert!(result.rotation.abs_diff_eq(Quat::IDENTITY, 1e-5));
+    }
+
+    #[test]
+    fn camera_projection_view_produces_finite_matrix() {
+        use rig_math::{Camera, Projection};
+        use rig_scene::ExtractedCamera;
+        let cam = ExtractedCamera {
+            node: rig_scene::NodeId::from_raw(0, 0),
+            projection: Projection::Perspective {
+                fov_y_radians: std::f32::consts::FRAC_PI_4,
+                near: 0.1,
+                far: 100.0,
+            },
+            world_transform: Mat4::from_translation(Vec3::new(0.0, 0.0, 5.0)),
+        };
+        let mat = camera_projection_view(&cam, 16.0 / 9.0);
+        assert!(mat.to_cols_array().iter().all(|v| v.is_finite()));
+    }
 }
