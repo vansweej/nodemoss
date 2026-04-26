@@ -163,5 +163,8 @@ impl Application for TexturedMeshApp {
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<TexturedMeshApp>("Textured Mesh")
+    rig_app::run::<TexturedMeshApp>(rig_app::RunConfig {
+        title: "Textured Mesh".into(),
+        ..Default::default()
+    })
 }

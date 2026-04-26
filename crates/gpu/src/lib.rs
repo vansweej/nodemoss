@@ -79,9 +79,16 @@ pub struct GpuContext {
 impl GpuContext {
     /// Initialise the GPU context for the given window.
     ///
+    /// `power_preference` controls which GPU adapter wgpu requests when more
+    /// than one is available (e.g. a discrete NVIDIA GPU alongside an Intel
+    /// integrated GPU). Pass [`wgpu::PowerPreference::HighPerformance`] to
+    /// prefer the discrete GPU, or [`wgpu::PowerPreference::None`] to let the
+    /// driver decide. The preference is a *hint* — wgpu will still fall back to
+    /// any available adapter if the preferred one cannot be used.
+    ///
     /// This is `async` because wgpu adapter/device creation is async.
     #[cfg(not(tarpaulin_include))]
-    pub async fn new(window: Arc<Window>) -> Result<Self> {
+    pub async fn new(window: Arc<Window>, power_preference: wgpu::PowerPreference) -> Result<Self> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -89,7 +96,7 @@ impl GpuContext {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
             })

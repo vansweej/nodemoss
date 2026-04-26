@@ -129,5 +129,8 @@ impl Application for TrackballApp {
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<TrackballApp>("Trackball Demo")
+    rig_app::run::<TrackballApp>(rig_app::RunConfig {
+        title: "Trackball Demo".into(),
+        ..Default::default()
+    })
 }
