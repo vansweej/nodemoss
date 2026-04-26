@@ -474,6 +474,21 @@ pub struct Renderer {
 }
 ```
 
+### 9.5 3-group bind group layout (ADR)
+
+**Decision**: All render pipelines use a fixed 3-group bind layout separating frame, material, and object data.
+
+**Layout**:
+- Group 0: `FrameUniforms` — camera view/proj/position, written once per frame
+- Group 1: `MaterialUniforms` + diffuse texture + sampler — per-material (fallback 1×1 white for untextured)
+- Group 2: `ObjectUniforms` (world matrix) — per-object, dynamic offset into shared buffer
+
+**Rationale**:
+- Group 0 is set once per render pass (cheapest rebind)
+- Group 1 changes only when material changes (batching benefit)
+- Group 2 uses dynamic offsets to avoid per-object bind group creation
+- Fallback material bind group allows untextured materials to use identical shaders with no branching
+
 ---
 
 ## 10. Application Model
@@ -578,7 +593,7 @@ Add incrementally:
 - offscreen passes ✓
 - frustum culling ✓
 - lights and material models
-- texture support
+- texture support ✓ (Round 6: GPU cache, TEXTURED_SHADER, textured_mesh example)
 - physics integration later
 
 ---

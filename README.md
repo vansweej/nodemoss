@@ -13,6 +13,7 @@ NodeMoss is a personal 3D and physics research framework in Rust built around a 
   - `multi_object` — multiple objects with shared assets, depth, and visibility toggling
   - `offscreen_demo` — offscreen render target with fullscreen blit pass
  - `platonic_solids` — five platonic solids orbiting with fly-camera navigation
+ - `textured_mesh` — sphere with procedurally generated checkerboard texture, demonstrates GPU texture/sampler caching
  - `trackball_demo` — arc-ball orbit camera with mouse drag (LMB = orbit, RMB = dolly)
  - All framework examples include an FPS counter overlay (press **F3** to toggle)
 

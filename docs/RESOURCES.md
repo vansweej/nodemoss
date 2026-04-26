@@ -142,41 +142,65 @@ pub struct TextureAsset {
 
 ```rust
 pub struct ImmutableResourceCache {
+    // shader modules
     shaders: HashMap<ShaderHandle, wgpu::ShaderModule>,
-    vertex_buffers: HashMap<MeshHandle, wgpu::Buffer>,
-    index_buffers: HashMap<MeshHandle, wgpu::Buffer>,
+    // mesh GPU buffers
+    meshes: HashMap<MeshHandle, CachedMeshBuffers>,
+    // texture resources
     textures: HashMap<TextureHandle, wgpu::Texture>,
     texture_views: HashMap<TextureHandle, wgpu::TextureView>,
+    // sampler objects
     samplers: HashMap<SamplerHandle, wgpu::Sampler>,
 }
 ```
 
-### 4.2 API shape
+All fields are implemented and active. Texture and sampler caching was added in Round 6.
 
-Prefer owned return values or opaque IDs.
+### 4.2 API shape
 
 ```rust
 impl ImmutableResourceCache {
+    /// Returns a cached (or newly compiled) shader module.
     pub fn shader_module(
         &mut self,
         device: &wgpu::Device,
+        handle: ShaderHandle,
         shader: &ShaderAsset,
     ) -> wgpu::ShaderModule;
 
+    /// Returns cached (or newly uploaded) mesh GPU buffers.
     pub fn mesh_buffers(
         &mut self,
         device: &wgpu::Device,
+        handle: MeshHandle,
         mesh: &MeshAsset,
     ) -> CachedMeshBuffers;
+
+    /// Upload a texture asset to the GPU (idempotent — returns cached view if already uploaded).
+    pub fn texture_view(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        handle: TextureHandle,
+        asset: &TextureAsset,
+    ) -> &wgpu::TextureView;
+
+    /// Get or create a sampler from a descriptor (idempotent).
+    pub fn sampler(
+        &mut self,
+        device: &wgpu::Device,
+        handle: SamplerHandle,
+        desc: &SamplerDescriptor,
+    ) -> &wgpu::Sampler;
 }
 
 pub struct CachedMeshBuffers {
     pub vertex: wgpu::Buffer,
     pub index: wgpu::Buffer,
+    pub index_count: u32,
+    pub index_format: wgpu::IndexFormat,
 }
 ```
-
-Returning owned cloneable objects avoids borrow conflicts across nested cache lookups.
 
 ### 4.3 Keying policy
 
@@ -370,14 +394,25 @@ These are allocations, not shared asset cache entries.
 
 Bind groups are renderer-generated from typed data sources.
 
-### 9.1 Suggested grouping
+### 9.1 Implemented grouping
 
-- group 0: frame/view data
-- group 1: material data and textures
-- group 2: object data
+The renderer uses a fixed 3-group layout. Every pipeline built by `rig-render` uses this layout:
 
-The exact grouping can change, but the ownership boundary should stay consistent:
+| Group | Binding | Type               | Stage          | Dynamic offset | Contents                          |
+|-------|---------|--------------------|----------------|----------------|-----------------------------------|
+| 0     | 0       | uniform buffer     | vertex+fragment | no             | `FrameUniforms` (view, proj, cam_pos) |
+| 1     | 0       | uniform buffer     | fragment       | no             | `MaterialUniforms` (base_color, flags) |
+| 1     | 1       | texture_2d<f32>    | fragment       | no             | diffuse texture (or 1×1 white fallback) |
+| 1     | 2       | sampler (filtering)| fragment       | no             | diffuse sampler (or default linear fallback) |
+| 2     | 0       | uniform buffer     | vertex         | **yes**        | `ObjectUniforms` (world matrix)   |
 
+**Group 0** (frame) is written once per frame via `queue.write_buffer` into `Renderer::frame_uniform_buffer`.
+
+**Group 1** (material) is the fallback bind group (1×1 white texture) for untextured materials. For materials with textures, a per-draw bind group is created using cached GPU resources from `ImmutableResourceCache`.
+
+**Group 2** (object) uses a dynamic-offset uniform buffer (`FrameResources::object_uniforms`) holding all object world matrices packed with alignment padding.
+
+The ownership boundary remains:
 - scene provides world/model information
 - assets provide shared immutable material/texture references
 - renderer builds bind groups from frame data, object data, and material data
