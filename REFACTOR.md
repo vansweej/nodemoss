@@ -70,22 +70,14 @@ All public APIs and test modules stay in place.
 
 ---
 
-## Round 4 — Frustum culling in the renderer
+## Round 4 — Frustum culling in the renderer (complete ✓)
 
-**Goal**: wire the already-implemented `extract_renderables_culled` into the render path.  
-**Risk**: medium — touches the hot render path.  
 **Branch**: `feat/frustum-culling`
 
-Steps:
-
-1. Extract the active camera frustum planes from `ExtractedCamera` inside `render_scene`.
-2. Pass them into `extract_renderables_culled` (already implemented in `rig-scene`).
-3. Switch `render_scene` and `render_to_target` to use the culled draw list.
-4. Add a unit test: place objects outside the frustum and assert they are absent from the
-   extracted list.
-5. Optional: add a `culled_count` field to a frame stats struct for overlay display.
-
-**Affected files**: `rig-render/src/renderer.rs`, `rig-app/src/runner.rs`, one example.
+| Slice | Commit | Summary |
+|---|---|---|
+| 1 | — | `rig-render`: `render_scene` and `render_to_target` use `extract_renderables_culled` by default |
+| docs | — | `APPLICATION.md` §10, `ARCHITECTURE.md` §11/§12, `AGENTS.md` milestones |
 
 ---
 

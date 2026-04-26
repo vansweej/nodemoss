@@ -417,25 +417,31 @@ target scene node. It is not yet implemented.
 1. app updates scene
 2. scene recomputes world transforms and bounds
 3. app or renderer selects the active camera node
-4. renderer extracts visible renderables
-5. renderer allocates frame resources and uploads typed data
-6. renderer records draw commands and presents
+4. renderer computes frustum planes from the camera projection-view matrix
+5. renderer calls `extract_renderables_culled` — objects outside the frustum and `Hidden` nodes are excluded automatically
+6. renderer allocates frame resources and uploads typed data
+7. renderer records draw commands and presents
 
 ```mermaid
 flowchart LR
     App["Application update"] --> Scene["SceneGraph update"]
     Scene --> Cam["Choose active camera"]
-    Cam --> Extract["Renderer extraction"]
-    Extract --> Upload["Frame allocation + uploads"]
+    Cam --> Cull["Frustum cull + extract visible"]
+    Cull --> Upload["Frame allocation + uploads"]
     Upload --> Draw["Draw + present"]
 
     style App fill:#e3f2fd,stroke:#1565c0
     style Scene fill:#e3f2fd,stroke:#1565c0
     style Cam fill:#fff3e0,stroke:#e65100
-    style Extract fill:#c8e6c9,stroke:#2e7d32
+    style Cull fill:#f3e5f5,stroke:#6a1b9a
     style Upload fill:#c8e6c9,stroke:#2e7d32
     style Draw fill:#c8e6c9,stroke:#2e7d32
 ```
+
+Frustum culling is the **default** render path. `extract_renderables_culled` is called with
+the six planes derived from the camera's projection-view matrix via
+`frustum_planes_from_projection_view`. When no active camera is set, the renderer falls
+back to unculled extraction.
 
 The important boundary is that renderer upload policy is renderer-owned.
 

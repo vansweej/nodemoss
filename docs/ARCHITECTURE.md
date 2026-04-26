@@ -521,7 +521,7 @@ flowchart TD
     U --> W["AboutToWait requests redraw if needed"]
     W --> R["RedrawRequested"]
     R --> T["Update transforms and bounds"]
-    T --> C["Cull and extract visible objects"]
+    T --> C["Frustum cull and extract visible objects"]
     C --> F["Allocate frame resources and upload data"]
     F --> D["Record draw commands"]
     D --> P["Present surface frame"]
@@ -571,14 +571,14 @@ What gets built:
 
 Add incrementally:
 
-- active camera selection from scene
-- lights and material models
-- frustum culling
-- texture support
-- multiple objects and shared assets
-- **procedural mesh generation** — MeshFactory: box, sphere, plane, platonic solids
+- active camera selection from scene ✓
+- multiple objects and shared assets ✓
+- **procedural mesh generation** — MeshFactory: box, sphere, plane, platonic solids ✓
   (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron)
-- offscreen passes if needed
+- offscreen passes ✓
+- frustum culling ✓
+- lights and material models
+- texture support
 - physics integration later
 
 ---

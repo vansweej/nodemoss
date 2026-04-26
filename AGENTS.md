@@ -137,8 +137,9 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 1. **Minimal triangle** — wgpu + winit, hardcoded vertices, no framework abstractions ✓
 2. **Triangle via scene graph** — all core crates wired up, same triangle rendered through SceneGraph + AssetStore + Renderer + Application ✓
 3. **Incremental features** — camera controls, frustum culling, lights, materials, MeshFactory, textures, multiple objects ✓
-   - MeshFactory: box, sphere, plane, platonic solids (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron)
-   - `platonic_solids` example: five solids orbiting with spin animation and fly-camera
+   - MeshFactory: box, sphere, plane, platonic solids (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron) ✓
+   - `platonic_solids` example: five solids orbiting with spin animation and fly-camera ✓
+   - Frustum culling: `extract_renderables_culled` wired as default render path ✓
 4. **Overlay system** — `rig-gpu` crate, `rig-overlay` crate (glyphon), FPS counters in all examples, F3 toggle ✓
 
 ## Documentation
