@@ -41,7 +41,7 @@ use rig_app::{
 
 const GRID_RES: u32 = 32;
 const ISO_VALUE: f32 = 1.0;
-const GRID_HALF: f32 = 4.0;
+const GRID_HALF: f32 = 6.0;
 
 fn grid_params() -> GridParams {
     GridParams {
@@ -181,11 +181,13 @@ impl Application for MetaballsApp {
 
         // --- Camera ----------------------------------------------------------
         let camera_node = ctx.scene.create_node("camera");
+        // Pitch down to look from (0, 4, 12) toward the origin.
+        let pitch = -(4.0_f32).atan2(12.0);
         ctx.scene.set_local_transform(
             camera_node,
             Transform {
                 translation: Vec3::new(0.0, 4.0, 12.0),
-                rotation: Quat::IDENTITY,
+                rotation: Quat::from_rotation_x(pitch),
                 scale: Vec3::ONE,
             },
         )?;
@@ -227,33 +229,33 @@ impl Application for MetaballsApp {
         let balls = [
             Ball {
                 pos: Vec3::new(
-                    2.0 * (t * 0.7).sin(),
-                    1.5 * (t * 0.5).cos(),
-                    2.0 * (t * 0.9).sin(),
+                    3.2 * (t * 0.7).sin(),
+                    2.5 * (t * 0.5).cos(),
+                    3.0 * (t * 0.9).sin(),
                 ),
                 radius: 1.4,
             },
             Ball {
                 pos: Vec3::new(
-                    -2.0 * (t * 0.6).cos(),
-                    1.8 * (t * 0.8).sin(),
-                    -1.5 * (t * 0.4).cos(),
+                    -3.0 * (t * 0.6).cos(),
+                    2.8 * (t * 0.8).sin(),
+                    -2.5 * (t * 0.4).cos(),
                 ),
                 radius: 1.3,
             },
             Ball {
                 pos: Vec3::new(
-                    1.5 * (t * 1.1).sin(),
-                    -1.5 * (t * 0.7).cos(),
-                    1.5 * (t * 0.6).cos(),
+                    2.8 * (t * 1.1).sin(),
+                    -2.5 * (t * 0.7).cos(),
+                    3.0 * (t * 0.6).cos(),
                 ),
                 radius: 1.2,
             },
             Ball {
                 pos: Vec3::new(
-                    -1.5 * (t * 0.9).cos(),
-                    -1.8 * (t * 0.5).sin(),
-                    -2.0 * (t * 1.0).sin(),
+                    -2.5 * (t * 0.9).cos(),
+                    -3.0 * (t * 0.5).sin(),
+                    -3.2 * (t * 1.0).sin(),
                 ),
                 radius: 1.1,
             },
