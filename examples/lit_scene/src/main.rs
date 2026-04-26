@@ -22,7 +22,7 @@ use rig_app::{
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PHONG_SHADER,
-    rig_scene::{CameraComponent, LightComponent, LightKind, NodeId, Renderable},
+    rig_scene::{CameraComponent, LightComponent, LightKind, MeshSource, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
 
@@ -76,7 +76,7 @@ impl Application for LitSceneApp {
             ctx.scene.set_renderable(
                 node,
                 Renderable {
-                    mesh: *mesh,
+                    mesh: MeshSource::Static(*mesh),
                     material,
                 },
             )?;

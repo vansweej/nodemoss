@@ -1402,6 +1402,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "metaballs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+ "rig-assets",
+ "rig-math",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

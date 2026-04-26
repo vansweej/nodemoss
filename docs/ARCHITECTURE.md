@@ -596,6 +596,28 @@ Add incrementally:
 - texture support ✓ (Round 6: GPU cache, TEXTURED_SHADER, textured_mesh example)
 - physics integration later
 
+### Milestone 7 — Dynamic Meshes + Metaballs ✓
+
+CPU Marching Cubes isosurface extraction integrated into the scene graph:
+
+- **`rig-assets`**: `DynamicMeshId`, `MeshSource` enum (`Static(MeshHandle)` | `Dynamic(DynamicMeshId)`),
+  `DynamicMeshData` output type, `marching_cubes` module (Paul Bourke tables, gradient normals,
+  `extract()` function), `standard_vertex_layout()` public helper.
+- **`rig-scene`**: `Renderable.mesh` changed from `MeshHandle` to `MeshSource`; `dynamic_bounds`
+  HashMap on `SceneGraph`; `set_dynamic_bounds()` for per-frame frustum culling of dynamic nodes;
+  `compute_world_bounds()` branches on `MeshSource`.
+- **`rig-gpu`**: `supports_wireframe: bool` on `GpuContext`; conditional `POLYGON_MODE_LINE` feature
+  request from adapter.
+- **`rig-render`**: `DynamicMesh` GPU buffer struct; `dynamic_meshes` registry on `Renderer`;
+  `register_dynamic_mesh()` / `update_dynamic_mesh()` (grow-on-demand buffers); `polygon_mode`
+  field on `PipelineKey`; `wireframe: bool` + `toggle_wireframe()` on `Renderer`; draw dispatch
+  branches on `MeshSource::Static` vs `Dynamic`.
+- **`rig-app`**: F4 key → `renderer.toggle_wireframe(gpu.supports_wireframe)` in runner.
+- **`examples/metaballs`**: 4 bouncing metaballs, 48³ grid, Blinn-Phong shading, fly-camera,
+  F4 wireframe toggle, overlay HUD.
+
+See `docs/METABALLS.md` for algorithm details and the 4-direction roadmap.
+
 ---
 
 ## 13. Mapping from GeometricTools

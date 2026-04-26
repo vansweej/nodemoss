@@ -17,7 +17,7 @@ use rig_app::{
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::{RenderTarget, RenderTargetDescriptor, wgpu},
-    rig_scene::{CameraComponent, NodeId, Renderable},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
 };
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ impl Application for OffscreenApp {
         ctx.scene.set_renderable(
             box_node,
             Renderable {
-                mesh: box_mesh,
+                mesh: MeshSource::Static(box_mesh),
                 material,
             },
         )?;

@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use rig_math::BoundingSphere;
+
 use crate::components::{CameraComponent, LightComponent, Renderable};
 use crate::node::{NodeId, NodeSlot, Result, SceneError, SceneNode};
 
@@ -12,6 +14,9 @@ pub struct SceneGraph {
     pub(crate) renderables: HashMap<NodeId, Renderable>,
     pub(crate) cameras: HashMap<NodeId, CameraComponent>,
     pub(crate) lights: HashMap<NodeId, LightComponent>,
+    /// Per-node local bounding spheres for dynamic meshes, updated each frame
+    /// by `set_dynamic_bounds()` before `update_world_bounds()`.
+    pub(crate) dynamic_bounds: HashMap<NodeId, BoundingSphere>,
 }
 
 impl SceneGraph {
@@ -53,6 +58,7 @@ impl SceneGraph {
         self.renderables.remove(&id);
         self.cameras.remove(&id);
         self.lights.remove(&id);
+        self.dynamic_bounds.remove(&id);
 
         let slot = self.slot_mut(id)?;
         slot.node = None;
@@ -216,5 +222,15 @@ impl SceneGraph {
                 }
             })
             .collect()
+    }
+
+    /// Register or update the local-space bounding sphere for a dynamic mesh node.
+    ///
+    /// Call this in `update()` after running Marching Cubes, before
+    /// `update_all_world_bounds()`, so frustum culling uses up-to-date bounds.
+    pub fn set_dynamic_bounds(&mut self, node: NodeId, bounds: BoundingSphere) -> Result<()> {
+        self.node(node)?;
+        self.dynamic_bounds.insert(node, bounds);
+        Ok(())
     }
 }

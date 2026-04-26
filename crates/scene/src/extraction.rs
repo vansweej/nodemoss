@@ -8,7 +8,7 @@ use crate::node::NodeId;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExtractedRenderable {
     pub node: NodeId,
-    pub mesh: rig_assets::MeshHandle,
+    pub mesh: rig_assets::MeshSource,
     pub material: rig_assets::MaterialHandle,
     pub world_transform: Mat4,
     pub world_bound: BoundingSphere,

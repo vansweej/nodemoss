@@ -1,6 +1,6 @@
 //! Component maps: renderables, cameras, lights, transforms, visibility.
 
-use rig_assets::{AssetStore, MaterialHandle, MeshHandle};
+use rig_assets::{AssetStore, MaterialHandle, MeshSource};
 use rig_math::{BoundingSphere, Mat4, Projection, Transform, Vec3, Vec4};
 
 use crate::SceneGraph;
@@ -9,7 +9,7 @@ use crate::node::{NodeId, Result, SceneError, VisibilityMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Renderable {
-    pub mesh: MeshHandle,
+    pub mesh: MeshSource,
     pub material: MaterialHandle,
 }
 
@@ -232,11 +232,23 @@ impl SceneGraph {
     ) -> Result<BoundingSphere> {
         let child_ids = self.children(node)?;
         let mut bound = if let Some(renderable) = self.renderables.get(&node).copied() {
-            let mesh = assets
-                .mesh(renderable.mesh)
-                .map_err(|_| SceneError::MissingMeshAsset)?;
-            mesh.local_bounds
-                .transform_by(self.node(node)?.world_transform)
+            match renderable.mesh {
+                rig_assets::MeshSource::Static(handle) => {
+                    let mesh = assets
+                        .mesh(handle)
+                        .map_err(|_| SceneError::MissingMeshAsset)?;
+                    mesh.local_bounds
+                        .transform_by(self.node(node)?.world_transform)
+                }
+                rig_assets::MeshSource::Dynamic(_id) => {
+                    // Use the dynamic bounds registered for this node, if any.
+                    self.dynamic_bounds
+                        .get(&node)
+                        .copied()
+                        .unwrap_or(BoundingSphere::ZERO)
+                        .transform_by(self.node(node)?.world_transform)
+                }
+            }
         } else {
             BoundingSphere::ZERO
         };

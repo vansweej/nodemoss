@@ -198,6 +198,13 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         state.overlay_visible = !state.overlay_visible;
                     }
                 }
+                if let winit::keyboard::PhysicalKey::Code(KeyCode::F4) = event.physical_key {
+                    if event.state == winit::event::ElementState::Pressed {
+                        state
+                            .renderer
+                            .toggle_wireframe(state.gpu.supports_wireframe);
+                    }
+                }
                 state.input.update(event);
             }
             WindowEvent::CursorMoved { position, .. } => {

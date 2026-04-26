@@ -11,7 +11,7 @@ pub use extraction::*;
 pub use graph::*;
 pub use node::*;
 // Re-export asset handle types for use in the public API
-pub use rig_assets::{MaterialHandle, MeshHandle};
+pub use rig_assets::{DynamicMeshId, MaterialHandle, MeshHandle, MeshSource};
 
 #[cfg(test)]
 mod tests {
@@ -185,7 +185,13 @@ mod tests {
         };
         let (_, mesh, material) = sample_assets();
         assert!(matches!(
-            scene.set_renderable(invalid, Renderable { mesh, material }),
+            scene.set_renderable(
+                invalid,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material
+                }
+            ),
             Err(SceneError::InvalidNode)
         ));
         assert!(matches!(
@@ -229,13 +235,22 @@ mod tests {
             },
         };
         scene
-            .set_renderable(node, Renderable { mesh, material })
+            .set_renderable(
+                node,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene.set_camera(node, camera_component).unwrap();
         assert_eq!(scene.node_name(node).unwrap(), "triangle");
         assert_eq!(
             scene.renderable(node).unwrap().copied(),
-            Some(Renderable { mesh, material })
+            Some(Renderable {
+                mesh: MeshSource::Static(mesh),
+                material
+            })
         );
         assert_eq!(scene.camera(node).unwrap().copied(), Some(camera_component));
     }
@@ -326,7 +341,13 @@ mod tests {
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
         scene
-            .set_renderable(child, Renderable { mesh, material })
+            .set_renderable(
+                child,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene
             .set_local_transform(
@@ -353,7 +374,13 @@ mod tests {
         let assets = rig_assets::AssetStore::new();
         let node = scene.create_node("node");
         scene
-            .set_renderable(node, Renderable { mesh, material })
+            .set_renderable(
+                node,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         assert!(matches!(
             scene.update_world_bounds(node, &assets),
@@ -367,7 +394,13 @@ mod tests {
         let (_, mesh, material) = sample_assets();
         let node = scene.create_node("hidden");
         scene
-            .set_renderable(node, Renderable { mesh, material })
+            .set_renderable(
+                node,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene.node_mut(node).unwrap().visibility = VisibilityMode::Hidden;
         let extracted = scene.extract_renderables();
@@ -689,11 +722,23 @@ mod tests {
         let (assets, mesh, material) = sample_assets();
         let inside = scene.create_node("inside");
         scene
-            .set_renderable(inside, Renderable { mesh, material })
+            .set_renderable(
+                inside,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         let outside = scene.create_node("outside");
         scene
-            .set_renderable(outside, Renderable { mesh, material })
+            .set_renderable(
+                outside,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene
             .set_local_transform(
@@ -719,7 +764,13 @@ mod tests {
         let (assets, mesh, material) = sample_assets();
         let node = scene.create_node("always");
         scene
-            .set_renderable(node, Renderable { mesh, material })
+            .set_renderable(
+                node,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene
             .set_local_transform(
@@ -747,7 +798,13 @@ mod tests {
         let (assets, mesh, material) = sample_assets();
         let node = scene.create_node("hidden");
         scene
-            .set_renderable(node, Renderable { mesh, material })
+            .set_renderable(
+                node,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         scene.update_all_world_transforms().unwrap();
@@ -817,7 +874,13 @@ mod tests {
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
         scene
-            .set_renderable(child, Renderable { mesh, material })
+            .set_renderable(
+                child,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene
             .set_visibility(parent, VisibilityMode::Hidden)
@@ -834,7 +897,13 @@ mod tests {
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
         scene
-            .set_renderable(child, Renderable { mesh, material })
+            .set_renderable(
+                child,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene
             .set_visibility(parent, VisibilityMode::Hidden)
@@ -896,10 +965,22 @@ mod tests {
         let n2 = scene.create_node("r2");
         let n3 = scene.create_node("plain");
         scene
-            .set_renderable(n1, Renderable { mesh, material })
+            .set_renderable(
+                n1,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         scene
-            .set_renderable(n2, Renderable { mesh, material })
+            .set_renderable(
+                n2,
+                Renderable {
+                    mesh: MeshSource::Static(mesh),
+                    material,
+                },
+            )
             .unwrap();
         let ids: Vec<_> = scene.renderable_nodes().collect();
         assert!(ids.contains(&n1));

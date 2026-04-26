@@ -25,7 +25,7 @@ use rig_app::{
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::TEXTURED_SHADER,
-    rig_scene::{CameraComponent, NodeId, Renderable},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
 
@@ -83,8 +83,13 @@ impl Application for TexturedMeshApp {
             .assets
             .add_mesh(mesh_factory::create_sphere(1.0, 32, 32));
         let sphere = ctx.scene.create_node("sphere");
-        ctx.scene
-            .set_renderable(sphere, Renderable { mesh, material })?;
+        ctx.scene.set_renderable(
+            sphere,
+            Renderable {
+                mesh: MeshSource::Static(mesh),
+                material,
+            },
+        )?;
         ctx.scene.set_local_transform(
             sphere,
             Transform {

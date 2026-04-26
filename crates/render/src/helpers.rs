@@ -515,6 +515,7 @@ pub(crate) fn create_pipeline(
     color_format: wgpu::TextureFormat,
     depth_format: Option<wgpu::TextureFormat>,
     vertex_layout: &VertexLayout,
+    polygon_mode: wgpu::PolygonMode,
 ) -> Result<wgpu::RenderPipeline> {
     let attributes = mesh_vertex_attributes(vertex_layout).map_err(RenderError::Asset)?;
     let buffer_layout = wgpu::VertexBufferLayout {
@@ -554,7 +555,7 @@ pub(crate) fn create_pipeline(
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode,
                 unclipped_depth: false,
                 conservative: false,
             },

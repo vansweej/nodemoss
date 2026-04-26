@@ -36,7 +36,7 @@ use rig_app::{
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_overlay::ElementId,
     rig_render::NORMAL_COLOR_SHADER,
-    rig_scene::{CameraComponent, NodeId, Renderable},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
 
@@ -134,7 +134,7 @@ impl Application for PlatonicApp {
             ctx.scene.set_renderable(
                 node,
                 Renderable {
-                    mesh: *mesh,
+                    mesh: MeshSource::Static(*mesh),
                     material,
                 },
             )?;
@@ -171,7 +171,7 @@ impl Application for PlatonicApp {
         ctx.scene.set_renderable(
             plane,
             Renderable {
-                mesh: plane_mesh,
+                mesh: MeshSource::Static(plane_mesh),
                 material,
             },
         )?;

@@ -19,7 +19,7 @@ use rig_app::{
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::NORMAL_COLOR_SHADER,
-    rig_scene::{CameraComponent, NodeId, Renderable},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
 
@@ -46,8 +46,13 @@ impl Application for TrackballApp {
         // Icosahedron mesh at origin
         let mesh = ctx.assets.add_mesh(mesh_factory::create_icosahedron());
         let target_node = ctx.scene.create_node("icosahedron");
-        ctx.scene
-            .set_renderable(target_node, Renderable { mesh, material })?;
+        ctx.scene.set_renderable(
+            target_node,
+            Renderable {
+                mesh: MeshSource::Static(mesh),
+                material,
+            },
+        )?;
         ctx.scene.set_local_transform(
             target_node,
             Transform {

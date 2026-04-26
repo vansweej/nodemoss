@@ -43,7 +43,7 @@ use crate::{IndexFormat, MeshAsset, VertexAttribute, VertexFormat, VertexLayout}
 
 const STRIDE: u64 = 32; // 3×f32 pos + 3×f32 normal + 2×f32 uv = 32 bytes
 
-fn standard_layout() -> VertexLayout {
+pub(crate) fn standard_layout() -> VertexLayout {
     VertexLayout {
         array_stride: STRIDE,
         attributes: vec![

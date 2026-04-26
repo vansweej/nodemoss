@@ -10,7 +10,7 @@ use rig_app::{
         VertexLayout,
     },
     rig_math::{BoundingSphere, Projection, Quat, Transform, Vec3},
-    rig_scene::{CameraComponent, NodeId, Renderable},
+    rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
 };
 
 #[repr(C)]
@@ -81,8 +81,13 @@ impl Application for TriangleSceneApp {
         });
 
         let triangle = ctx.scene.create_node("triangle");
-        ctx.scene
-            .set_renderable(triangle, Renderable { mesh, material })?;
+        ctx.scene.set_renderable(
+            triangle,
+            Renderable {
+                mesh: MeshSource::Static(mesh),
+                material,
+            },
+        )?;
 
         let camera = ctx.scene.create_node("camera");
         ctx.scene.set_local_transform(

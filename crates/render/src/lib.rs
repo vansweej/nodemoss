@@ -11,7 +11,7 @@ pub use helpers::{
     create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
 };
 pub use helpers::{FrameUniforms, LightUniform, LightsBuffer, MAX_LIGHTS, MaterialUniforms};
-pub use renderer::{Renderer, pack_lights_buffer};
+pub use renderer::{DynamicMesh, Renderer, pack_lights_buffer};
 
 pub use rig_gpu;
 pub use wgpu;
@@ -243,18 +243,21 @@ mod tests {
             vertex_layout: layout.clone(),
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
         };
         let key_with_depth = PipelineKey {
             shader,
             vertex_layout: layout.clone(),
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: Some(wgpu::TextureFormat::Depth32Float),
+            polygon_mode: wgpu::PolygonMode::Fill,
         };
         let key_diff_depth = PipelineKey {
             shader,
             vertex_layout: layout,
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: Some(wgpu::TextureFormat::Depth24Plus),
+            polygon_mode: wgpu::PolygonMode::Fill,
         };
         assert_ne!(key_no_depth, key_with_depth);
         assert_ne!(key_with_depth, key_diff_depth);
@@ -274,12 +277,14 @@ mod tests {
             vertex_layout: layout.clone(),
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
         };
         let key_rgba16 = PipelineKey {
             shader,
             vertex_layout: layout,
             color_format: wgpu::TextureFormat::Rgba16Float,
             depth_format: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
         };
         assert_ne!(key_bgra, key_rgba16);
     }
@@ -406,25 +411,25 @@ mod tests {
             assets.add_mesh(m)
         };
 
-        use rig_assets::ShaderHandle;
+        use rig_assets::{MeshSource, ShaderHandle};
         let draw_list = vec![
             ExtractedRenderable {
                 node: rig_scene::NodeId::from_raw(0, 0),
-                mesh: mesh_x,
+                mesh: MeshSource::Static(mesh_x),
                 material: material_b1,
                 world_transform: Mat4::IDENTITY,
                 world_bound: BoundingSphere::ZERO,
             },
             ExtractedRenderable {
                 node: rig_scene::NodeId::from_raw(1, 0),
-                mesh: mesh_y,
+                mesh: MeshSource::Static(mesh_y),
                 material: material_a1,
                 world_transform: Mat4::IDENTITY,
                 world_bound: BoundingSphere::ZERO,
             },
             ExtractedRenderable {
                 node: rig_scene::NodeId::from_raw(2, 0),
-                mesh: mesh_x,
+                mesh: MeshSource::Static(mesh_x),
                 material: material_a2,
                 world_transform: Mat4::IDENTITY,
                 world_bound: BoundingSphere::ZERO,
