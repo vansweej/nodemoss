@@ -12,10 +12,10 @@
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
+    UpdateContext,
     rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
-    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::{RenderTarget, RenderTargetDescriptor, wgpu},
     rig_scene::{CameraComponent, NodeId, Renderable},
 };
@@ -118,7 +118,7 @@ struct OffscreenApp {
     box_node: NodeId,
     offscreen_target: RenderTarget,
     blit: BlitResources,
-    fps_id: ElementId,
+    debug_hud: DebugHud,
 }
 
 impl Application for OffscreenApp {
@@ -180,15 +180,7 @@ impl Application for OffscreenApp {
         let blit =
             build_blit_resources(&ctx.gpu.device, ctx.gpu.surface_format(), &offscreen_target);
 
-        let fps_id = ctx.overlay.add_text(TextElement {
-            text: "FPS: 0".into(),
-            position: Position::Anchor {
-                anchor: Anchor::TopRight,
-                offset: [8.0, 8.0],
-            },
-            color: [1.0, 1.0, 1.0, 1.0],
-            font_size: 16.0,
-        });
+        let debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
 
         Ok(Self {
             camera,
@@ -196,7 +188,7 @@ impl Application for OffscreenApp {
             box_node,
             offscreen_target,
             blit,
-            fps_id,
+            debug_hud,
         })
     }
 
@@ -233,7 +225,7 @@ impl Application for OffscreenApp {
     }
 
     fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
-        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
+        self.debug_hud.update(ctx)
     }
 }
 

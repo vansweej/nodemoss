@@ -70,6 +70,9 @@ pub struct GpuContext {
     pub surface: wgpu::Surface<'static>,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub window: Arc<Window>,
+    /// Full adapter info (name, vendor, device type, backend, driver, …).
+    /// Captured once at startup from the selected wgpu adapter.
+    pub adapter_info: wgpu::AdapterInfo,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -93,7 +96,13 @@ impl GpuContext {
             .await
             .map_err(|_| GpuError::NoAdapter)?;
 
-        log::info!("Using adapter: {}", adapter.get_info().name);
+        let adapter_info = adapter.get_info();
+        log::info!(
+            "Using adapter: {} ({:?}, {:?})",
+            adapter_info.name,
+            adapter_info.device_type,
+            adapter_info.backend,
+        );
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -143,6 +152,7 @@ impl GpuContext {
             surface,
             surface_config,
             window,
+            adapter_info,
         })
     }
 

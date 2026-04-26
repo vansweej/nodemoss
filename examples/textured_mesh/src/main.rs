@@ -17,13 +17,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rig_app::{
-    Application, CameraRig, OverlayUpdateContext, RenderContext, StartupContext, UpdateContext,
+    Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
+    UpdateContext,
     rig_assets::{
         AddressMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor, ShaderAsset,
         TextureAsset, TextureFormat, mesh_factory,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
-    rig_overlay::{Anchor, ElementId, Position, TextElement},
     rig_render::TEXTURED_SHADER,
     rig_scene::{CameraComponent, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
@@ -32,7 +32,7 @@ use rig_app::{
 struct TexturedMeshApp {
     camera_node: NodeId,
     camera_rig: CameraRig,
-    fps_id: ElementId,
+    debug_hud: DebugHud,
 }
 
 impl Application for TexturedMeshApp {
@@ -43,9 +43,9 @@ impl Application for TexturedMeshApp {
             for x in 0..64_u32 {
                 let checker = ((x / 8) + (y / 8)) % 2 == 0;
                 let color: [u8; 4] = if checker {
-                    [255, 128, 0, 255]   // orange
+                    [255, 128, 0, 255] // orange
                 } else {
-                    [64, 64, 64, 255]    // dark grey
+                    [64, 64, 64, 255] // dark grey
                 };
                 let idx = ((y * 64 + x) * 4) as usize;
                 pixels[idx..idx + 4].copy_from_slice(&color);
@@ -79,9 +79,12 @@ impl Application for TexturedMeshApp {
         });
 
         // ── Sphere mesh ───────────────────────────────────────────────────────
-        let mesh = ctx.assets.add_mesh(mesh_factory::create_sphere(1.0, 32, 32));
+        let mesh = ctx
+            .assets
+            .add_mesh(mesh_factory::create_sphere(1.0, 32, 32));
         let sphere = ctx.scene.create_node("sphere");
-        ctx.scene.set_renderable(sphere, Renderable { mesh, material })?;
+        ctx.scene
+            .set_renderable(sphere, Renderable { mesh, material })?;
         ctx.scene.set_local_transform(
             sphere,
             Transform {
@@ -113,23 +116,18 @@ impl Application for TexturedMeshApp {
         )?;
 
         // ── Overlay ───────────────────────────────────────────────────────────
-        let fps_id = ctx.overlay.add_text(TextElement {
-            text: "FPS: 0".into(),
-            position: Position::Anchor {
-                anchor: Anchor::TopRight,
-                offset: [8.0, 8.0],
-            },
-            color: [1.0, 1.0, 1.0, 1.0],
-            font_size: 16.0,
-        });
+        let debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
 
         log::info!("Textured mesh demo initialised.");
         log::info!("Controls: WASD/QE move, arrow keys rotate, Escape quits.");
 
         Ok(Self {
             camera_node,
-            camera_rig: CameraRig { translation_speed: 3.0, rotation_speed: 1.5 },
-            fps_id,
+            camera_rig: CameraRig {
+                translation_speed: 3.0,
+                rotation_speed: 1.5,
+            },
+            debug_hud,
         })
     }
 
@@ -146,7 +144,7 @@ impl Application for TexturedMeshApp {
     }
 
     fn update_overlay(&mut self, ctx: &mut OverlayUpdateContext<'_>) -> Result<()> {
-        ctx.set_text(self.fps_id, format!("FPS: {:.0}", ctx.timer.fps()))
+        self.debug_hud.update(ctx)
     }
 
     fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
