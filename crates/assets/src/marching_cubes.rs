@@ -366,7 +366,9 @@ pub struct GridParams {
 /// considered *inside* the surface.
 ///
 /// Output uses `standard_layout()` (pos + normal + uv, stride 32 bytes).
-/// Normals are computed via central differences of the field at each vertex position.
+/// If `normal_fn` is `Some`, it is called to compute the outward unit normal at each
+/// new vertex position (analytical gradient). If `None`, normals are computed via
+/// central differences of the field (6 extra `field` calls per vertex).
 /// UVs are `[0.0, 0.0]` placeholder.
 /// Indices are `u32`.
 ///
@@ -376,6 +378,7 @@ pub fn extract(
     field: &dyn Fn(Vec3) -> f32,
     params: &GridParams,
     iso_value: f32,
+    normal_fn: Option<&dyn Fn(Vec3) -> [f32; 3]>,
 ) -> DynamicMeshData {
     let [nx, ny, nz] = params.resolution;
     // Number of vertices along each axis = cells + 1
@@ -419,9 +422,9 @@ pub fn extract(
     // Deduplication: (cell_flat_index * 12 + edge_index) -> vertex_index
     let mut edge_to_vertex: HashMap<u64, u32> = HashMap::new();
 
-    // Bounding sphere accumulation
-    let mut sum = Vec3::ZERO;
-    let mut positions_out: Vec<Vec3> = Vec::new();
+    // Bounding box accumulation (single-pass, no extra Vec allocation)
+    let mut bb_min = Vec3::splat(f32::MAX);
+    let mut bb_max = Vec3::splat(f32::MIN);
 
     for iz in 0..nz {
         for iy in 0..ny {
@@ -477,14 +480,18 @@ pub fn extract(
                         let vb = grid_values[corners[cb]];
 
                         let pos = interpolate_edge(pa, pb, va, vb, iso_value);
-                        let normal = gradient_normal(field, pos, epsilon);
+                        let normal = if let Some(nfn) = normal_fn {
+                            nfn(pos)
+                        } else {
+                            gradient_normal(field, pos, epsilon)
+                        };
 
                         push_vertex(&mut vertex_data, pos, normal, [0.0, 0.0]);
                         let idx = vertex_count;
                         vertex_count += 1;
 
-                        sum += pos;
-                        positions_out.push(pos);
+                        bb_min = bb_min.min(pos);
+                        bb_max = bb_max.max(pos);
 
                         edge_to_vertex.insert(dedup_key, idx);
                         idx
@@ -517,8 +524,14 @@ pub fn extract(
 
     let index_count = (index_data.len() / 4) as u32;
 
-    // Compute bounding sphere
-    let local_bounds = compute_bounding_sphere(&positions_out);
+    // Compute bounding sphere from AABB (single-pass, no extra allocation)
+    let local_bounds = if vertex_count == 0 {
+        BoundingSphere::ZERO
+    } else {
+        let center = (bb_min + bb_max) * 0.5;
+        let radius = (bb_max - bb_min).length() * 0.5;
+        BoundingSphere { center, radius }
+    };
 
     DynamicMeshData {
         vertex_data,
@@ -569,22 +582,6 @@ fn push_u32(buf: &mut Vec<u8>, idx: u32) {
     buf.extend_from_slice(&idx.to_le_bytes());
 }
 
-fn compute_bounding_sphere(positions: &[Vec3]) -> BoundingSphere {
-    if positions.is_empty() {
-        return BoundingSphere::ZERO;
-    }
-    let centroid =
-        positions.iter().copied().fold(Vec3::ZERO, |acc, p| acc + p) / positions.len() as f32;
-    let radius = positions
-        .iter()
-        .map(|&p| (p - centroid).length())
-        .fold(0.0_f32, f32::max);
-    BoundingSphere {
-        center: centroid,
-        radius,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -611,7 +608,7 @@ mod tests {
     #[test]
     fn empty_field_produces_no_geometry() {
         let field = |_: Vec3| 0.0_f32;
-        let result = extract(&field, &default_params(8), 1.0);
+        let result = extract(&field, &default_params(8), 1.0, None);
         assert_eq!(result.vertex_data.len(), 0);
         assert_eq!(result.index_count, 0);
     }
@@ -620,14 +617,14 @@ mod tests {
     fn uniform_above_produces_no_geometry() {
         // All corners inside → cube index 255 → no surface
         let field = |_: Vec3| 2.0_f32;
-        let result = extract(&field, &default_params(8), 1.0);
+        let result = extract(&field, &default_params(8), 1.0, None);
         assert_eq!(result.index_count, 0);
     }
 
     #[test]
     fn single_sphere_produces_geometry() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         assert!(
             result.index_count > 0,
             "expected triangles for a sphere field"
@@ -638,14 +635,14 @@ mod tests {
     #[test]
     fn index_count_is_multiple_of_three() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         assert_eq!(result.index_count % 3, 0);
     }
 
     #[test]
     fn all_indices_are_within_vertex_count() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         let vertex_count = (result.vertex_data.len() / 32) as u32;
         let indices: Vec<u32> = result
             .index_data
@@ -663,14 +660,14 @@ mod tests {
     #[test]
     fn vertex_data_length_is_multiple_of_stride() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         assert_eq!(result.vertex_data.len() % 32, 0);
     }
 
     #[test]
     fn all_normals_are_unit_length() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         let vertex_count = result.vertex_data.len() / 32;
         for i in 0..vertex_count {
             let base = i * 32 + 12; // normal at offset 12
@@ -689,7 +686,7 @@ mod tests {
     #[test]
     fn bounding_sphere_contains_all_vertices() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         let vertex_count = result.vertex_data.len() / 32;
         let bounds = result.local_bounds;
         for i in 0..vertex_count {
@@ -711,8 +708,8 @@ mod tests {
     #[test]
     fn higher_resolution_produces_more_triangles() {
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let lo = extract(&field, &default_params(8), 1.0);
-        let hi = extract(&field, &default_params(24), 1.0);
+        let lo = extract(&field, &default_params(8), 1.0, None);
+        let hi = extract(&field, &default_params(24), 1.0, None);
         assert!(
             hi.index_count > lo.index_count,
             "higher resolution should produce more triangles"
@@ -724,7 +721,7 @@ mod tests {
         // For a sphere field centred at origin, each triangle's face normal should
         // have a positive dot product with the vector from origin to triangle centroid.
         let field = sphere_field(Vec3::ZERO, 1.0);
-        let result = extract(&field, &default_params(16), 1.0);
+        let result = extract(&field, &default_params(16), 1.0, None);
         let vertex_count = result.vertex_data.len() / 32;
         let positions: Vec<Vec3> = (0..vertex_count)
             .map(|i| {
@@ -769,7 +766,7 @@ mod tests {
     #[test]
     fn empty_field_bounding_sphere_is_zero() {
         let field = |_: Vec3| 0.0_f32;
-        let result = extract(&field, &default_params(8), 1.0);
+        let result = extract(&field, &default_params(8), 1.0, None);
         assert_eq!(result.local_bounds.radius, 0.0);
     }
 }

@@ -525,12 +525,7 @@ impl Renderer {
             &mut frame.encoder,
             &frame.view,
             Some(&self.depth_view.clone()),
-            wgpu::Color {
-                r: 0.1,
-                g: 0.1,
-                b: 0.1,
-                a: 1.0,
-            },
+            wgpu::Color::BLACK,
             assets,
             draw_list,
             &sorted_indices,

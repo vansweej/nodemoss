@@ -39,7 +39,7 @@ use rig_app::{
 // Grid configuration
 // ---------------------------------------------------------------------------
 
-const GRID_RES: u32 = 48;
+const GRID_RES: u32 = 32;
 const ISO_VALUE: f32 = 1.0;
 const GRID_HALF: f32 = 4.0;
 
@@ -71,6 +71,31 @@ fn metaball_field(balls: &[Ball], p: Vec3) -> f32 {
             b.radius * b.radius / d2
         })
         .sum()
+}
+
+/// Analytical gradient normal for the combined metaball field.
+///
+/// ∇(Σ rᵢ²/|p−cᵢ|²) = Σ −2rᵢ²(p−cᵢ)/|p−cᵢ|⁴
+///
+/// The gradient points inward (toward higher field values), so we negate it
+/// to obtain an outward surface normal.
+fn metaball_normal(balls: &[Ball], p: Vec3) -> [f32; 3] {
+    let mut grad = Vec3::ZERO;
+    for b in balls {
+        let d = p - b.pos;
+        let d2 = d.length_squared().max(1e-6);
+        // Contribution: -2r²·d / d⁴
+        grad += -2.0 * b.radius * b.radius * d / (d2 * d2);
+    }
+    // Negate gradient (inward → outward)
+    let g = -grad;
+    let len = g.length();
+    if len > 1e-10 {
+        let n = g / len;
+        [n.x, n.y, n.z]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +259,11 @@ impl Application for MetaballsApp {
             },
         ];
 
-        // Run Marching Cubes on the CPU.
+        // Run Marching Cubes on the CPU with analytical gradient normals.
         let params = grid_params();
         let field = |p: Vec3| metaball_field(&balls, p);
-        let mesh_data = extract(&field, &params, ISO_VALUE);
+        let normal = |p: Vec3| metaball_normal(&balls, p);
+        let mesh_data = extract(&field, &params, ISO_VALUE, Some(&normal));
 
         // Update dynamic bounds for frustum culling.
         ctx.scene
