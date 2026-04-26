@@ -202,6 +202,12 @@ pub struct LightComponent {
 }
 ```
 
+Lights are extracted via `extract_lights()` and packed into a `LightsBuffer` uniform that is
+uploaded to group 0, binding 1 each frame. The `LightsBuffer` holds up to `MAX_LIGHTS` (16)
+`LightUniform` entries; each entry includes world-space position/direction, color, intensity,
+and range (for point lights). The Phong shader reads from this buffer to compute per-pixel
+Blinn-Phong lighting.
+
 ### 5.4 Why not `EffectComponent`
 
 The old design stored shader and pipeline details in scene components. That tightly
@@ -399,16 +405,20 @@ The renderer should read a narrow projection of the scene, not mutate scene inte
 ```mermaid
 flowchart LR
     Scene["SceneGraph"] --> Extract["Extract visible renderables"]
+    Scene --> ExtractLights["extract_lights()"]
     Assets["AssetStore"] --> Extract
     Extract --> DrawList["Frame draw list"]
+    ExtractLights --> LightsBuf["LightsBuffer → group 0 binding 1"]
 
     style Scene fill:#e3f2fd,stroke:#1565c0
     style Assets fill:#fff3e0,stroke:#e65100
     style Extract fill:#f3e5f5,stroke:#6a1b9a
     style DrawList fill:#c8e6c9,stroke:#2e7d32
+    style ExtractLights fill:#f3e5f5,stroke:#6a1b9a
+    style LightsBuf fill:#c8e6c9,stroke:#2e7d32
 ```
 
-The extracted data typically includes:
+The extracted data includes:
 
 ```rust
 pub struct ExtractedRenderable {
@@ -418,9 +428,18 @@ pub struct ExtractedRenderable {
     pub world_transform: Mat4,
     pub world_bound: BoundingSphere,
 }
+
+pub struct ExtractedLight {
+    pub kind: LightKind,
+    /// World-space position (relevant for Point lights).
+    pub world_position: Vec3,
+    /// World-space forward direction (-Z axis in local space).
+    pub world_direction: Vec3,
+}
 ```
 
-This is the hand-off point between `rig-scene` and `rig-render`.
+`extract_lights()` returns world-space position and direction for all light nodes. The renderer
+packs these into a `LightsBuffer` via `pack_lights_buffer()` and uploads it each frame.
 
 ---
 
