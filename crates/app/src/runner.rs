@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use rig_math::glam;
 use rig_assets::AssetStore;
 use rig_gpu::GpuContext;
 use rig_overlay::Overlay;
@@ -128,10 +129,20 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                 }
                 state.input.update(event);
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                state.input.update_mouse_position(glam::Vec2::new(
+                    position.x as f32,
+                    position.y as f32,
+                ));
+            }
+            WindowEvent::MouseInput { button, state: btn_state, .. } => {
+                state.input.update_mouse_button(*button, *btn_state);
+            }
             _ => {}
         }
         match event {
             WindowEvent::RedrawRequested => {
+                state.input.reset_mouse_delta();
                 let dt = state.timer.tick();
                 {
                     let input_snapshot = &state.input;

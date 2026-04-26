@@ -5,12 +5,14 @@ mod context;
 mod input;
 mod runner;
 mod timer;
+mod trackball;
 
 pub use camera_rig::CameraRig;
 pub use context::{OverlayUpdateContext, RenderContext, StartupContext, UpdateContext};
 pub use input::InputState;
 pub use runner::run;
 pub use timer::FrameTimer;
+pub use trackball::TrackBall;
 
 pub use rig_assets;
 pub use rig_gpu;
@@ -55,6 +57,7 @@ pub(crate) use runner::Runner;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rig_math::glam;
     use winit::{event::ElementState, keyboard::KeyCode};
     use rig_assets::AssetStore;
     use rig_math::Quat;
@@ -236,6 +239,58 @@ mod tests {
         };
         ctx.request_exit();
         assert!(exit_requested);
+    }
+
+    #[test]
+    fn mouse_position_update_accumulates_delta() {
+        let mut input = InputState::default();
+        input.update_mouse_position(glam::Vec2::new(10.0, 20.0));
+        input.update_mouse_position(glam::Vec2::new(15.0, 25.0));
+        assert!((input.mouse_delta - glam::Vec2::new(15.0, 25.0)).length() < 1e-5);
+        assert!((input.mouse_position - glam::Vec2::new(15.0, 25.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn mouse_delta_resets_each_frame() {
+        let mut input = InputState::default();
+        input.update_mouse_position(glam::Vec2::new(10.0, 20.0));
+        input.reset_mouse_delta();
+        assert!(input.mouse_delta.length() < 1e-5);
+    }
+
+    #[test]
+    fn mouse_button_pressed_and_released() {
+        use winit::event::{ElementState, MouseButton};
+        let mut input = InputState::default();
+        input.update_mouse_button(MouseButton::Left, ElementState::Pressed);
+        assert!(input.is_mouse_button_pressed(MouseButton::Left));
+        input.update_mouse_button(MouseButton::Left, ElementState::Released);
+        assert!(!input.is_mouse_button_pressed(MouseButton::Left));
+    }
+
+    #[test]
+    fn trackball_orbit_moves_camera() {
+        use rig_scene::SceneGraph;
+        let mut scene = SceneGraph::new();
+        let target = scene.create_node("target");
+        let camera = scene.create_node("camera");
+        scene.update_all_world_transforms().unwrap();
+
+        let mut tb = TrackBall::new(target, 5.0);
+        let mut input = InputState::default();
+        input.update_mouse_button(
+            winit::event::MouseButton::Left,
+            winit::event::ElementState::Pressed,
+        );
+        input.update_mouse_position(glam::Vec2::new(0.0, 0.0));
+        input.update_mouse_position(glam::Vec2::new(100.0, 0.0));
+
+        tb.update(&input, &mut scene, camera, 0.016).unwrap();
+        scene.update_all_world_transforms().unwrap();
+
+        let cam_world = scene.world_transform(camera).unwrap();
+        let cam_pos = cam_world.transform_point3(glam::Vec3::ZERO);
+        assert!(cam_pos.length() > 0.1);
     }
 
     struct TestApp;
