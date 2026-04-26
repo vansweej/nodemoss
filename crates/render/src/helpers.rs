@@ -31,6 +31,35 @@ pub struct MaterialUniforms {
     pub _pad: [u32; 3],
 }
 
+/// Maximum number of simultaneous lights supported by the Phong shader.
+/// Change this constant (and the matching WGSL `const MAX_LIGHTS`) to adjust.
+pub const MAX_LIGHTS: usize = 16;
+
+/// GPU-side representation of a single light.
+///
+/// `position.w` encodes light type: `0.0` = directional, `1.0` = point.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Default)]
+pub struct LightUniform {
+    /// xyz = world position (point lights) or ignored (directional). w = type (0=dir, 1=point).
+    pub position: [f32; 4],
+    /// xyz = world direction (normalized). w = padding.
+    pub direction: [f32; 4],
+    /// rgb = color. a = intensity.
+    pub color_intensity: [f32; 4],
+    /// x = range (point lights). yzw = padding.
+    pub range_pad: [f32; 4],
+}
+
+/// Packed array of lights uploaded to the GPU each frame.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Default)]
+pub struct LightsBuffer {
+    pub lights: [LightUniform; MAX_LIGHTS],
+    /// x = active light count. yzw = padding.
+    pub count: [u32; 4],
+}
+
 // ── Embedded shaders ─────────────────────────────────────────────────────────
 
 /// Vertex-color triangle shader — 3-group layout (group 0 = frame, 1 = material, 2 = object).
@@ -53,7 +82,19 @@ struct ObjectUniforms {
     world: mat4x4<f32>,
 }
 
+struct LightUniform {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range_pad: vec4<f32>,
+}
+struct LightsBuffer {
+    lights: array<LightUniform, 16>,
+    count: vec4<u32>,
+}
+
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> lights: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
 @group(1) @binding(1) var t_diffuse: texture_2d<f32>;
 @group(1) @binding(2) var s_diffuse: sampler;
@@ -107,7 +148,19 @@ struct ObjectUniforms {
     world: mat4x4<f32>,
 }
 
+struct LightUniform {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range_pad: vec4<f32>,
+}
+struct LightsBuffer {
+    lights: array<LightUniform, 16>,
+    count: vec4<u32>,
+}
+
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> lights: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
 @group(1) @binding(1) var t_diffuse: texture_2d<f32>;
 @group(1) @binding(2) var s_diffuse: sampler;
@@ -162,7 +215,19 @@ struct ObjectUniforms {
     world: mat4x4<f32>,
 }
 
+struct LightUniform {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range_pad: vec4<f32>,
+}
+struct LightsBuffer {
+    lights: array<LightUniform, 16>,
+    count: vec4<u32>,
+}
+
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> lights: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
 @group(1) @binding(1) var t_diffuse: texture_2d<f32>;
 @group(1) @binding(2) var s_diffuse: sampler;
@@ -192,6 +257,116 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
     return tex_color * material.base_color;
+}
+"#;
+
+/// Blinn-Phong shading shader — 3-group layout, supports up to 16 lights from group 0 binding 1.
+///
+/// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
+/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+pub const PHONG_SHADER: &str = r#"
+const MAX_LIGHTS: u32 = 16u;
+
+struct FrameUniforms {
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+}
+struct LightUniform {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range_pad: vec4<f32>,
+}
+struct LightsBuffer {
+    lights: array<LightUniform, 16>,
+    count: vec4<u32>,
+}
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    flags: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+struct ObjectUniforms {
+    world: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> lights_data: LightsBuffer;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
+@group(1) @binding(2) var s_diffuse: sampler;
+@group(2) @binding(0) var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+}
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) world_normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let world_pos = object.world * vec4<f32>(in.position, 1.0);
+    let normal_mat = mat3x3<f32>(
+        object.world[0].xyz,
+        object.world[1].xyz,
+        object.world[2].xyz,
+    );
+    out.world_position = world_pos.xyz;
+    out.world_normal = normalize(normal_mat * in.normal);
+    out.clip_position = frame.proj * frame.view * world_pos;
+    out.uv = in.uv;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let N = normalize(in.world_normal);
+    let V = normalize(frame.camera_pos.xyz - in.world_position);
+    let base = material.base_color.rgb;
+
+    var color = base * 0.05; // ambient
+
+    let n_lights = min(lights_data.count.x, MAX_LIGHTS);
+    for (var i = 0u; i < n_lights; i++) {
+        let light = lights_data.lights[i];
+        var L: vec3<f32>;
+        var attenuation = 1.0;
+
+        if light.position.w < 0.5 {
+            // Directional
+            L = normalize(-light.direction.xyz);
+        } else {
+            // Point
+            let to_light = light.position.xyz - in.world_position;
+            let dist = length(to_light);
+            L = normalize(to_light);
+            let range = light.range_pad.x;
+            attenuation = clamp(1.0 - dist / range, 0.0, 1.0);
+        }
+
+        let light_color = light.color_intensity.rgb * light.color_intensity.a * attenuation;
+
+        // Diffuse
+        let diff = max(dot(N, L), 0.0);
+        color += base * light_color * diff;
+
+        // Specular (Blinn-Phong half-vector)
+        let H = normalize(L + V);
+        let spec = pow(max(dot(N, H), 0.0), 32.0);
+        color += light_color * spec * 0.3;
+    }
+
+    return vec4<f32>(color, material.base_color.a);
 }
 "#;
 

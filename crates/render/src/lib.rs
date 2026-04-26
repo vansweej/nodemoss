@@ -8,10 +8,10 @@ mod renderer;
 
 pub use helpers::{
     create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
-    DEPTH_FORMAT, NORMAL_COLOR_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
+    DEPTH_FORMAT, NORMAL_COLOR_SHADER, PHONG_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
 };
-pub use helpers::{FrameUniforms, MaterialUniforms};
-pub use renderer::Renderer;
+pub use helpers::{FrameUniforms, LightUniform, LightsBuffer, MaterialUniforms, MAX_LIGHTS};
+pub use renderer::{pack_lights_buffer, Renderer};
 
 pub use rig_gpu;
 pub use wgpu;
@@ -377,6 +377,69 @@ mod tests {
         assert!(!err.to_string().is_empty());
         let err = RenderError::Asset("test".into());
         assert!(err.to_string().contains("test"));
+    }
+
+    // ── Light uniform tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn lights_buffer_size_is_correct() {
+        use std::mem::size_of;
+        // LightUniform: 4 * 4 * 4 = 64 bytes
+        assert_eq!(size_of::<LightUniform>(), 64);
+        // LightsBuffer: 16 * 64 + 16 = 1040 bytes
+        assert_eq!(size_of::<LightsBuffer>(), MAX_LIGHTS * 64 + 16);
+    }
+
+    #[test]
+    fn lights_buffer_packing_directional() {
+        use rig_math::Vec3;
+        use rig_scene::{ExtractedLight, LightKind};
+
+        let light = ExtractedLight {
+            kind: LightKind::Directional { color: Vec3::new(1.0, 1.0, 1.0), intensity: 1.0 },
+            world_position: Vec3::ZERO,
+            world_direction: Vec3::new(0.0, -1.0, 0.0),
+        };
+        let buf = pack_lights_buffer(&[light]);
+        assert_eq!(buf.count[0], 1);
+        assert_eq!(buf.lights[0].position[3], 0.0); // directional: w=0
+    }
+
+    #[test]
+    fn lights_buffer_packing_point() {
+        use rig_math::Vec3;
+        use rig_scene::{ExtractedLight, LightKind};
+
+        let light = ExtractedLight {
+            kind: LightKind::Point { color: Vec3::new(1.0, 0.0, 0.0), intensity: 2.0, range: 10.0 },
+            world_position: Vec3::new(1.0, 2.0, 3.0),
+            world_direction: Vec3::new(0.0, -1.0, 0.0),
+        };
+        let buf = pack_lights_buffer(&[light]);
+        assert_eq!(buf.count[0], 1);
+        assert_eq!(buf.lights[0].position[3], 1.0); // point: w=1
+        assert_eq!(buf.lights[0].range_pad[0], 10.0);
+    }
+
+    #[test]
+    fn lights_buffer_capped_at_max_lights() {
+        use rig_math::Vec3;
+        use rig_scene::{ExtractedLight, LightKind};
+
+        let light = ExtractedLight {
+            kind: LightKind::Directional { color: Vec3::ONE, intensity: 1.0 },
+            world_position: Vec3::ZERO,
+            world_direction: Vec3::new(0.0, -1.0, 0.0),
+        };
+        let many: Vec<_> = (0..20).map(|_| light).collect();
+        let buf = pack_lights_buffer(&many);
+        assert_eq!(buf.count[0], MAX_LIGHTS as u32);
+    }
+
+    #[test]
+    fn lights_buffer_empty_has_zero_count() {
+        let buf = pack_lights_buffer(&[]);
+        assert_eq!(buf.count[0], 0);
     }
 
     #[test]

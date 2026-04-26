@@ -6,13 +6,13 @@ use std::num::NonZeroU64;
 use rig_assets::{AssetStore, ShaderHandle};
 use rig_gpu::{Frame, GpuContext};
 use rig_math::Mat4;
-use rig_scene::{ExtractedCamera, ExtractedRenderable, NodeId, SceneGraph};
+use rig_scene::{ExtractedCamera, ExtractedLight, ExtractedRenderable, LightKind, NodeId, SceneGraph};
 
 use crate::cache::ImmutableResourceCache;
 use crate::frame::{FrameResources, ObjectUniforms};
 use crate::helpers::{
     camera_projection_view, create_depth_texture, create_pipeline, decompose_pose, FrameUniforms,
-    MaterialUniforms, DEPTH_FORMAT,
+    LightsBuffer, MaterialUniforms, MAX_LIGHTS, DEPTH_FORMAT,
 };
 use crate::pipeline::PipelineKey;
 use crate::{RenderError, RenderTarget, RenderTargetDescriptor, Result};
@@ -27,6 +27,7 @@ pub struct Renderer {
     pub(crate) object_bind_group_layout: wgpu::BindGroupLayout,
     // Frame-level resources
     pub(crate) frame_uniform_buffer: wgpu::Buffer,
+    pub(crate) lights_buffer: wgpu::Buffer,
     // Fallback (untextured) material resources — kept alive to back the bind group
     #[allow(dead_code)]
     pub(crate) fallback_texture: wgpu::Texture,
@@ -49,19 +50,31 @@ impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
         let device = &gpu.device;
 
-        // ── Group 0: frame uniforms (view/proj/camera_pos) ───────────────────
+        // ── Group 0: frame uniforms (view/proj/camera_pos) + lights ──────────
         let frame_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame bind group layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<FrameUniforms>() as u64),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(std::mem::size_of::<FrameUniforms>() as u64),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(std::mem::size_of::<LightsBuffer>() as u64),
+                    },
+                    count: None,
+                },
+            ],
         });
 
         // ── Group 1: material uniforms + texture + sampler ───────────────────
@@ -116,6 +129,14 @@ impl Renderer {
         let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame uniform buffer"),
             size: std::mem::size_of::<FrameUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // ── Lights buffer ─────────────────────────────────────────────────────
+        let lights_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lights uniform buffer"),
+            size: std::mem::size_of::<LightsBuffer>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -222,6 +243,7 @@ impl Renderer {
             material_bind_group_layout,
             object_bind_group_layout,
             frame_uniform_buffer,
+            lights_buffer,
             fallback_texture,
             fallback_texture_view,
             fallback_sampler,
@@ -260,7 +282,8 @@ impl Renderer {
         } else {
             scene.extract_renderables()
         };
-        self.render_draw_list(gpu, frame, assets, extracted_camera, &draw_list)
+        let lights = scene.extract_lights();
+        self.render_draw_list(gpu, frame, assets, extracted_camera, &draw_list, &lights)
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -271,6 +294,7 @@ impl Renderer {
         assets: &AssetStore,
         camera: Option<ExtractedCamera>,
         draw_list: &[ExtractedRenderable],
+        lights: &[ExtractedLight],
     ) -> Result<()> {
         let Some(camera) = camera else {
             return Ok(());
@@ -293,16 +317,26 @@ impl Renderer {
         };
         gpu.queue.write_buffer(&self.frame_uniform_buffer, 0, bytemuck::bytes_of(&frame_uniforms));
 
+        // Pack and upload lights
+        let lights_buf = pack_lights_buffer(lights);
+        gpu.queue.write_buffer(&self.lights_buffer, 0, bytemuck::bytes_of(&lights_buf));
+
         let sorted_indices = self.prepare_draw_order(gpu, assets, draw_list, pv);
 
-        // Create frame bind group (group 0) — references the frame uniform buffer
+        // Create frame bind group (group 0) — references the frame uniform buffer and lights
         let frame_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame bind group"),
             layout: &self.frame_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.frame_uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.frame_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.lights_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         self.record_scene_pass(
@@ -544,15 +578,26 @@ impl Renderer {
 
         let planes = rig_scene::frustum_planes_from_projection_view(pv);
         let draw_list = scene.extract_renderables_culled(&planes);
+        let lights = scene.extract_lights();
         let sorted_indices = self.prepare_draw_order(gpu, assets, &draw_list, pv);
+
+        // Pack and upload lights
+        let lights_buf = pack_lights_buffer(&lights);
+        gpu.queue.write_buffer(&self.lights_buffer, 0, bytemuck::bytes_of(&lights_buf));
 
         let frame_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame bind group offscreen"),
             layout: &self.frame_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.frame_uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.frame_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.lights_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rig offscreen encoder") });
@@ -592,4 +637,39 @@ impl Renderer {
         pass.draw(0..3, 0..1);
         Ok(())
     }
+}
+
+/// Pack a slice of extracted lights into a [`LightsBuffer`] for GPU upload.
+///
+/// At most [`MAX_LIGHTS`] lights are packed; extra lights are silently ignored.
+pub fn pack_lights_buffer(lights: &[ExtractedLight]) -> LightsBuffer {
+    let mut buf = LightsBuffer::default();
+    let count = lights.len().min(MAX_LIGHTS);
+    buf.count[0] = count as u32;
+    for (i, light) in lights.iter().take(MAX_LIGHTS).enumerate() {
+        match light.kind {
+            LightKind::Directional { color, intensity } => {
+                buf.lights[i].color_intensity = [color.x, color.y, color.z, intensity];
+                buf.lights[i].range_pad = [0.0; 4];
+                buf.lights[i].position = [0.0, 0.0, 0.0, 0.0];
+            }
+            LightKind::Point { color, intensity, range } => {
+                buf.lights[i].color_intensity = [color.x, color.y, color.z, intensity];
+                buf.lights[i].range_pad = [range, 0.0, 0.0, 0.0];
+                buf.lights[i].position = [
+                    light.world_position.x,
+                    light.world_position.y,
+                    light.world_position.z,
+                    1.0,
+                ];
+            }
+        }
+        buf.lights[i].direction = [
+            light.world_direction.x,
+            light.world_direction.y,
+            light.world_direction.z,
+            0.0,
+        ];
+    }
+    buf
 }

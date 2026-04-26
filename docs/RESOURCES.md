@@ -401,12 +401,13 @@ The renderer uses a fixed 3-group layout. Every pipeline built by `rig-render` u
 | Group | Binding | Type               | Stage          | Dynamic offset | Contents                          |
 |-------|---------|--------------------|----------------|----------------|-----------------------------------|
 | 0     | 0       | uniform buffer     | vertex+fragment | no             | `FrameUniforms` (view, proj, cam_pos) |
+| 0     | 1       | uniform buffer     | vertex+fragment | no             | `LightsBuffer` (packed from `scene.extract_lights()` each frame) |
 | 1     | 0       | uniform buffer     | fragment       | no             | `MaterialUniforms` (base_color, flags) |
 | 1     | 1       | texture_2d<f32>    | fragment       | no             | diffuse texture (or 1×1 white fallback) |
 | 1     | 2       | sampler (filtering)| fragment       | no             | diffuse sampler (or default linear fallback) |
 | 2     | 0       | uniform buffer     | vertex         | **yes**        | `ObjectUniforms` (world matrix)   |
 
-**Group 0** (frame) is written once per frame via `queue.write_buffer` into `Renderer::frame_uniform_buffer`.
+**Group 0** (frame) is written once per frame via `queue.write_buffer`. Binding 0 holds `FrameUniforms` in `Renderer::frame_uniform_buffer`. Binding 1 holds `LightsBuffer` in `Renderer::lights_buffer`, packed from `scene.extract_lights()` each frame.
 
 **Group 1** (material) is the fallback bind group (1×1 white texture) for untextured materials. For materials with textures, a per-draw bind group is created using cached GPU resources from `ImmutableResourceCache`.
 

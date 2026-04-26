@@ -142,6 +142,7 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
    - Frustum culling: `extract_renderables_culled` wired as default render path ✓
 4. **Overlay system** — `rig-gpu` crate, `rig-overlay` crate (glyphon), FPS counters in all examples, F3 toggle ✓
 5. **Texture support** — 3-group bind layout (frame/material/object), GPU texture/sampler cache, `TEXTURED_SHADER`, `textured_mesh` example ✓
+6. **Lights + Phong shading** — `LightUniform`/`LightsBuffer` types, group 0 binding 1 (lights buffer), `pack_lights_buffer()`, `PHONG_SHADER` (Blinn-Phong), `lit_scene` example ✓
 
 ## Documentation
 

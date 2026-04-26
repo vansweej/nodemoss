@@ -592,7 +592,7 @@ Add incrementally:
   (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron)
 - offscreen passes ✓
 - frustum culling ✓
-- lights and material models
+- lights and material models ✓ (Round 7: LightUniform/LightsBuffer, group 0 binding 1, PHONG_SHADER, lit_scene example)
 - texture support ✓ (Round 6: GPU cache, TEXTURED_SHADER, textured_mesh example)
 - physics integration later
 
