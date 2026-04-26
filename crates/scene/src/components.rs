@@ -3,9 +3,9 @@
 use rig_assets::{AssetStore, MaterialHandle, MeshHandle};
 use rig_math::{BoundingSphere, Mat4, Projection, Transform, Vec3, Vec4};
 
+use crate::SceneGraph;
 use crate::extraction::{ExtractedCamera, ExtractedLight, ExtractedRenderable};
 use crate::node::{NodeId, Result, SceneError, VisibilityMode};
-use crate::SceneGraph;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Renderable {
@@ -183,7 +183,10 @@ impl SceneGraph {
             .collect()
     }
 
-    pub fn extract_renderables_culled(&self, frustum_planes: &[Vec4; 6]) -> Vec<ExtractedRenderable> {
+    pub fn extract_renderables_culled(
+        &self,
+        frustum_planes: &[Vec4; 6],
+    ) -> Vec<ExtractedRenderable> {
         self.renderables
             .iter()
             .filter_map(|(&node, &renderable)| {

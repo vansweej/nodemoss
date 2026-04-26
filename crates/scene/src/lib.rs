@@ -1,15 +1,15 @@
 //! Scene graph and world model for the rig framework.
 
-mod node;
-mod graph;
 mod components;
 mod extraction;
+mod graph;
+mod node;
 mod traversal;
 
-pub use node::*;
-pub use graph::*;
 pub use components::*;
 pub use extraction::*;
+pub use graph::*;
+pub use node::*;
 // Re-export asset handle types for use in the public API
 pub use rig_assets::{MaterialHandle, MeshHandle};
 
@@ -81,7 +81,10 @@ mod tests {
         let first = scene.create_node("first");
         scene.destroy_node(first).unwrap();
         let second = scene.create_node("second");
-        assert!(matches!(scene.node_name(first), Err(SceneError::InvalidNode)));
+        assert!(matches!(
+            scene.node_name(first),
+            Err(SceneError::InvalidNode)
+        ));
         assert_eq!(scene.node_name(second).unwrap(), "second");
         assert_ne!(first, second);
     }
@@ -115,7 +118,10 @@ mod tests {
         let child = scene.create_node("child");
         scene.attach_child(grandparent, parent).unwrap();
         scene.attach_child(parent, child).unwrap();
-        assert!(matches!(scene.attach_child(child, grandparent), Err(SceneError::CycleDetected)));
+        assert!(matches!(
+            scene.attach_child(child, grandparent),
+            Err(SceneError::CycleDetected)
+        ));
         assert_eq!(scene.children(grandparent).unwrap(), vec![parent]);
         assert_eq!(scene.children(parent).unwrap(), vec![child]);
         assert!(scene.children(child).unwrap().is_empty());
@@ -127,8 +133,14 @@ mod tests {
         let real_parent = scene.create_node("real_parent");
         let child = scene.create_node("child");
         scene.attach_child(real_parent, child).unwrap();
-        let invalid = NodeId { index: 99, generation: 0 };
-        assert!(matches!(scene.attach_child(invalid, child), Err(SceneError::InvalidNode)));
+        let invalid = NodeId {
+            index: 99,
+            generation: 0,
+        };
+        assert!(matches!(
+            scene.attach_child(invalid, child),
+            Err(SceneError::InvalidNode)
+        ));
         assert_eq!(scene.children(real_parent).unwrap(), vec![child]);
     }
 
@@ -148,7 +160,10 @@ mod tests {
     fn attach_child_rejects_self_parenting() {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("node");
-        assert!(matches!(scene.attach_child(node, node), Err(SceneError::SelfParent)));
+        assert!(matches!(
+            scene.attach_child(node, node),
+            Err(SceneError::SelfParent)
+        ));
     }
 
     #[test]
@@ -164,15 +179,39 @@ mod tests {
     #[test]
     fn set_renderable_camera_and_light_require_valid_node() {
         let mut scene = SceneGraph::new();
-        let invalid = NodeId { index: 99, generation: 0 };
+        let invalid = NodeId {
+            index: 99,
+            generation: 0,
+        };
         let (_, mesh, material) = sample_assets();
-        assert!(matches!(scene.set_renderable(invalid, Renderable { mesh, material }), Err(SceneError::InvalidNode)));
         assert!(matches!(
-            scene.set_camera(invalid, CameraComponent { projection: rig_math::Projection::Perspective { fov_y_radians: 1.0, near: 0.1, far: 10.0 } }),
+            scene.set_renderable(invalid, Renderable { mesh, material }),
             Err(SceneError::InvalidNode)
         ));
         assert!(matches!(
-            scene.set_light(invalid, LightComponent { kind: LightKind::Point { color: Vec3::ONE, intensity: 1.0, range: 5.0 } }),
+            scene.set_camera(
+                invalid,
+                CameraComponent {
+                    projection: rig_math::Projection::Perspective {
+                        fov_y_radians: 1.0,
+                        near: 0.1,
+                        far: 10.0
+                    }
+                }
+            ),
+            Err(SceneError::InvalidNode)
+        ));
+        assert!(matches!(
+            scene.set_light(
+                invalid,
+                LightComponent {
+                    kind: LightKind::Point {
+                        color: Vec3::ONE,
+                        intensity: 1.0,
+                        range: 5.0
+                    }
+                }
+            ),
             Err(SceneError::InvalidNode)
         ));
     }
@@ -182,11 +221,22 @@ mod tests {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("triangle");
         let (_, mesh, material) = sample_assets();
-        let camera_component = CameraComponent { projection: rig_math::Projection::Perspective { fov_y_radians: 1.0, near: 0.1, far: 10.0 } };
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        let camera_component = CameraComponent {
+            projection: rig_math::Projection::Perspective {
+                fov_y_radians: 1.0,
+                near: 0.1,
+                far: 10.0,
+            },
+        };
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         scene.set_camera(node, camera_component).unwrap();
         assert_eq!(scene.node_name(node).unwrap(), "triangle");
-        assert_eq!(scene.renderable(node).unwrap().copied(), Some(Renderable { mesh, material }));
+        assert_eq!(
+            scene.renderable(node).unwrap().copied(),
+            Some(Renderable { mesh, material })
+        );
         assert_eq!(scene.camera(node).unwrap().copied(), Some(camera_component));
     }
 
@@ -196,10 +246,34 @@ mod tests {
         let root = scene.create_node("root");
         let child = scene.create_node("child");
         scene.attach_child(root, child).unwrap();
-        scene.set_local_transform(root, rig_math::Transform { translation: Vec3::new(1.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
-        scene.set_local_transform(child, rig_math::Transform { translation: Vec3::new(0.0, 2.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene
+            .set_local_transform(
+                root,
+                rig_math::Transform {
+                    translation: Vec3::new(1.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                child,
+                rig_math::Transform {
+                    translation: Vec3::new(0.0, 2.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
         scene.update_world_transforms(root).unwrap();
-        approx_eq_vec3(scene.world_transform(child).unwrap().transform_point3(Vec3::ZERO), Vec3::new(1.0, 2.0, 0.0));
+        approx_eq_vec3(
+            scene
+                .world_transform(child)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 2.0, 0.0),
+        );
     }
 
     #[test]
@@ -207,11 +281,41 @@ mod tests {
         let mut scene = SceneGraph::new();
         let left = scene.create_node("left");
         let right = scene.create_node("right");
-        scene.set_local_transform(left, rig_math::Transform { translation: Vec3::new(1.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
-        scene.set_local_transform(right, rig_math::Transform { translation: Vec3::new(0.0, 1.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene
+            .set_local_transform(
+                left,
+                rig_math::Transform {
+                    translation: Vec3::new(1.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                right,
+                rig_math::Transform {
+                    translation: Vec3::new(0.0, 1.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
-        approx_eq_vec3(scene.world_transform(left).unwrap().transform_point3(Vec3::ZERO), Vec3::new(1.0, 0.0, 0.0));
-        approx_eq_vec3(scene.world_transform(right).unwrap().transform_point3(Vec3::ZERO), Vec3::new(0.0, 1.0, 0.0));
+        approx_eq_vec3(
+            scene
+                .world_transform(left)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        approx_eq_vec3(
+            scene
+                .world_transform(right)
+                .unwrap()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
     }
 
     #[test]
@@ -221,8 +325,19 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
-        scene.set_local_transform(child, rig_math::Transform { translation: Vec3::new(3.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene
+            .set_renderable(child, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_local_transform(
+                child,
+                rig_math::Transform {
+                    translation: Vec3::new(3.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_world_bounds(parent, &assets).unwrap();
         let extracted = scene.extract_renderables();
@@ -237,8 +352,13 @@ mod tests {
         let (_source_assets, mesh, material) = sample_assets();
         let assets = rig_assets::AssetStore::new();
         let node = scene.create_node("node");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
-        assert!(matches!(scene.update_world_bounds(node, &assets), Err(SceneError::MissingMeshAsset)));
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
+        assert!(matches!(
+            scene.update_world_bounds(node, &assets),
+            Err(SceneError::MissingMeshAsset)
+        ));
     }
 
     #[test]
@@ -246,7 +366,9 @@ mod tests {
         let mut scene = SceneGraph::new();
         let (_, mesh, material) = sample_assets();
         let node = scene.create_node("hidden");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         scene.node_mut(node).unwrap().visibility = VisibilityMode::Hidden;
         let extracted = scene.extract_renderables();
         assert!(extracted.is_empty());
@@ -269,7 +391,11 @@ mod tests {
     }
 
     fn perspective() -> rig_math::Projection {
-        rig_math::Projection::Perspective { fov_y_radians: 1.0, near: 0.1, far: 100.0 }
+        rig_math::Projection::Perspective {
+            fov_y_radians: 1.0,
+            near: 0.1,
+            far: 100.0,
+        }
     }
 
     #[test]
@@ -278,8 +404,22 @@ mod tests {
         let a = scene.create_node("a");
         let b = scene.create_node("b");
         let c = scene.create_node("c");
-        scene.set_camera(a, CameraComponent { projection: perspective() }).unwrap();
-        scene.set_camera(b, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                a,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
+        scene
+            .set_camera(
+                b,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         let mut nodes = scene.camera_nodes();
         nodes.sort_by_key(|n| n.index);
         assert_eq!(nodes.len(), 2);
@@ -298,7 +438,14 @@ mod tests {
     fn first_camera_returns_some_for_scene_with_camera() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("cam");
-        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                cam,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         assert!(scene.first_camera().is_some());
     }
 
@@ -307,8 +454,22 @@ mod tests {
         let mut scene = SceneGraph::new();
         let main = scene.create_node("main");
         let debug = scene.create_node("debug");
-        scene.set_camera(main, CameraComponent { projection: perspective() }).unwrap();
-        scene.set_camera(debug, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                main,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
+        scene
+            .set_camera(
+                debug,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         assert_eq!(scene.camera_with_name("main"), Some(main));
         assert_eq!(scene.camera_with_name("debug"), Some(debug));
     }
@@ -324,7 +485,14 @@ mod tests {
     fn camera_with_name_returns_none_for_missing_name() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("main");
-        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                cam,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         assert!(scene.camera_with_name("other").is_none());
     }
 
@@ -334,37 +502,84 @@ mod tests {
         let parent = scene.create_node("parent");
         let cam_node = scene.create_node("cam");
         scene.attach_child(parent, cam_node).unwrap();
-        scene.set_local_transform(parent, rig_math::Transform { translation: Vec3::new(1.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
-        scene.set_local_transform(cam_node, rig_math::Transform { translation: Vec3::new(0.0, 2.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
-        scene.set_camera(cam_node, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_local_transform(
+                parent,
+                rig_math::Transform {
+                    translation: Vec3::new(1.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_local_transform(
+                cam_node,
+                rig_math::Transform {
+                    translation: Vec3::new(0.0, 2.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_camera(
+                cam_node,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         scene.update_world_transforms(parent).unwrap();
         let extracted = scene.extract_active_camera(cam_node).unwrap();
         assert_eq!(extracted.node, cam_node);
         assert_eq!(extracted.projection, perspective());
-        approx_eq_vec3(extracted.world_transform.transform_point3(Vec3::ZERO), Vec3::new(1.0, 2.0, 0.0));
+        approx_eq_vec3(
+            extracted.world_transform.transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 2.0, 0.0),
+        );
     }
 
     #[test]
     fn extract_active_camera_errors_for_non_camera_node() {
         let mut scene = SceneGraph::new();
         let node = scene.create_node("node");
-        assert!(matches!(scene.extract_active_camera(node), Err(SceneError::NotACamera)));
+        assert!(matches!(
+            scene.extract_active_camera(node),
+            Err(SceneError::NotACamera)
+        ));
     }
 
     #[test]
     fn extract_active_camera_errors_for_invalid_node() {
         let scene = SceneGraph::new();
-        let invalid = NodeId { index: 99, generation: 0 };
-        assert!(matches!(scene.extract_active_camera(invalid), Err(SceneError::InvalidNode)));
+        let invalid = NodeId {
+            index: 99,
+            generation: 0,
+        };
+        assert!(matches!(
+            scene.extract_active_camera(invalid),
+            Err(SceneError::InvalidNode)
+        ));
     }
 
     #[test]
     fn extract_active_camera_returns_invalid_node_for_stale_handle() {
         let mut scene = SceneGraph::new();
         let cam = scene.create_node("cam");
-        scene.set_camera(cam, CameraComponent { projection: perspective() }).unwrap();
+        scene
+            .set_camera(
+                cam,
+                CameraComponent {
+                    projection: perspective(),
+                },
+            )
+            .unwrap();
         scene.destroy_node(cam).unwrap();
-        assert!(matches!(scene.extract_active_camera(cam), Err(SceneError::InvalidNode)));
+        assert!(matches!(
+            scene.extract_active_camera(cam),
+            Err(SceneError::InvalidNode)
+        ));
     }
 
     #[test]
@@ -377,8 +592,27 @@ mod tests {
     fn extract_lights_computes_world_direction_for_directional_light() {
         let mut scene = SceneGraph::new();
         let light_node = scene.create_node("sun");
-        scene.set_local_transform(light_node, rig_math::Transform { translation: Vec3::ZERO, rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), scale: Vec3::ONE }).unwrap();
-        scene.set_light(light_node, LightComponent { kind: LightKind::Directional { color: Vec3::ONE, intensity: 1.0 } }).unwrap();
+        scene
+            .set_local_transform(
+                light_node,
+                rig_math::Transform {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_light(
+                light_node,
+                LightComponent {
+                    kind: LightKind::Directional {
+                        color: Vec3::ONE,
+                        intensity: 1.0,
+                    },
+                },
+            )
+            .unwrap();
         scene.update_world_transforms(light_node).unwrap();
         let lights = scene.extract_lights();
         assert_eq!(lights.len(), 1);
@@ -389,8 +623,28 @@ mod tests {
     fn extract_lights_includes_world_position_for_point_light() {
         let mut scene = SceneGraph::new();
         let light_node = scene.create_node("lamp");
-        scene.set_local_transform(light_node, rig_math::Transform { translation: Vec3::new(3.0, 5.0, -2.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
-        scene.set_light(light_node, LightComponent { kind: LightKind::Point { color: Vec3::ONE, intensity: 2.0, range: 10.0 } }).unwrap();
+        scene
+            .set_local_transform(
+                light_node,
+                rig_math::Transform {
+                    translation: Vec3::new(3.0, 5.0, -2.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_light(
+                light_node,
+                LightComponent {
+                    kind: LightKind::Point {
+                        color: Vec3::ONE,
+                        intensity: 2.0,
+                        range: 10.0,
+                    },
+                },
+            )
+            .unwrap();
         scene.update_world_transforms(light_node).unwrap();
         let lights = scene.extract_lights();
         assert_eq!(lights.len(), 1);
@@ -402,7 +656,17 @@ mod tests {
         let mut scene = SceneGraph::new();
         for i in 0..3 {
             let node = scene.create_node(format!("light_{i}"));
-            scene.set_light(node, LightComponent { kind: LightKind::Directional { color: Vec3::ONE, intensity: 1.0 } }).unwrap();
+            scene
+                .set_light(
+                    node,
+                    LightComponent {
+                        kind: LightKind::Directional {
+                            color: Vec3::ONE,
+                            intensity: 1.0,
+                        },
+                    },
+                )
+                .unwrap();
             scene.update_world_transforms(node).unwrap();
         }
         assert_eq!(scene.extract_lights().len(), 3);
@@ -424,10 +688,23 @@ mod tests {
         let mut scene = SceneGraph::new();
         let (assets, mesh, material) = sample_assets();
         let inside = scene.create_node("inside");
-        scene.set_renderable(inside, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(inside, Renderable { mesh, material })
+            .unwrap();
         let outside = scene.create_node("outside");
-        scene.set_renderable(outside, Renderable { mesh, material }).unwrap();
-        scene.set_local_transform(outside, rig_math::Transform { translation: Vec3::new(50.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
+        scene
+            .set_renderable(outside, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_local_transform(
+                outside,
+                rig_math::Transform {
+                    translation: Vec3::new(50.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
         let planes = box_frustum(10.0);
@@ -441,9 +718,22 @@ mod tests {
         let mut scene = SceneGraph::new();
         let (assets, mesh, material) = sample_assets();
         let node = scene.create_node("always");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
-        scene.set_local_transform(node, rig_math::Transform { translation: Vec3::new(50.0, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::ONE }).unwrap();
-        scene.set_visibility(node, VisibilityMode::AlwaysVisible).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_local_transform(
+                node,
+                rig_math::Transform {
+                    translation: Vec3::new(50.0, 0.0, 0.0),
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_visibility(node, VisibilityMode::AlwaysVisible)
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
         let planes = box_frustum(10.0);
@@ -456,7 +746,9 @@ mod tests {
         let mut scene = SceneGraph::new();
         let (assets, mesh, material) = sample_assets();
         let node = scene.create_node("hidden");
-        scene.set_renderable(node, Renderable { mesh, material }).unwrap();
+        scene
+            .set_renderable(node, Renderable { mesh, material })
+            .unwrap();
         scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
@@ -472,8 +764,13 @@ mod tests {
         assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::Inherit);
         scene.set_visibility(node, VisibilityMode::Hidden).unwrap();
         assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::Hidden);
-        scene.set_visibility(node, VisibilityMode::AlwaysVisible).unwrap();
-        assert_eq!(scene.visibility(node).unwrap(), VisibilityMode::AlwaysVisible);
+        scene
+            .set_visibility(node, VisibilityMode::AlwaysVisible)
+            .unwrap();
+        assert_eq!(
+            scene.visibility(node).unwrap(),
+            VisibilityMode::AlwaysVisible
+        );
     }
 
     #[test]
@@ -491,7 +788,10 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        assert_eq!(scene.effective_visibility(child).unwrap(), VisibilityMode::Inherit);
+        assert_eq!(
+            scene.effective_visibility(child).unwrap(),
+            VisibilityMode::Inherit
+        );
     }
 
     #[test]
@@ -500,8 +800,13 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
-        assert_eq!(scene.effective_visibility(child).unwrap(), VisibilityMode::Hidden);
+        scene
+            .set_visibility(parent, VisibilityMode::Hidden)
+            .unwrap();
+        assert_eq!(
+            scene.effective_visibility(child).unwrap(),
+            VisibilityMode::Hidden
+        );
     }
 
     #[test]
@@ -511,8 +816,12 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
-        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
+        scene
+            .set_renderable(child, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_visibility(parent, VisibilityMode::Hidden)
+            .unwrap();
         let extracted = scene.extract_renderables();
         assert!(extracted.is_empty(), "child should be hidden via parent");
     }
@@ -524,14 +833,23 @@ mod tests {
         let parent = scene.create_node("parent");
         let child = scene.create_node("child");
         scene.attach_child(parent, child).unwrap();
-        scene.set_renderable(child, Renderable { mesh, material }).unwrap();
-        scene.set_visibility(parent, VisibilityMode::Hidden).unwrap();
-        scene.set_visibility(child, VisibilityMode::AlwaysVisible).unwrap();
+        scene
+            .set_renderable(child, Renderable { mesh, material })
+            .unwrap();
+        scene
+            .set_visibility(parent, VisibilityMode::Hidden)
+            .unwrap();
+        scene
+            .set_visibility(child, VisibilityMode::AlwaysVisible)
+            .unwrap();
         scene.update_all_world_transforms().unwrap();
         scene.update_all_world_bounds(&assets).unwrap();
         let planes = box_frustum(10.0);
         let extracted = scene.extract_renderables_culled(&planes);
-        assert!(extracted.is_empty(), "AlwaysVisible child should still be hidden when parent is Hidden");
+        assert!(
+            extracted.is_empty(),
+            "AlwaysVisible child should still be hidden when parent is Hidden"
+        );
     }
 
     #[test]

@@ -2,8 +2,8 @@
 
 use rig_math::Mat4;
 
-use crate::node::{NodeId, Result};
 use crate::SceneGraph;
+use crate::node::{NodeId, Result};
 
 impl SceneGraph {
     pub fn update_world_transforms(&mut self, root: NodeId) -> Result<()> {
