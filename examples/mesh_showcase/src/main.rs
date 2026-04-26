@@ -209,5 +209,9 @@ impl Application for MeshShowcaseApp {
 
 fn main() {
     env_logger::init();
-    rig_app::run::<MeshShowcaseApp>("Mesh Showcase").expect("failed to run mesh showcase");
+    rig_app::run::<MeshShowcaseApp>(rig_app::RunConfig {
+        title: "Mesh Showcase".into(),
+        ..Default::default()
+    })
+    .expect("failed to run mesh showcase");
 }

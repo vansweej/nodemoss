@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use rig_math::glam;
 use rig_assets::AssetStore;
-use rig_gpu::GpuContext;
+use rig_gpu::{GpuContext, wgpu};
+use rig_math::glam;
 use rig_overlay::Overlay;
 use rig_render::Renderer;
 use rig_scene::{NodeId, SceneGraph};
@@ -17,10 +17,58 @@ use winit::{
     window::{Window, WindowId},
 };
 
+use crate::Application;
 use crate::context::{OverlayUpdateContext, RenderContext, StartupContext, UpdateContext};
 use crate::input::InputState;
 use crate::timer::FrameTimer;
-use crate::Application;
+
+// ── RunConfig ─────────────────────────────────────────────────────────────────
+
+/// Configuration for the application runner.
+///
+/// Pass to [`run()`] to control window creation and GPU adapter selection.
+///
+/// # GPU adapter selection
+///
+/// [`power_preference`](RunConfig::power_preference) is forwarded to wgpu's
+/// adapter request. The default is
+/// [`PowerPreference::HighPerformance`](wgpu::PowerPreference::HighPerformance),
+/// which asks wgpu to prefer a discrete GPU (e.g. NVIDIA) over an integrated
+/// one (e.g. Intel). This is an opinionated choice for this research framework.
+///
+/// The preference is a *hint* — if only one adapter is available, wgpu will use
+/// it regardless of the preference. When a config file is introduced in the
+/// future, this struct is the natural deserialization target.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// rig_app::run::<MyApp>(rig_app::RunConfig {
+///     title: "My App".into(),
+///     ..Default::default()   // HighPerformance GPU
+/// })
+/// ```
+#[derive(Debug, Clone)]
+pub struct RunConfig {
+    /// Window title shown in the title bar.
+    pub title: String,
+    /// GPU adapter preference passed to wgpu.
+    ///
+    /// Defaults to [`wgpu::PowerPreference::HighPerformance`] to prefer
+    /// discrete GPUs over integrated ones on multi-GPU systems.
+    pub power_preference: wgpu::PowerPreference,
+}
+
+impl Default for RunConfig {
+    /// Returns a `RunConfig` with title `"rig"` and
+    /// [`PowerPreference::HighPerformance`](wgpu::PowerPreference::HighPerformance).
+    fn default() -> Self {
+        Self {
+            title: String::from("rig"),
+            power_preference: wgpu::PowerPreference::HighPerformance,
+        }
+    }
+}
 
 pub(crate) struct RunnerState<A: Application> {
     pub(crate) app: A,
@@ -38,14 +86,16 @@ pub(crate) struct RunnerState<A: Application> {
 
 pub(crate) struct Runner<A: Application> {
     pub(crate) title: String,
+    pub(crate) power_preference: wgpu::PowerPreference,
     pub(crate) window: Option<Arc<Window>>,
     pub(crate) state: Option<RunnerState<A>>,
 }
 
 impl<A: Application> Runner<A> {
-    pub(crate) fn new(title: impl Into<String>) -> Self {
+    pub(crate) fn new(config: RunConfig) -> Self {
         Self {
-            title: title.into(),
+            title: config.title,
+            power_preference: config.power_preference,
             window: None,
             state: None,
         }
@@ -70,7 +120,7 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                 return;
             }
         };
-        let gpu = match pollster::block_on(GpuContext::new(window.clone())) {
+        let gpu = match pollster::block_on(GpuContext::new(window.clone(), self.power_preference)) {
             Ok(g) => g,
             Err(e) => {
                 log::error!("failed to initialize GPU context: {e}");
@@ -79,7 +129,13 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             }
         };
         let mut renderer = Renderer::new(&gpu);
-        let mut overlay = Overlay::new(&gpu.device, &gpu.queue, gpu.surface_format(), gpu.width(), gpu.height());
+        let mut overlay = Overlay::new(
+            &gpu.device,
+            &gpu.queue,
+            gpu.surface_format(),
+            gpu.width(),
+            gpu.height(),
+        );
         let mut scene = SceneGraph::new();
         let mut assets = AssetStore::new();
         let input = InputState::default();
@@ -104,18 +160,33 @@ impl<A: Application> ApplicationHandler for Runner<A> {
         let active_camera = scene.first_camera();
         self.window = Some(window);
         self.state = Some(RunnerState {
-            app, scene, assets, gpu, renderer, overlay,
+            app,
+            scene,
+            assets,
+            gpu,
+            renderer,
+            overlay,
             overlay_visible: true,
-            input, timer, active_camera, exit_requested,
+            input,
+            timer,
+            active_camera,
+            exit_requested,
         });
     }
 
     #[cfg(not(tarpaulin_include))]
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let Some(window) = self.window.as_ref() else { return; };
-        let Some(state) = self.state.as_mut() else { return; };
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
         match &event {
-            WindowEvent::CloseRequested => { event_loop.exit(); return; }
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+                return;
+            }
             WindowEvent::Resized(size) => {
                 state.gpu.resize(*size);
                 state.renderer.resize(&state.gpu);
@@ -130,12 +201,15 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                 state.input.update(event);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                state.input.update_mouse_position(glam::Vec2::new(
-                    position.x as f32,
-                    position.y as f32,
-                ));
+                state
+                    .input
+                    .update_mouse_position(glam::Vec2::new(position.x as f32, position.y as f32));
             }
-            WindowEvent::MouseInput { button, state: btn_state, .. } => {
+            WindowEvent::MouseInput {
+                button,
+                state: btn_state,
+                ..
+            } => {
                 state.input.update_mouse_button(*button, *btn_state);
             }
             _ => {}
@@ -200,7 +274,12 @@ impl<A: Application> ApplicationHandler for Runner<A> {
                         return;
                     }
                     if state.overlay_visible {
-                        if let Err(e) = state.overlay.render_pass(&state.gpu.device, &state.gpu.queue, &mut frame.encoder, &frame.view) {
+                        if let Err(e) = state.overlay.render_pass(
+                            &state.gpu.device,
+                            &state.gpu.queue,
+                            &mut frame.encoder,
+                            &frame.view,
+                        ) {
                             log::error!("overlay render failed: {e}");
                             event_loop.exit();
                             return;
@@ -244,10 +323,10 @@ impl<A: Application> ApplicationHandler for Runner<A> {
 }
 
 #[cfg(not(tarpaulin_include))]
-pub fn run<A: Application>(title: impl Into<String>) -> Result<()> {
+pub fn run<A: Application>(config: RunConfig) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-    let mut runner = Runner::<A>::new(title);
+    let mut runner = Runner::<A>::new(config);
     event_loop.run_app(&mut runner)?;
     Ok(())
 }

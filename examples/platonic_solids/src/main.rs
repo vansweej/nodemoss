@@ -304,5 +304,8 @@ impl Application for PlatonicApp {
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<PlatonicApp>("Platonic Solids")
+    rig_app::run::<PlatonicApp>(rig_app::RunConfig {
+        title: "Platonic Solids".into(),
+        ..Default::default()
+    })
 }

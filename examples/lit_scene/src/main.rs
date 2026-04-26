@@ -270,5 +270,8 @@ impl Application for LitSceneApp {
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<LitSceneApp>("Lit Scene")
+    rig_app::run::<LitSceneApp>(rig_app::RunConfig {
+        title: "Lit Scene".into(),
+        ..Default::default()
+    })
 }

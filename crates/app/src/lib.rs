@@ -12,7 +12,7 @@ pub use camera_rig::CameraRig;
 pub use context::{OverlayUpdateContext, RenderContext, StartupContext, UpdateContext};
 pub use debug_hud::{DebugHud, Side};
 pub use input::InputState;
-pub use runner::run;
+pub use runner::{run, RunConfig};
 pub use timer::FrameTimer;
 pub use trackball::TrackBall;
 
@@ -199,8 +199,16 @@ mod tests {
 
     #[test]
     fn runner_new_starts_empty() {
-        let runner = Runner::<TestApp>::new("test");
+        use rig_gpu::wgpu;
+        let runner = Runner::<TestApp>::new(RunConfig {
+            title: "test".into(),
+            ..Default::default()
+        });
         assert_eq!(runner.title, "test");
+        assert_eq!(
+            runner.power_preference,
+            wgpu::PowerPreference::HighPerformance
+        );
         assert!(runner.window.is_none());
         assert!(runner.state.is_none());
     }

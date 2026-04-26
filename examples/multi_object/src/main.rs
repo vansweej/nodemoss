@@ -225,5 +225,8 @@ impl Application for MultiObjectApp {
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<MultiObjectApp>("Multi-Object Scene")
+    rig_app::run::<MultiObjectApp>(rig_app::RunConfig {
+        title: "Multi-Object Scene".into(),
+        ..Default::default()
+    })
 }

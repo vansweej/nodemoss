@@ -332,5 +332,8 @@ fn build_blit_resources(
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<OffscreenApp>("Offscreen Demo")
+    rig_app::run::<OffscreenApp>(rig_app::RunConfig {
+        title: "Offscreen Demo".into(),
+        ..Default::default()
+    })
 }

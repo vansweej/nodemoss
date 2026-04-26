@@ -141,5 +141,8 @@ impl Application for TriangleSceneApp {
 
 fn main() -> Result<()> {
     env_logger::init();
-    rig_app::run::<TriangleSceneApp>("Triangle SceneGraph")
+    rig_app::run::<TriangleSceneApp>(rig_app::RunConfig {
+        title: "Triangle SceneGraph".into(),
+        ..Default::default()
+    })
 }
