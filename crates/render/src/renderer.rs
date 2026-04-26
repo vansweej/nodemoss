@@ -10,7 +10,10 @@ use rig_scene::{ExtractedCamera, ExtractedRenderable, NodeId, SceneGraph};
 
 use crate::cache::ImmutableResourceCache;
 use crate::frame::{FrameResources, ObjectUniforms};
-use crate::helpers::{camera_projection_view, create_depth_texture, create_pipeline, DEPTH_FORMAT};
+use crate::helpers::{
+    camera_projection_view, create_depth_texture, create_pipeline, decompose_pose, FrameUniforms,
+    MaterialUniforms, DEPTH_FORMAT,
+};
 use crate::pipeline::PipelineKey;
 use crate::{RenderError, RenderTarget, RenderTargetDescriptor, Result};
 
@@ -18,7 +21,23 @@ use crate::{RenderError, RenderTarget, RenderTargetDescriptor, Result};
 pub struct Renderer {
     pub(crate) pipeline_layout: wgpu::PipelineLayout,
     pub(crate) pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    // Bind group layouts
+    pub(crate) frame_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) material_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) object_bind_group_layout: wgpu::BindGroupLayout,
+    // Frame-level resources
+    pub(crate) frame_uniform_buffer: wgpu::Buffer,
+    // Fallback (untextured) material resources — kept alive to back the bind group
+    #[allow(dead_code)]
+    pub(crate) fallback_texture: wgpu::Texture,
+    #[allow(dead_code)]
+    pub(crate) fallback_texture_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    pub(crate) fallback_sampler: wgpu::Sampler,
+    #[allow(dead_code)]
+    pub(crate) fallback_material_uniform_buffer: wgpu::Buffer,
+    pub(crate) fallback_material_bind_group: wgpu::BindGroup,
+    // Per-frame object uniforms
     pub(crate) frame_resources: FrameResources,
     pub(crate) cache: ImmutableResourceCache,
     pub(crate) depth_texture: wgpu::Texture,
@@ -29,6 +48,56 @@ pub struct Renderer {
 impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
         let device = &gpu.device;
+
+        // ── Group 0: frame uniforms (view/proj/camera_pos) ───────────────────
+        let frame_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("frame bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(std::mem::size_of::<FrameUniforms>() as u64),
+                },
+                count: None,
+            }],
+        });
+
+        // ── Group 1: material uniforms + texture + sampler ───────────────────
+        let material_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("material bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(std::mem::size_of::<MaterialUniforms>() as u64),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        // ── Group 2: per-object uniforms (world matrix, dynamic offset) ───────
         let object_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("object bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -42,21 +111,122 @@ impl Renderer {
                 count: None,
             }],
         });
+
+        // ── Frame uniform buffer ──────────────────────────────────────────────
+        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame uniform buffer"),
+            size: std::mem::size_of::<FrameUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // ── Fallback 1×1 white RGBA texture ──────────────────────────────────
+        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback white texture"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // Write white pixels immediately (we have queue access)
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &fallback_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255_u8, 255, 255, 255],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        let fallback_texture_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fallback sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // ── Fallback material uniform buffer (white, flags=0) ─────────────────
+        let fallback_material_uniforms = MaterialUniforms {
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            flags: 0,
+            _pad: [0; 3],
+        };
+        let fallback_material_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fallback material uniform buffer"),
+            size: std::mem::size_of::<MaterialUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        gpu.queue.write_buffer(
+            &fallback_material_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&fallback_material_uniforms),
+        );
+
+        // ── Fallback material bind group (group 1) ────────────────────────────
+        let fallback_material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fallback material bind group"),
+            layout: &material_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: fallback_material_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fallback_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&fallback_sampler),
+                },
+            ],
+        });
+
+        // ── Pipeline layout: all three groups ─────────────────────────────────
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rig render pipeline layout"),
+            bind_group_layouts: &[
+                Some(&frame_bind_group_layout),
+                Some(&material_bind_group_layout),
+                Some(&object_bind_group_layout),
+            ],
+            immediate_size: 0,
+        });
+
         let frame_resources = FrameResources::new(
             device,
             &object_bind_group_layout,
             device.limits().min_uniform_buffer_offset_alignment as u64,
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rig render pipeline layout"),
-            bind_group_layouts: &[Some(&object_bind_group_layout)],
-            immediate_size: 0,
-        });
         let (depth_texture, depth_view) = create_depth_texture(device, gpu.width(), gpu.height());
+
         Self {
             pipeline_layout,
             pipelines: HashMap::new(),
+            frame_bind_group_layout,
+            material_bind_group_layout,
             object_bind_group_layout,
+            frame_uniform_buffer,
+            fallback_texture,
+            fallback_texture_view,
+            fallback_sampler,
+            fallback_material_uniform_buffer,
+            fallback_material_bind_group,
             frame_resources,
             cache: ImmutableResourceCache::default(),
             depth_texture,
@@ -107,7 +277,34 @@ impl Renderer {
         };
         let aspect = gpu.aspect();
         let pv = camera_projection_view(&camera, aspect);
+
+        // Upload FrameUniforms once per frame
+        let pose = decompose_pose(camera.world_transform);
+        let proj = rig_math::Camera { pose, projection: camera.projection }
+            .projection_matrix(aspect)
+            .to_cols_array_2d();
+        let view = rig_math::Camera { pose, projection: camera.projection }
+            .view_matrix()
+            .to_cols_array_2d();
+        let frame_uniforms = FrameUniforms {
+            view,
+            proj,
+            camera_pos: [pose.translation.x, pose.translation.y, pose.translation.z, 1.0],
+        };
+        gpu.queue.write_buffer(&self.frame_uniform_buffer, 0, bytemuck::bytes_of(&frame_uniforms));
+
         let sorted_indices = self.prepare_draw_order(gpu, assets, draw_list, pv);
+
+        // Create frame bind group (group 0) — references the frame uniform buffer
+        let frame_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame bind group"),
+            layout: &self.frame_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.frame_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
         self.record_scene_pass(
             gpu,
             &mut frame.encoder,
@@ -117,6 +314,7 @@ impl Renderer {
             assets,
             draw_list,
             &sorted_indices,
+            &frame_bind_group,
             gpu.surface_format(),
             Some(DEPTH_FORMAT),
         )
@@ -128,7 +326,7 @@ impl Renderer {
         gpu: &GpuContext,
         assets: &AssetStore,
         draw_list: &[ExtractedRenderable],
-        pv: Mat4,
+        _pv: Mat4,
     ) -> Vec<usize> {
         let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
         sorted_indices.sort_by_key(|&i| {
@@ -136,8 +334,9 @@ impl Renderer {
             let shader_key = assets.material(object.material).map(|m| m.shader).unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
             (shader_key, object.mesh)
         });
+        // Upload only world matrices (PV is now in FrameUniforms)
         let object_uniforms: Vec<_> = sorted_indices.iter().map(|&i| ObjectUniforms {
-            world: (pv * draw_list[i].world_transform).to_cols_array_2d(),
+            world: draw_list[i].world_transform.to_cols_array_2d(),
         }).collect();
         self.frame_resources.prepare_object_uniforms(
             &gpu.device,
@@ -160,6 +359,7 @@ impl Renderer {
         assets: &AssetStore,
         draw_list: &[ExtractedRenderable],
         sorted_indices: &[usize],
+        frame_bind_group: &wgpu::BindGroup,
         color_format: wgpu::TextureFormat,
         depth_format: Option<wgpu::TextureFormat>,
     ) -> Result<()> {
@@ -181,8 +381,10 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+
         let mut current_pipeline: Option<PipelineKey> = None;
         let mut current_mesh: Option<rig_assets::MeshHandle> = None;
+
         for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
             let object = &draw_list[draw_index];
             let material = assets.material(object.material).map_err(|err| RenderError::Asset(err.to_string()))?;
@@ -200,7 +402,61 @@ impl Renderer {
                 pass.set_pipeline(&pipeline);
                 current_pipeline = Some(pipeline_key);
             }
-            pass.set_bind_group(0, &self.frame_resources.object_uniforms.bind_group, &[self.frame_resources.object_uniforms.dynamic_offset(uniform_index)?]);
+
+            // Group 0: frame uniforms
+            pass.set_bind_group(0, frame_bind_group, &[]);
+
+            // Group 1: material bind group — build per-material if it has a texture
+            let material_bind_group = if !material.textures.is_empty() {
+                let (tex_handle, samp_handle) = material.textures[0];
+                let tex_asset = assets.texture(tex_handle)
+                    .map_err(|e| RenderError::Asset(e.to_string()))?;
+                let samp_desc = assets.sampler(samp_handle)
+                    .map_err(|e| RenderError::Asset(e.to_string()))?;
+                // Obtain raw pointers to break the two-borrow problem on self.cache.
+                // SAFETY: Both borrows are non-overlapping (different HashMaps) and the
+                // returned references remain valid for the duration of this block.
+                let tex_view = self.cache.texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
+                    as *const wgpu::TextureView;
+                let sampler = self.cache.sampler(&gpu.device, samp_handle, samp_desc)
+                    as *const wgpu::Sampler;
+                // SAFETY: pointers dereference into stable HashMap values; no removal occurs.
+                let tex_view = unsafe { &*tex_view };
+                let sampler = unsafe { &*sampler };
+                // Build a per-material uniform buffer with base_color = [1,1,1,1]
+                let mat_uniforms = MaterialUniforms {
+                    base_color: [1.0, 1.0, 1.0, 1.0],
+                    flags: 1,
+                    _pad: [0; 3],
+                };
+                let mat_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("material uniform buffer"),
+                    size: std::mem::size_of::<MaterialUniforms>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                gpu.queue.write_buffer(&mat_buf, 0, bytemuck::bytes_of(&mat_uniforms));
+                let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("textured material bind group"),
+                    layout: &self.material_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: mat_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(tex_view) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+                    ],
+                });
+                Some(bg)
+            } else {
+                None
+            };
+
+            let mat_bg_ref = material_bind_group.as_ref()
+                .unwrap_or(&self.fallback_material_bind_group);
+            pass.set_bind_group(1, mat_bg_ref, &[]);
+
+            // Group 2: object uniforms (dynamic offset)
+            pass.set_bind_group(2, &self.frame_resources.object_uniforms.bind_group, &[self.frame_resources.object_uniforms.dynamic_offset(uniform_index)?]);
+
             if current_mesh != Some(object.mesh) {
                 pass.set_vertex_buffer(0, buffers.vertex.slice(..));
                 pass.set_index_buffer(buffers.index.slice(..), buffers.index_format);
@@ -270,14 +526,41 @@ impl Renderer {
         let Some(camera) = extracted_camera else { return Ok(()); };
         let aspect = target.width as f32 / target.height as f32;
         let pv = camera_projection_view(&camera, aspect);
+
+        // Upload FrameUniforms
+        let pose = decompose_pose(camera.world_transform);
+        let proj = rig_math::Camera { pose, projection: camera.projection }
+            .projection_matrix(aspect)
+            .to_cols_array_2d();
+        let view = rig_math::Camera { pose, projection: camera.projection }
+            .view_matrix()
+            .to_cols_array_2d();
+        let frame_uniforms = FrameUniforms {
+            view,
+            proj,
+            camera_pos: [pose.translation.x, pose.translation.y, pose.translation.z, 1.0],
+        };
+        gpu.queue.write_buffer(&self.frame_uniform_buffer, 0, bytemuck::bytes_of(&frame_uniforms));
+
         let planes = rig_scene::frustum_planes_from_projection_view(pv);
         let draw_list = scene.extract_renderables_culled(&planes);
         let sorted_indices = self.prepare_draw_order(gpu, assets, &draw_list, pv);
+
+        let frame_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame bind group offscreen"),
+            layout: &self.frame_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.frame_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rig offscreen encoder") });
         self.record_scene_pass(
             gpu, &mut encoder, &target.color_view, target.depth_view.as_ref(),
             wgpu::Color { r: 0.05, g: 0.05, b: 0.05, a: 1.0 },
             assets, &draw_list, &sorted_indices,
+            &frame_bind_group,
             target.color_format, target.depth_format,
         )?;
         gpu.queue.submit(std::iter::once(encoder.finish()));

@@ -104,24 +104,23 @@ All public APIs and test modules stay in place.
 
 ---
 
-## Round 6 — Texture support end-to-end
+## Round 6 — Texture support end-to-end ✓ COMPLETED
 
-**Goal**: upload and bind `TextureAsset` in the renderer; apply a texture to a mesh in an
-example.  
-**Risk**: high — touches WGSL shaders, bind group layout, and the pipeline cache.  
-**Branch**: `feat/textures`
+| Item | Status |
+|------|--------|
+| 3-group bind layout refactor (frame/material/object) | ✓ |
+| `FrameUniforms`, `MaterialUniforms`, `ObjectUniforms` structs | ✓ |
+| TRIANGLE_SHADER and NORMAL_COLOR_SHADER updated to 3-group WGSL | ✓ |
+| Fallback 1×1 white texture + fallback material bind group | ✓ |
+| `ImmutableResourceCache::texture_view()` — idempotent GPU upload | ✓ |
+| `ImmutableResourceCache::sampler()` — idempotent sampler creation | ✓ |
+| `TEXTURED_SHADER` — samples diffuse texture × base_color | ✓ |
+| `textured_mesh` example — sphere + checkerboard texture, fly-camera | ✓ |
+| Docs updated: RESOURCES.md §4, §9; ARCHITECTURE.md §9.5, §12 | ✓ |
+| All existing examples still compile and pass clippy | ✓ |
 
-Steps:
-
-1. Add texture upload to `ImmutableResourceCache` (keyed by `TextureHandle`).
-2. Add a sampler cache entry (keyed by a `SamplerDescriptor` hash or handle).
-3. Add a texture + sampler bind group slot to the pipeline layout.
-4. Write a new WGSL shader variant that samples a texture.
-5. Load a PNG in `mesh_showcase` (or a new example) and apply it to a quad or sphere.
-6. Update `RESOURCES.md` to document the texture cache entry.
-
-**Affected files**: `rig-assets`, `rig-render`, WGSL shaders, one example,
-`docs/RESOURCES.md`.
+**Branch**: `feat/textures`  
+**Commits**: `03a92ea` (6a), `63420ea` (6b), docs commit
 
 ---
 

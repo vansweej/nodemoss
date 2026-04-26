@@ -8,17 +8,15 @@ mod renderer;
 
 pub use helpers::{
     create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
-    DEPTH_FORMAT, NORMAL_COLOR_SHADER, TRIANGLE_SHADER,
+    DEPTH_FORMAT, NORMAL_COLOR_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
 };
+pub use helpers::{FrameUniforms, MaterialUniforms};
 pub use renderer::Renderer;
 
 pub use rig_gpu;
 pub use wgpu;
 
 use thiserror::Error;
-
-// Re-export internal uniform type for tests
-pub(crate) use frame::ObjectUniforms;
 
 // ── errors ─────────────────────────────────────────────────────────────────────
 
@@ -447,5 +445,44 @@ mod tests {
         };
         let mat = camera_projection_view(&cam, 16.0 / 9.0);
         assert!(mat.to_cols_array().iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn frame_uniforms_size_is_correct() {
+        use std::mem::size_of;
+        // FrameUniforms: view(64) + proj(64) + camera_pos(16) = 144 bytes
+        assert_eq!(size_of::<FrameUniforms>(), 144);
+    }
+
+    #[test]
+    fn object_uniforms_size_is_correct() {
+        use std::mem::size_of;
+        // ObjectUniforms: world(64) = 64 bytes
+        assert_eq!(size_of::<crate::frame::ObjectUniforms>(), 64);
+    }
+
+    #[test]
+    fn material_uniforms_size_is_correct() {
+        use std::mem::size_of;
+        // MaterialUniforms: base_color(16) + flags(4) + pad(12) = 32 bytes
+        assert_eq!(size_of::<MaterialUniforms>(), 32);
+    }
+
+    #[test]
+    fn textured_shader_has_correct_group_bindings() {
+        assert!(TEXTURED_SHADER.contains("@group(0) @binding(0)"));
+        assert!(TEXTURED_SHADER.contains("@group(1) @binding(0)"));
+        assert!(TEXTURED_SHADER.contains("@group(1) @binding(1)"));
+        assert!(TEXTURED_SHADER.contains("@group(1) @binding(2)"));
+        assert!(TEXTURED_SHADER.contains("@group(2) @binding(0)"));
+        assert!(TEXTURED_SHADER.contains("fn vs_main"));
+        assert!(TEXTURED_SHADER.contains("fn fs_main"));
+    }
+
+    #[test]
+    fn triangle_shader_uses_three_groups() {
+        assert!(TRIANGLE_SHADER.contains("@group(0) @binding(0)"));
+        assert!(TRIANGLE_SHADER.contains("@group(1) @binding(0)"));
+        assert!(TRIANGLE_SHADER.contains("@group(2) @binding(0)"));
     }
 }

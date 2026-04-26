@@ -141,6 +141,7 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
    - `platonic_solids` example: five solids orbiting with spin animation and fly-camera ✓
    - Frustum culling: `extract_renderables_culled` wired as default render path ✓
 4. **Overlay system** — `rig-gpu` crate, `rig-overlay` crate (glyphon), FPS counters in all examples, F3 toggle ✓
+5. **Texture support** — 3-group bind layout (frame/material/object), GPU texture/sampler cache, `TEXTURED_SHADER`, `textured_mesh` example ✓
 
 ## Documentation
 

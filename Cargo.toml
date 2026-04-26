@@ -15,6 +15,7 @@ members = [
     "examples/offscreen_demo",
     "examples/platonic_solids",
     "examples/trackball_demo",
+    "examples/textured_mesh",
 ]
 exclude = ["GeometricTools"]
 
@@ -43,3 +44,4 @@ env_logger = "0.11"
 pollster = "0.4"
 thiserror = "2.0"
 anyhow = "1.0"
+image = "0.25"
