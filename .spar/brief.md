@@ -1,37 +1,31 @@
 ## Feature
-`DebugHud` helper in `rig-app` with dual-stack auto-layout and GPU adapter name display.
+Add `RunConfig` struct with GPU adapter preference, defaulting to high-performance (NVIDIA) GPU selection.
 
 ## Key decisions made
-- Store full `wgpu::AdapterInfo` on `GpuContext` (not just the name string), making adapter metadata available to all downstream code.
-- `DebugHud` lives in `rig-app`, alongside other opt-in utilities like `CameraRig` and `TrackBall`.
-- `DebugHud` manages two independent auto-layout stacks: left side (anchored `TopLeft`) and right side (anchored `TopRight`).
-- Built-in elements: GPU adapter name → left stack, FPS → right stack.
-- Examples opt in explicitly by constructing a `DebugHud` in `init()` and calling `update()` in `update_overlay()`.
-- Examples can extend either stack via `add_element(Side, text)` which returns an `ElementId` for per-frame updates.
-- Camera position remains example-owned, added to the right stack via `add_element`.
-- Per-element toggling (show/hide individual fields) is deferred to a future iteration.
+- `GpuContext::new` gains a `wgpu::PowerPreference` parameter (not a full config struct — GPU context stays lean)
+- A `RunConfig` struct is introduced in `rig-app` with `title` and `power_preference` fields
+- `RunConfig::default()` sets `power_preference` to `HighPerformance` — an opinionated default for this research framework
+- `run()` takes `RunConfig` instead of `impl Into<String>`
+- `hello_triangle` is left unchanged — it's an intentionally raw wgpu example
+- No config file yet; that's a future concern and `RunConfig` is the natural target for deserialization when it arrives
 
 ## Open questions
-- What font size and color should the GPU name use? Same as FPS (16pt white) or different to visually distinguish static info from dynamic counters?
-- Should `DebugHud::new` register elements with sensible defaults (e.g., `"GPU: <name>"` prefix) or let the format be caller-controlled?
-- What vertical spacing between stacked elements — fixed pixel gap, or derived from font size?
-- Should `DebugHud` respect the F3 overlay toggle automatically (it already does, since it renders through `Overlay` which the runner toggles at `runner.rs:127`), or does it need its own visibility control?
+- Should `RunConfig` also absorb window size (currently hardcoded to 800×600 at `runner.rs:64`) while we're touching the struct, or keep it minimal for now?
+- Should the adapter name be logged at `INFO` or `WARN` level to make GPU selection more visible during debugging?
 
 ## Rejected alternatives
-- **Storing adapter info on `DebugHud` instead of `GpuContext`**: shifted the problem without solving it; someone still needs to extract adapter info from `GpuContext::new()`.
-- **Storing only `adapter_name: String`**: full `AdapterInfo` has vendor, device type, backend, and driver info that's useful for future debug display.
-- **Placing `DebugHud` in `rig-overlay`**: would create a dependency on `FrameTimer` which lives in `rig-app`, causing a circular dependency.
-- **Runner-automatic debug HUD for all examples**: conflicts with the goal of opt-in for real applications.
-- **`DebugHud` exposing `next_y()` instead of `add_element()`**: leaks positioning details to the example; `add_element` with auto-layout is cleaner.
-- **Single-stack layout**: FPS belongs top-right, GPU name top-left; two stacks keeps both conventions and enables natural extension on either side.
+- **Environment variable only** (`WGPU_ADAPTER_NAME`, `DRI_PRIME=1`) — doesn't provide a code-level default; easy to forget at launch time
+- **Bare parameter on `run()`** — doesn't scale; next config knob means another signature change and 8 example updates
+- **`Application` trait method** returning preference — over-abstracted for a single field; config structs are more idiomatic
 
 ## Risks identified
-1. **Breaking change to `GpuContext`** — adding `adapter_info: wgpu::AdapterInfo` changes the struct layout. Since `GpuContext` is public and constructed only inside its own `new()`, this is low risk, but any code pattern-matching or destructuring on it will break.
-2. **Layout fragility** — auto-stacking with pixel offsets may look wrong at different DPI scales or window sizes. May need DPI-aware spacing eventually.
-3. **Migration churn** — existing examples that manually manage FPS overlay elements should migrate to `DebugHud` to avoid duplication and inconsistency, but this is optional work.
+1. **Opinionated default may confuse contributors** — `HighPerformance` as default diverges from wgpu's `None`; must be clearly documented
+2. **8 examples + 1 internal test must update** — mechanical but error-prone; ensure `cargo test --workspace` and `cargo clippy` pass after
+3. **Intel-only systems** — `HighPerformance` is a *hint*, not a guarantee; wgpu will still pick the best available adapter, so no functional risk
 
 ## Recommended next steps
-1. Add `adapter_info: wgpu::AdapterInfo` field to `GpuContext` and retain it in `GpuContext::new()`.
-2. Implement `DebugHud` struct in `rig-app` with `new()`, `add_element(Side, text)`, and `update()`.
-3. Migrate `platonic_solids` example to use `DebugHud` as the proof-of-concept.
-4. Update remaining examples that have FPS overlays.
+1. Add `PowerPreference` parameter to `GpuContext::new` in `crates/gpu/src/lib.rs`
+2. Create `RunConfig` struct in `crates/app/src/` (new module or in `runner.rs`), with `Default` impl and clear doc comments
+3. Update `run()` and `Runner` to accept `RunConfig`
+4. Update all 8 examples and the `runner_new_starts_empty` test
+5. `cargo clippy --workspace -- -D warnings` and `cargo test --workspace`
