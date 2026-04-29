@@ -691,21 +691,51 @@ mod tests {
     #[test]
     fn pbr_shader_has_correct_structure() {
         // Bind group layout
-        assert!(PBR_SHADER.contains("@group(0) @binding(0)"), "missing frame uniforms");
-        assert!(PBR_SHADER.contains("@group(0) @binding(1)"), "missing lights buffer");
-        assert!(PBR_SHADER.contains("@group(1) @binding(0)"), "missing material uniforms");
-        assert!(PBR_SHADER.contains("@group(1) @binding(1)"), "missing texture");
-        assert!(PBR_SHADER.contains("@group(1) @binding(2)"), "missing sampler");
-        assert!(PBR_SHADER.contains("@group(2) @binding(0)"), "missing object uniforms");
+        assert!(
+            PBR_SHADER.contains("@group(0) @binding(0)"),
+            "missing frame uniforms"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(0) @binding(1)"),
+            "missing lights buffer"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(1) @binding(0)"),
+            "missing material uniforms"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(1) @binding(1)"),
+            "missing texture"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(1) @binding(2)"),
+            "missing sampler"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(2) @binding(0)"),
+            "missing object uniforms"
+        );
         // Entry points
-        assert!(PBR_SHADER.contains("fn vs_main"), "missing vertex entry point");
-        assert!(PBR_SHADER.contains("fn fs_main"), "missing fragment entry point");
+        assert!(
+            PBR_SHADER.contains("fn vs_main"),
+            "missing vertex entry point"
+        );
+        assert!(
+            PBR_SHADER.contains("fn fs_main"),
+            "missing fragment entry point"
+        );
         // PBR-specific fields in MaterialUniforms
         assert!(PBR_SHADER.contains("metallic"), "missing metallic field");
         assert!(PBR_SHADER.contains("roughness"), "missing roughness field");
         // BRDF functions
-        assert!(PBR_SHADER.contains("fn distribution_ggx"), "missing GGX NDF");
-        assert!(PBR_SHADER.contains("fn geometry_smith"), "missing Smith geometry");
+        assert!(
+            PBR_SHADER.contains("fn distribution_ggx"),
+            "missing GGX NDF"
+        );
+        assert!(
+            PBR_SHADER.contains("fn geometry_smith"),
+            "missing Smith geometry"
+        );
         assert!(PBR_SHADER.contains("fn fresnel_schlick"), "missing Fresnel");
     }
 
@@ -713,11 +743,11 @@ mod tests {
     fn pbr_shader_material_uniforms_has_metallic_roughness() {
         // Every WGSL shader must use the updated MaterialUniforms layout.
         for (name, src) in [
-            ("TRIANGLE",     TRIANGLE_SHADER),
+            ("TRIANGLE", TRIANGLE_SHADER),
             ("NORMAL_COLOR", NORMAL_COLOR_SHADER),
-            ("TEXTURED",     TEXTURED_SHADER),
-            ("PHONG",        PHONG_SHADER),
-            ("PBR",          PBR_SHADER),
+            ("TEXTURED", TEXTURED_SHADER),
+            ("PHONG", PHONG_SHADER),
+            ("PBR", PBR_SHADER),
         ] {
             assert!(
                 src.contains("metallic"),
