@@ -531,19 +531,22 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
 // surface, not just at the specular highlight positions.
 
 fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
-    // Sky / ground gradient colours — tweak these to taste.
-    let sky_col    = vec3<f32>(0.45, 0.50, 0.60);  // muted blue-grey
-    let horizon_col = vec3<f32>(0.55, 0.55, 0.55); // medium neutral grey
-    let ground_col = vec3<f32>(0.15, 0.14, 0.13);  // dark warm ground
+    // HDR sky / ground gradient — values above 1.0 are intentional; ACES
+    // tone-maps them back to display range.  Think of this as the studio
+    // lighting rig reflected in the metal surface.
+    let sky_col     = vec3<f32>(1.20, 1.25, 1.40); // bright cool sky (HDR)
+    let horizon_col = vec3<f32>(0.90, 0.90, 0.90); // bright neutral horizon
+    let ground_col  = vec3<f32>(0.40, 0.38, 0.35); // warm ground bounce
 
     let t_sky    = clamp(R.y, 0.0, 1.0);
     let t_ground = clamp(-R.y, 0.0, 1.0);
-    let env      = mix(horizon_col, sky_col, t_sky);
+    let env      = mix(horizon_col, sky_col, t_sky * t_sky); // squared for sharper sky
     let env_full = mix(env, ground_col, t_ground);
 
-    // Reduce environment contribution for rough surfaces.
+    // Only slightly dampen for rough surfaces — smooth metals should see
+    // close to the full environment.
     let env_mip_bias = roughness * roughness;
-    return mix(env_full, vec3<f32>(0.3), env_mip_bias);
+    return mix(env_full, vec3<f32>(0.5), env_mip_bias);
 }
 
 // ── Fragment shader ───────────────────────────────────────────────────────────
