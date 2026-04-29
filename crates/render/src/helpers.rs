@@ -541,7 +541,7 @@ fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
     // without the hard-edge look of smoothstep.
     let sky_col     = vec3<f32>(0.55, 0.60, 0.78); // medium cool blue
     let horizon_col = vec3<f32>(0.08, 0.09, 0.13); // near-black void
-    let ground_col  = vec3<f32>(0.14, 0.12, 0.09); // dark warm bounce
+    let ground_col  = vec3<f32>(0.04, 0.03, 0.02); // near-black — underside stays dark
 
     let t_up   = clamp(R.y,  0.0, 1.0);
     let t_down = clamp(-R.y, 0.0, 1.0);

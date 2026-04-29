@@ -199,7 +199,7 @@ impl Application for MetaballsApp {
                 "light_low",
                 Vec3::new(-4.0, -8.0, 3.0),
                 Vec3::new(1.00, 0.75, 0.55),
-                6.0,
+                1.0,
                 28.0,
             ),
         ];
