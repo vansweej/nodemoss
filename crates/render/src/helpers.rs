@@ -381,14 +381,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 /// Cook-Torrance PBR shader — metallic-roughness workflow, 3-group layout.
 ///
-/// Implements GGX NDF (Trowbridge-Reitz), Smith's Schlick-GGX geometry term, and
-/// Fresnel-Schlick.  Supports up to 16 analytic lights from group 0 binding 1.
+/// Implements GGX NDF (Trowbridge-Reitz), Smith's Schlick-GGX geometry term,
+/// Fresnel-Schlick, a roughness-aware hemisphere ambient that approximates
+/// environment reflections, UE4-style windowed inverse-square attenuation, and
+/// ACES filmic tone mapping.  Supports up to 16 analytic lights from group 0
+/// binding 1.
 ///
 /// Material parameters used from `MaterialUniforms`:
 /// - `base_color.rgb` — albedo / base reflectance colour
 /// - `base_color.a`   — alpha (passed through)
 /// - `metallic`       — 0 = dielectric, 1 = full metal
-/// - `roughness`      — 0 = mirror, 1 = fully diffuse
+/// - `roughness`      — 0 = mirror-smooth, 1 = fully diffuse
 ///
 /// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
 /// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
@@ -483,9 +486,64 @@ fn geometry_smith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f
     return geometry_schlick_ggx(NdV, roughness) * geometry_schlick_ggx(NdL, roughness);
 }
 
-/// Fresnel-Schlick approximation.
+/// Fresnel-Schlick for analytic lights.
 fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+/// Fresnel-Schlick with roughness bias — used for the ambient/IBL term so that
+/// rough surfaces don't get an unrealistically strong environment reflection.
+/// From Sebastien Lagarde's "Moving Frostbite to PBR" (2014).
+fn fresnel_schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let one_minus_r = vec3<f32>(1.0 - roughness);
+    return F0 + (max(one_minus_r, F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+/// UE4-style windowed inverse-square falloff (Brian Karis, Siggraph 2013).
+/// Physically motivated but range-bounded: zero at dist >= range.
+fn point_light_attenuation(dist: f32, range: f32) -> f32 {
+    let d_over_r = dist / range;
+    let window   = clamp(1.0 - d_over_r * d_over_r * d_over_r * d_over_r, 0.0, 1.0);
+    return (window * window) / (dist * dist + 1.0);
+}
+
+/// ACES filmic tone mapping (Narkowicz 2015 approximation).
+/// Maps HDR radiance to [0,1] with a natural highlight roll-off.
+fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// ── Hemisphere environment approximation ─────────────────────────────────────
+//
+// Without a cubemap we fake environment reflections by sampling a simple
+// sky/ground gradient in the direction of the ideal reflection vector R.
+// The gradient is blended by the Y-component of R:
+//   R.y ≈ +1  →  sky colour  (bright, cool blue-white)
+//   R.y ≈ -1  →  ground colour (darker, warm grey)
+// The Fresnel term (roughness-biased) weights the contribution so that
+// smooth surfaces pick up more of the environment, rough surfaces less.
+// This gives polished metals the characteristic sheen across their whole
+// surface, not just at the specular highlight positions.
+
+fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
+    // Sky / ground gradient colours — tweak these to taste.
+    let sky_col    = vec3<f32>(0.55, 0.62, 0.78);  // cool blue-white
+    let horizon_col = vec3<f32>(0.72, 0.72, 0.70); // neutral grey horizon
+    let ground_col = vec3<f32>(0.22, 0.20, 0.18);  // warm dark ground
+
+    let t_sky    = clamp(R.y, 0.0, 1.0);
+    let t_ground = clamp(-R.y, 0.0, 1.0);
+    let env      = mix(horizon_col, sky_col, t_sky);
+    let env_full = mix(env, ground_col, t_ground);
+
+    // Reduce environment contribution for rough surfaces.
+    let env_mip_bias = roughness * roughness;
+    return mix(env_full, vec3<f32>(0.3), env_mip_bias);
 }
 
 // ── Fragment shader ───────────────────────────────────────────────────────────
@@ -494,14 +552,18 @@ fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let albedo    = material.base_color.rgb;
     let metallic  = material.metallic;
-    let roughness = clamp(material.roughness, 0.04, 1.0);
+    // Clamp roughness to 0.02 minimum so mirror-smooth is possible but the
+    // GGX denominator never reaches zero.
+    let roughness = clamp(material.roughness, 0.02, 1.0);
 
-    let N = normalize(in.world_normal);
-    let V = normalize(frame.camera_pos.xyz - in.world_position);
+    let N   = normalize(in.world_normal);
+    let V   = normalize(frame.camera_pos.xyz - in.world_position);
+    let NdV = max(dot(N, V), 0.0);
 
-    // Base reflectivity: dielectrics use 0.04, metals use albedo as F0.
+    // Base reflectivity: dielectrics ≈ 0.04, metals use albedo as F0.
     let F0 = mix(vec3<f32>(0.04), albedo, metallic);
 
+    // ── Analytic lights (direct illumination) ─────────────────────────────
     var Lo = vec3<f32>(0.0);
 
     let n_lights = min(lights_data.count.x, MAX_LIGHTS);
@@ -511,41 +573,55 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         var attenuation = 1.0;
 
         if light.position.w < 0.5 {
-            // Directional light
+            // Directional light — no falloff.
             L = normalize(-light.direction.xyz);
         } else {
-            // Point light
+            // Point light — UE4 windowed inverse-square falloff.
             let to_light = light.position.xyz - in.world_position;
             let dist     = length(to_light);
             L            = normalize(to_light);
             let range    = light.range_pad.x;
-            attenuation  = clamp(1.0 - dist / range, 0.0, 1.0);
+            attenuation  = point_light_attenuation(dist, range);
         }
 
-        let H = normalize(V + L);
+        let H           = normalize(V + L);
+        let NdL         = max(dot(N, L), 0.0);
         let light_color = light.color_intensity.rgb * light.color_intensity.a * attenuation;
-        let NdL = max(dot(N, L), 0.0);
 
         // Cook-Torrance BRDF
         let D = distribution_ggx(N, H, roughness);
         let G = geometry_smith(N, V, L, roughness);
         let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
 
-        // kS is Fresnel; kD = (1 - kS) * (1 - metallic) — metals have no diffuse.
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
-
-        let specular = D * G * F / (4.0 * max(dot(N, V), 0.0) * NdL + 0.0001);
+        // kD = (1 - kS) * (1 - metallic): metals have no Lambertian diffuse.
+        let kD      = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+        let specular = D * G * F / (4.0 * NdV * NdL + 0.0001);
         let diffuse  = kD * albedo / PI;
 
         Lo += (diffuse + specular) * light_color * NdL;
     }
 
-    // Ambient approximation: use F0 as a rough stand-in for environment reflectance.
-    // Keeps metals from rendering as pure black when no IBL is present.
-    let ambient = F0 * 0.08;
+    // ── Ambient / environment (indirect approximation) ────────────────────
+    //
+    // Use the roughness-biased Fresnel term to weight how much of the faked
+    // environment shows up on this fragment.  Smooth metals get a near-full
+    // mirror-like reflection of the sky/ground gradient; rough surfaces get
+    // a flat diffuse ambient instead.
+    let R         = reflect(-V, N);
+    let F_env     = fresnel_schlick_roughness(NdV, F0, roughness);
+    let kD_env    = (vec3<f32>(1.0) - F_env) * (1.0 - metallic);
+    let irradiance = mix(vec3<f32>(0.25), albedo, 0.5); // cheap diffuse irradiance
+    let env_spec  = sample_environment(R, roughness);
+    let ambient   = kD_env * irradiance * albedo + F_env * env_spec;
 
-    let color = ambient + Lo;
-    return vec4<f32>(color, material.base_color.a);
+    // ── Combine and tone-map ──────────────────────────────────────────────
+    let hdr_color = ambient + Lo;
+
+    // ACES filmic tone mapping: maps HDR radiance to display-referred [0,1].
+    // Specular highlights can safely exceed 1.0 before this point.
+    let ldr_color = aces_tonemap(hdr_color);
+
+    return vec4<f32>(ldr_color, material.base_color.a);
 }
 "#;
 

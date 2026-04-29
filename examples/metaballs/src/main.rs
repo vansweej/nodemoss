@@ -166,37 +166,38 @@ impl Application for MetaballsApp {
         )?;
 
         // --- Lights: four point lights surrounding the scene -----------------
-        // PBR metals rely on multiple analytic lights to show visible specular
-        // highlights since there is no IBL/environment map.
+        // With UE4 inverse-square attenuation and ACES tone mapping the shader
+        // works in HDR internally, so light intensities can be set much higher
+        // than 1.0 — highlights will roll off naturally instead of clipping.
         let light_setup: &[(&str, Vec3, Vec3, f32, f32)] = &[
-            // (name, position,                  colour,               intensity, range)
+            // (name,          position,                   colour (linear),          intensity, range)
             (
                 "light_key",
                 Vec3::new(8.0, 8.0, 8.0),
-                Vec3::new(1.00, 0.95, 0.88),
-                3.5,
-                28.0,
+                Vec3::new(1.00, 0.97, 0.90),
+                18.0,
+                32.0,
             ),
             (
                 "light_fill",
-                Vec3::new(-8.0, 5.0, 6.0),
-                Vec3::new(0.60, 0.70, 1.00),
-                2.0,
-                28.0,
+                Vec3::new(-9.0, 5.0, 6.0),
+                Vec3::new(0.55, 0.65, 1.00),
+                8.0,
+                32.0,
             ),
             (
                 "light_rim",
-                Vec3::new(0.0, 6.0, -9.0),
-                Vec3::new(0.90, 0.90, 1.00),
-                2.5,
-                28.0,
+                Vec3::new(1.0, 7.0, -10.0),
+                Vec3::new(0.85, 0.90, 1.00),
+                12.0,
+                32.0,
             ),
             (
                 "light_low",
-                Vec3::new(-4.0, -7.0, 4.0),
-                Vec3::new(1.00, 0.80, 0.60),
-                1.5,
-                24.0,
+                Vec3::new(-4.0, -8.0, 3.0),
+                Vec3::new(1.00, 0.75, 0.55),
+                6.0,
+                28.0,
             ),
         ];
         for (name, pos, color, intensity, range) in light_setup {
