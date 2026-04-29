@@ -168,12 +168,18 @@ pub struct MeshAsset {
 pub struct MaterialParams {
     /// Ambient reflectance (RGBA).
     pub ambient: [f32; 4],
-    /// Diffuse reflectance (RGBA).
+    /// Diffuse reflectance (RGBA). For PBR materials this doubles as the albedo / base colour.
     pub diffuse: [f32; 4],
     /// Specular reflectance; `w` component is the shininess (Phong exponent).
     pub specular: [f32; 4],
     /// Emissive color (RGBA). Zero by default.
     pub emissive: [f32; 4],
+    /// PBR metallic factor. `0.0` = dielectric, `1.0` = full metal.
+    /// Ignored by non-PBR shaders.
+    pub metallic: f32,
+    /// PBR roughness factor. `0.0` = mirror-smooth, `1.0` = fully diffuse.
+    /// Ignored by non-PBR shaders.
+    pub roughness: f32,
 }
 
 impl Default for MaterialParams {
@@ -183,6 +189,8 @@ impl Default for MaterialParams {
             diffuse: [0.8, 0.8, 0.8, 1.0],
             specular: [1.0, 1.0, 1.0, 32.0],
             emissive: [0.0, 0.0, 0.0, 1.0],
+            metallic: 0.0,
+            roughness: 0.5,
         }
     }
 }

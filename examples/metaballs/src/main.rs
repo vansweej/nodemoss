@@ -4,8 +4,8 @@
 //! evaluated on a 48³ grid every frame; the Marching Cubes algorithm extracts
 //! a triangle mesh that is uploaded to the GPU as a `DynamicMesh`.
 //!
-//! The surface is rendered with Blinn-Phong shading (white material, one
-//! directional light) for a "liquid metal" / polished chrome look.
+//! The surface is rendered with Cook-Torrance PBR shading (metallic chrome
+//! material, four point lights) for a liquid-metal look.
 //!
 //! # Controls
 //!
@@ -26,11 +26,11 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
     UpdateContext,
     rig_assets::{
-        DynamicMeshData, DynamicMeshId, MaterialAsset, MeshSource, ShaderAsset,
+        DynamicMeshData, DynamicMeshId, MaterialAsset, MaterialParams, MeshSource, ShaderAsset,
         marching_cubes::{GridParams, extract},
     },
     rig_math::{Projection, Quat, Transform, Vec3},
-    rig_render::PHONG_SHADER,
+    rig_render::PBR_SHADER,
     rig_scene::{CameraComponent, LightComponent, LightKind, NodeId, Renderable},
     winit::{event::WindowEvent, keyboard::KeyCode},
 };
@@ -116,13 +116,22 @@ struct MetaballsApp {
 
 impl Application for MetaballsApp {
     fn init(ctx: &mut StartupContext<'_>) -> Result<Self> {
-        // --- Phong shader & white material -----------------------------------
+        // --- PBR shader — chrome/liquid-metal material -----------------------
         let shader = ctx.assets.add_shader(ShaderAsset {
-            source: Arc::from(PHONG_SHADER),
+            source: Arc::from(PBR_SHADER),
         });
+        // Silver-chrome: near-white albedo, fully metallic, very smooth.
         let material = ctx.assets.add_material(MaterialAsset {
             shader,
-            parameters: Default::default(),
+            parameters: MaterialParams {
+                // Blue-grey silver: darker and more chromatic than pure Ag white.
+                // The blue shift and reduced brightness give a steely silver
+                // rather than a near-white chrome finish.
+                diffuse: [0.60, 0.64, 0.74, 1.0],
+                metallic: 1.0,
+                roughness: 0.10,
+                ..Default::default()
+            },
             textures: vec![],
         });
 
@@ -159,25 +168,56 @@ impl Application for MetaballsApp {
             },
         )?;
 
-        // --- Directional light (white, top-front) ----------------------------
-        let light_node = ctx.scene.create_node("sun");
-        ctx.scene.set_local_transform(
-            light_node,
-            Transform {
-                translation: Vec3::ZERO,
-                rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4),
-                scale: Vec3::ONE,
-            },
-        )?;
-        ctx.scene.set_light(
-            light_node,
-            LightComponent {
-                kind: LightKind::Directional {
-                    color: Vec3::new(1.0, 1.0, 1.0),
-                    intensity: 1.2,
+        // --- Lights: four point lights surrounding the scene -----------------
+        // With UE4 inverse-square attenuation and ACES tone mapping the shader
+        // works in HDR internally, so light intensities can be set much higher
+        // than 1.0 — highlights will roll off naturally instead of clipping.
+        let light_setup: &[(&str, Vec3, Vec3, f32, f32)] = &[
+            // (name,          position,                   colour (linear),          intensity, range)
+            (
+                "light_key",
+                Vec3::new(8.0, 8.0, 8.0),
+                Vec3::new(1.00, 0.97, 0.90),
+                18.0,
+                32.0,
+            ),
+            (
+                "light_fill",
+                Vec3::new(-9.0, 5.0, 6.0),
+                Vec3::new(0.55, 0.65, 1.00),
+                8.0,
+                32.0,
+            ),
+            (
+                "light_rim",
+                Vec3::new(1.0, 7.0, -10.0),
+                Vec3::new(0.85, 0.90, 1.00),
+                12.0,
+                32.0,
+            ),
+
+        ];
+        for (name, pos, color, intensity, range) in light_setup {
+            let node = ctx.scene.create_node(*name);
+            ctx.scene.set_local_transform(
+                node,
+                Transform {
+                    translation: *pos,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
                 },
-            },
-        )?;
+            )?;
+            ctx.scene.set_light(
+                node,
+                LightComponent {
+                    kind: LightKind::Point {
+                        color: *color,
+                        intensity: *intensity,
+                        range: *range,
+                    },
+                },
+            )?;
+        }
 
         // --- Camera ----------------------------------------------------------
         let camera_node = ctx.scene.create_node("camera");
@@ -204,7 +244,9 @@ impl Application for MetaballsApp {
 
         let debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
 
-        log::info!("Metaballs demo initialised. F4 = wireframe, F3 = overlay, Escape = quit.");
+        log::info!(
+            "Metaballs demo initialised (PBR chrome). F4 = wireframe, F3 = overlay, Escape = quit."
+        );
 
         Ok(Self {
             camera_node,

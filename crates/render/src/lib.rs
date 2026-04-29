@@ -7,7 +7,7 @@ mod pipeline;
 mod renderer;
 
 pub use helpers::{
-    DEPTH_FORMAT, NORMAL_COLOR_SHADER, PHONG_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
+    DEPTH_FORMAT, NORMAL_COLOR_SHADER, PBR_SHADER, PHONG_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
     create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
 };
 pub use helpers::{FrameUniforms, LightUniform, LightsBuffer, MAX_LIGHTS, MaterialUniforms};
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn material_uniforms_size_is_correct() {
         use std::mem::size_of;
-        // MaterialUniforms: base_color(16) + flags(4) + pad(12) = 32 bytes
+        // MaterialUniforms: base_color(16) + metallic(4) + roughness(4) + flags(4) + pad(4) = 32 bytes
         assert_eq!(size_of::<MaterialUniforms>(), 32);
     }
 
@@ -686,5 +686,77 @@ mod tests {
         assert!(TRIANGLE_SHADER.contains("@group(0) @binding(0)"));
         assert!(TRIANGLE_SHADER.contains("@group(1) @binding(0)"));
         assert!(TRIANGLE_SHADER.contains("@group(2) @binding(0)"));
+    }
+
+    #[test]
+    fn pbr_shader_has_correct_structure() {
+        // Bind group layout
+        assert!(
+            PBR_SHADER.contains("@group(0) @binding(0)"),
+            "missing frame uniforms"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(0) @binding(1)"),
+            "missing lights buffer"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(1) @binding(0)"),
+            "missing material uniforms"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(1) @binding(1)"),
+            "missing texture"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(1) @binding(2)"),
+            "missing sampler"
+        );
+        assert!(
+            PBR_SHADER.contains("@group(2) @binding(0)"),
+            "missing object uniforms"
+        );
+        // Entry points
+        assert!(
+            PBR_SHADER.contains("fn vs_main"),
+            "missing vertex entry point"
+        );
+        assert!(
+            PBR_SHADER.contains("fn fs_main"),
+            "missing fragment entry point"
+        );
+        // PBR-specific fields in MaterialUniforms
+        assert!(PBR_SHADER.contains("metallic"), "missing metallic field");
+        assert!(PBR_SHADER.contains("roughness"), "missing roughness field");
+        // BRDF functions
+        assert!(
+            PBR_SHADER.contains("fn distribution_ggx"),
+            "missing GGX NDF"
+        );
+        assert!(
+            PBR_SHADER.contains("fn geometry_smith"),
+            "missing Smith geometry"
+        );
+        assert!(PBR_SHADER.contains("fn fresnel_schlick"), "missing Fresnel");
+    }
+
+    #[test]
+    fn pbr_shader_material_uniforms_has_metallic_roughness() {
+        // Every WGSL shader must use the updated MaterialUniforms layout.
+        for (name, src) in [
+            ("TRIANGLE", TRIANGLE_SHADER),
+            ("NORMAL_COLOR", NORMAL_COLOR_SHADER),
+            ("TEXTURED", TEXTURED_SHADER),
+            ("PHONG", PHONG_SHADER),
+            ("PBR", PBR_SHADER),
+        ] {
+            assert!(
+                src.contains("metallic"),
+                "{name} shader MaterialUniforms is missing the `metallic` field"
+            );
+            assert!(
+                src.contains("roughness"),
+                "{name} shader MaterialUniforms is missing the `roughness` field"
+            );
+        }
     }
 }
