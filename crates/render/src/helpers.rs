@@ -538,9 +538,9 @@ fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
     // The contrast between sky and horizon is what makes a surface read as
     // "silvery" rather than "white" — the eye sees bright-vs-dark variation
     // across the surface instead of a uniform wash.
-    let sky_col     = vec3<f32>(1.00, 1.05, 1.20); // bright cool blue sky (HDR)
-    let horizon_col = vec3<f32>(0.18, 0.20, 0.26); // DARK cool grey — key to silver look
-    let ground_col  = vec3<f32>(0.30, 0.27, 0.22); // dark warm ground bounce
+    let sky_col     = vec3<f32>(0.80, 0.84, 0.95); // bright cool blue sky
+    let horizon_col = vec3<f32>(0.12, 0.13, 0.18); // dark void — deepens the silver
+    let ground_col  = vec3<f32>(0.20, 0.18, 0.14); // dark warm ground bounce
 
     let t_sky    = clamp(R.y, 0.0, 1.0);
     let t_ground = clamp(-R.y, 0.0, 1.0);
