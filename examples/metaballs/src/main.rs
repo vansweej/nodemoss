@@ -127,7 +127,7 @@ impl Application for MetaballsApp {
                 // Blue-grey silver: darker and more chromatic than pure Ag white.
                 // The blue shift and reduced brightness give a steely silver
                 // rather than a near-white chrome finish.
-                diffuse: [0.72, 0.76, 0.86, 1.0],
+                diffuse: [0.60, 0.64, 0.74, 1.0],
                 metallic: 1.0,
                 roughness: 0.10,
                 ..Default::default()
