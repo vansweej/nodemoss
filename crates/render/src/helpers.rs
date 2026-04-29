@@ -23,12 +23,21 @@ pub struct FrameUniforms {
 }
 
 /// Per-material uniform data.
+///
+/// Layout (32 bytes, `repr(C)`):
+/// - `base_color`: 16 bytes — albedo / tint (RGBA)
+/// - `metallic`:    4 bytes — 0.0 = dielectric, 1.0 = full metal (PBR)
+/// - `roughness`:   4 bytes — 0.0 = mirror-smooth, 1.0 = fully diffuse (PBR)
+/// - `flags`:       4 bytes — shader-defined bit flags (e.g. bit 0 = has texture)
+/// - `_pad`:        4 bytes — alignment padding
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialUniforms {
     pub base_color: [f32; 4],
+    pub metallic: f32,
+    pub roughness: f32,
     pub flags: u32,
-    pub _pad: [u32; 3],
+    pub _pad: u32,
 }
 
 /// Maximum number of simultaneous lights supported by the Phong shader.
@@ -72,10 +81,10 @@ struct FrameUniforms {
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
+    metallic:  f32,
+    roughness: f32,
     flags: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    _pad: u32,
 }
 
 struct ObjectUniforms {
@@ -138,10 +147,10 @@ struct FrameUniforms {
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
+    metallic:  f32,
+    roughness: f32,
     flags: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    _pad: u32,
 }
 
 struct ObjectUniforms {
@@ -205,10 +214,10 @@ struct FrameUniforms {
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
+    metallic:  f32,
+    roughness: f32,
     flags: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    _pad: u32,
 }
 
 struct ObjectUniforms {
@@ -284,10 +293,10 @@ struct LightsBuffer {
 }
 struct MaterialUniforms {
     base_color: vec4<f32>,
+    metallic:  f32,
+    roughness: f32,
     flags: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    _pad: u32,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -366,6 +375,176 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         color += light_color * spec * 0.3;
     }
 
+    return vec4<f32>(color, material.base_color.a);
+}
+"#;
+
+/// Cook-Torrance PBR shader — metallic-roughness workflow, 3-group layout.
+///
+/// Implements GGX NDF (Trowbridge-Reitz), Smith's Schlick-GGX geometry term, and
+/// Fresnel-Schlick.  Supports up to 16 analytic lights from group 0 binding 1.
+///
+/// Material parameters used from `MaterialUniforms`:
+/// - `base_color.rgb` — albedo / base reflectance colour
+/// - `base_color.a`   — alpha (passed through)
+/// - `metallic`       — 0 = dielectric, 1 = full metal
+/// - `roughness`      — 0 = mirror, 1 = fully diffuse
+///
+/// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
+/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+pub const PBR_SHADER: &str = r#"
+const PI: f32 = 3.14159265358979323846;
+const MAX_LIGHTS: u32 = 16u;
+
+struct FrameUniforms {
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+}
+struct LightUniform {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range_pad: vec4<f32>,
+}
+struct LightsBuffer {
+    lights: array<LightUniform, 16>,
+    count: vec4<u32>,
+}
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    metallic:  f32,
+    roughness: f32,
+    flags: u32,
+    _pad: u32,
+}
+struct ObjectUniforms {
+    world: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> lights_data: LightsBuffer;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
+@group(1) @binding(2) var s_diffuse: sampler;
+@group(2) @binding(0) var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) uv:       vec2<f32>,
+}
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) world_normal:   vec3<f32>,
+    @location(2) uv:             vec2<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let world_pos = object.world * vec4<f32>(in.position, 1.0);
+    let normal_mat = mat3x3<f32>(
+        object.world[0].xyz,
+        object.world[1].xyz,
+        object.world[2].xyz,
+    );
+    out.world_position = world_pos.xyz;
+    out.world_normal   = normalize(normal_mat * in.normal);
+    out.clip_position  = frame.proj * frame.view * world_pos;
+    out.uv             = in.uv;
+    return out;
+}
+
+// ── BRDF helpers ─────────────────────────────────────────────────────────────
+
+/// Trowbridge-Reitz GGX normal distribution function.
+fn distribution_ggx(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+    let a  = roughness * roughness;
+    let a2 = a * a;
+    let NdH  = max(dot(N, H), 0.0);
+    let NdH2 = NdH * NdH;
+    let denom = NdH2 * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom);
+}
+
+/// Schlick-GGX geometry sub-term (single direction).
+fn geometry_schlick_ggx(NdotV: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+/// Smith's geometry term — accounts for both view and light directions.
+fn geometry_smith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+    let NdV = max(dot(N, V), 0.0);
+    let NdL = max(dot(N, L), 0.0);
+    return geometry_schlick_ggx(NdV, roughness) * geometry_schlick_ggx(NdL, roughness);
+}
+
+/// Fresnel-Schlick approximation.
+fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// ── Fragment shader ───────────────────────────────────────────────────────────
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let albedo    = material.base_color.rgb;
+    let metallic  = material.metallic;
+    let roughness = clamp(material.roughness, 0.04, 1.0);
+
+    let N = normalize(in.world_normal);
+    let V = normalize(frame.camera_pos.xyz - in.world_position);
+
+    // Base reflectivity: dielectrics use 0.04, metals use albedo as F0.
+    let F0 = mix(vec3<f32>(0.04), albedo, metallic);
+
+    var Lo = vec3<f32>(0.0);
+
+    let n_lights = min(lights_data.count.x, MAX_LIGHTS);
+    for (var i = 0u; i < n_lights; i++) {
+        let light = lights_data.lights[i];
+        var L: vec3<f32>;
+        var attenuation = 1.0;
+
+        if light.position.w < 0.5 {
+            // Directional light
+            L = normalize(-light.direction.xyz);
+        } else {
+            // Point light
+            let to_light = light.position.xyz - in.world_position;
+            let dist     = length(to_light);
+            L            = normalize(to_light);
+            let range    = light.range_pad.x;
+            attenuation  = clamp(1.0 - dist / range, 0.0, 1.0);
+        }
+
+        let H = normalize(V + L);
+        let light_color = light.color_intensity.rgb * light.color_intensity.a * attenuation;
+        let NdL = max(dot(N, L), 0.0);
+
+        // Cook-Torrance BRDF
+        let D = distribution_ggx(N, H, roughness);
+        let G = geometry_smith(N, V, L, roughness);
+        let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
+
+        // kS is Fresnel; kD = (1 - kS) * (1 - metallic) — metals have no diffuse.
+        let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+
+        let specular = D * G * F / (4.0 * max(dot(N, V), 0.0) * NdL + 0.0001);
+        let diffuse  = kD * albedo / PI;
+
+        Lo += (diffuse + specular) * light_color * NdL;
+    }
+
+    // Ambient approximation: use F0 as a rough stand-in for environment reflectance.
+    // Keeps metals from rendering as pure black when no IBL is present.
+    let ambient = F0 * 0.08;
+
+    let color = ambient + Lo;
     return vec4<f32>(color, material.base_color.a);
 }
 "#;

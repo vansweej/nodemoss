@@ -41,16 +41,11 @@ pub struct Renderer {
     // Frame-level resources
     pub(crate) frame_uniform_buffer: wgpu::Buffer,
     pub(crate) lights_buffer: wgpu::Buffer,
-    // Fallback (untextured) material resources — kept alive to back the bind group
+    // Fallback (untextured) material resources — kept alive to back per-draw bind groups
     #[allow(dead_code)]
     pub(crate) fallback_texture: wgpu::Texture,
-    #[allow(dead_code)]
     pub(crate) fallback_texture_view: wgpu::TextureView,
-    #[allow(dead_code)]
     pub(crate) fallback_sampler: wgpu::Sampler,
-    #[allow(dead_code)]
-    pub(crate) fallback_material_uniform_buffer: wgpu::Buffer,
-    pub(crate) fallback_material_bind_group: wgpu::BindGroup,
     // Per-frame object uniforms
     pub(crate) frame_resources: FrameResources,
     pub(crate) cache: ImmutableResourceCache,
@@ -217,44 +212,6 @@ impl Renderer {
             ..Default::default()
         });
 
-        // ── Fallback material uniform buffer (white, flags=0) ─────────────────
-        let fallback_material_uniforms = MaterialUniforms {
-            base_color: [1.0, 1.0, 1.0, 1.0],
-            flags: 0,
-            _pad: [0; 3],
-        };
-        let fallback_material_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fallback material uniform buffer"),
-            size: std::mem::size_of::<MaterialUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        gpu.queue.write_buffer(
-            &fallback_material_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&fallback_material_uniforms),
-        );
-
-        // ── Fallback material bind group (group 1) ────────────────────────────
-        let fallback_material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fallback material bind group"),
-            layout: &material_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: fallback_material_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&fallback_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&fallback_sampler),
-                },
-            ],
-        });
-
         // ── Pipeline layout: all three groups ─────────────────────────────────
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rig render pipeline layout"),
@@ -284,8 +241,6 @@ impl Renderer {
             fallback_texture,
             fallback_texture_view,
             fallback_sampler,
-            fallback_material_uniform_buffer,
-            fallback_material_bind_group,
             frame_resources,
             cache: ImmutableResourceCache::default(),
             depth_texture,
@@ -673,32 +628,31 @@ impl Renderer {
             // Group 0: frame uniforms
             pass.set_bind_group(0, frame_bind_group, &[]);
 
-            // Group 1: material bind group — build per-material if it has a texture
-            let material_bind_group = if !material.textures.is_empty() {
-                let (tex_handle, samp_handle) = material.textures[0];
-                let tex_asset = assets
-                    .texture(tex_handle)
-                    .map_err(|e| RenderError::Asset(e.to_string()))?;
-                let samp_desc = assets
-                    .sampler(samp_handle)
-                    .map_err(|e| RenderError::Asset(e.to_string()))?;
-                // Obtain raw pointers to break the two-borrow problem on self.cache.
-                // SAFETY: Both borrows are non-overlapping (different HashMaps) and the
-                // returned references remain valid for the duration of this block.
-                let tex_view =
-                    self.cache
-                        .texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
-                        as *const wgpu::TextureView;
-                let sampler =
-                    self.cache.sampler(&gpu.device, samp_handle, samp_desc) as *const wgpu::Sampler;
-                // SAFETY: pointers dereference into stable HashMap values; no removal occurs.
-                let tex_view = unsafe { &*tex_view };
-                let sampler = unsafe { &*sampler };
-                // Build a per-material uniform buffer with base_color = [1,1,1,1]
-                let mat_uniforms = MaterialUniforms {
-                    base_color: [1.0, 1.0, 1.0, 1.0],
-                    flags: 1,
-                    _pad: [0; 3],
+            // Group 1: material bind group.
+            //
+            // Always build a per-draw uniform buffer from `material.parameters` so that
+            // metallic, roughness, and base_color are correctly forwarded to the shader.
+            // For textured materials the real texture/sampler are bound; otherwise the
+            // renderer's fallback 1×1 white texture is used (so the shader can sample it
+            // safely without branching).
+            let material_bind_group = {
+                let params = &material.parameters;
+                let mat_uniforms = if !material.textures.is_empty() {
+                    MaterialUniforms {
+                        base_color: params.diffuse,
+                        metallic: params.metallic,
+                        roughness: params.roughness,
+                        flags: 1,
+                        _pad: 0,
+                    }
+                } else {
+                    MaterialUniforms {
+                        base_color: params.diffuse,
+                        metallic: params.metallic,
+                        roughness: params.roughness,
+                        flags: 0,
+                        _pad: 0,
+                    }
                 };
                 let mat_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("material uniform buffer"),
@@ -708,33 +662,72 @@ impl Renderer {
                 });
                 gpu.queue
                     .write_buffer(&mat_buf, 0, bytemuck::bytes_of(&mat_uniforms));
-                let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("textured material bind group"),
-                    layout: &self.material_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: mat_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(tex_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                });
-                Some(bg)
-            } else {
-                None
+
+                // Resolve texture + sampler: use the asset's first slot if present,
+                // otherwise fall back to the renderer's built-in 1×1 white texture.
+                if !material.textures.is_empty() {
+                    let (tex_handle, samp_handle) = material.textures[0];
+                    let tex_asset = assets
+                        .texture(tex_handle)
+                        .map_err(|e| RenderError::Asset(e.to_string()))?;
+                    let samp_desc = assets
+                        .sampler(samp_handle)
+                        .map_err(|e| RenderError::Asset(e.to_string()))?;
+                    // Obtain raw pointers to break the two-borrow problem on self.cache.
+                    // SAFETY: Both borrows are non-overlapping (different HashMaps) and the
+                    // returned references remain valid for the duration of this block.
+                    let tex_view =
+                        self.cache
+                            .texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
+                            as *const wgpu::TextureView;
+                    let sampler = self.cache.sampler(&gpu.device, samp_handle, samp_desc)
+                        as *const wgpu::Sampler;
+                    // SAFETY: pointers dereference into stable HashMap values; no removal occurs.
+                    let tex_view = unsafe { &*tex_view };
+                    let sampler = unsafe { &*sampler };
+                    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("textured material bind group"),
+                        layout: &self.material_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: mat_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(tex_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    })
+                } else {
+                    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("untextured material bind group"),
+                        layout: &self.material_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: mat_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.fallback_texture_view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(&self.fallback_sampler),
+                            },
+                        ],
+                    })
+                }
             };
 
-            let mat_bg_ref = material_bind_group
-                .as_ref()
-                .unwrap_or(&self.fallback_material_bind_group);
-            pass.set_bind_group(1, mat_bg_ref, &[]);
+            pass.set_bind_group(1, &material_bind_group, &[]);
 
             // Group 2: object uniforms (dynamic offset)
             pass.set_bind_group(
