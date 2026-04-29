@@ -124,9 +124,9 @@ impl Application for MetaballsApp {
         let material = ctx.assets.add_material(MaterialAsset {
             shader,
             parameters: MaterialParams {
-                // Silver: bright near-white albedo (F0 ≈ 0.95) with a very
-                // slight cool tint. Fully metallic, very smooth surface.
-                diffuse: [0.95, 0.93, 0.90, 1.0],
+                // Silver: cool-tinted F0 (blue > red) matches the spectral
+                // reflectance of Ag — the eye reads this as silver vs nickel.
+                diffuse: [0.90, 0.93, 0.96, 1.0],
                 metallic: 1.0,
                 roughness: 0.10,
                 ..Default::default()

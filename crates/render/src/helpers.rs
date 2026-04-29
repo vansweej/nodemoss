@@ -534,18 +534,31 @@ fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
     // HDR sky / ground gradient — values above 1.0 are intentional; ACES
     // tone-maps them back to display range.  Think of this as the studio
     // lighting rig reflected in the metal surface.
-    // Silver studio environment: bright cool sky + DARK horizon + warm ground.
-    // The contrast between sky and horizon is what makes a surface read as
-    // "silvery" rather than "white" — the eye sees bright-vs-dark variation
-    // across the surface instead of a uniform wash.
-    let sky_col     = vec3<f32>(0.80, 0.84, 0.95); // bright cool blue sky
-    let horizon_col = vec3<f32>(0.12, 0.13, 0.18); // dark void — deepens the silver
-    let ground_col  = vec3<f32>(0.20, 0.18, 0.14); // dark warm ground bounce
+    // Four-stop studio environment — this is what makes a surface read as silver:
+    //
+    //  sky       cool blue dome above the softbox
+    //  softbox   warm-white bright band just above horizon (studio key light)
+    //  horizon   dark void (the "negative fill" zone)
+    //  ground    dark warm bounce from below
+    //
+    // The softbox stripe sweeps across the blob as a characteristic bright band;
+    // the dark horizon on either side of it creates the contrast that sells
+    // polished metal.
+    let sky_col     = vec3<f32>(0.70, 0.75, 0.88); // cool blue sky
+    let softbox_col = vec3<f32>(0.95, 0.92, 0.88); // warm-white studio softbox
+    let horizon_col = vec3<f32>(0.10, 0.11, 0.15); // dark void
+    let ground_col  = vec3<f32>(0.18, 0.16, 0.12); // dark warm ground
 
-    let t_sky    = clamp(R.y, 0.0, 1.0);
-    let t_ground = clamp(-R.y, 0.0, 1.0);
-    let env      = mix(horizon_col, sky_col, t_sky * t_sky); // squared for sharper sky
-    let env_full = mix(env, ground_col, t_ground);
+    let t_up   = clamp(R.y,  0.0, 1.0);
+    let t_down = clamp(-R.y, 0.0, 1.0);
+
+    // Upper hemisphere: horizon → softbox (sharp), then softbox → sky (gradual).
+    let softbox_t  = smoothstep(0.0, 0.25, t_up);
+    let sky_t      = smoothstep(0.3,  0.8,  t_up);
+    let upper_soft = mix(horizon_col, softbox_col, softbox_t);
+    let upper      = mix(upper_soft,  sky_col,     sky_t);
+
+    let env_full = mix(upper, ground_col, t_down);
 
     // Only slightly dampen for rough surfaces — smooth metals should see
     // close to the full environment.
