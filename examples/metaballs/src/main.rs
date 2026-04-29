@@ -195,13 +195,7 @@ impl Application for MetaballsApp {
                 12.0,
                 32.0,
             ),
-            (
-                "light_low",
-                Vec3::new(-4.0, -8.0, 3.0),
-                Vec3::new(1.00, 0.75, 0.55),
-                1.0,
-                28.0,
-            ),
+
         ];
         for (name, pos, color, intensity, range) in light_setup {
             let node = ctx.scene.create_node(*name);
