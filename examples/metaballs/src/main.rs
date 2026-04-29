@@ -124,9 +124,12 @@ impl Application for MetaballsApp {
         let material = ctx.assets.add_material(MaterialAsset {
             shader,
             parameters: MaterialParams {
-                diffuse: [0.95, 0.93, 0.90, 1.0], // silver albedo (F0 for metallic)
+                // Medium-dark cool silver — albedo doubles as F0 for metallic=1.
+                // Darker than real silver so the surface reads as distinctly
+                // metallic; Fresnel pushes the silhouette edges toward bright white.
+                diffuse: [0.75, 0.76, 0.78, 1.0],
                 metallic: 1.0,
-                roughness: 0.08,
+                roughness: 0.10,
                 ..Default::default()
             },
             textures: vec![],

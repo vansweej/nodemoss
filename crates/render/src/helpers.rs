@@ -532,9 +532,9 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
 
 fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
     // Sky / ground gradient colours — tweak these to taste.
-    let sky_col    = vec3<f32>(0.55, 0.62, 0.78);  // cool blue-white
-    let horizon_col = vec3<f32>(0.72, 0.72, 0.70); // neutral grey horizon
-    let ground_col = vec3<f32>(0.22, 0.20, 0.18);  // warm dark ground
+    let sky_col    = vec3<f32>(0.45, 0.50, 0.60);  // muted blue-grey
+    let horizon_col = vec3<f32>(0.55, 0.55, 0.55); // medium neutral grey
+    let ground_col = vec3<f32>(0.15, 0.14, 0.13);  // dark warm ground
 
     let t_sky    = clamp(R.y, 0.0, 1.0);
     let t_ground = clamp(-R.y, 0.0, 1.0);
