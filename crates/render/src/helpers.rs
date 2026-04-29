@@ -534,9 +534,13 @@ fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
     // HDR sky / ground gradient — values above 1.0 are intentional; ACES
     // tone-maps them back to display range.  Think of this as the studio
     // lighting rig reflected in the metal surface.
-    let sky_col     = vec3<f32>(1.20, 1.25, 1.40); // bright cool sky (HDR)
-    let horizon_col = vec3<f32>(0.90, 0.90, 0.90); // bright neutral horizon
-    let ground_col  = vec3<f32>(0.40, 0.38, 0.35); // warm ground bounce
+    // Silver studio environment: bright cool sky + DARK horizon + warm ground.
+    // The contrast between sky and horizon is what makes a surface read as
+    // "silvery" rather than "white" — the eye sees bright-vs-dark variation
+    // across the surface instead of a uniform wash.
+    let sky_col     = vec3<f32>(1.00, 1.05, 1.20); // bright cool blue sky (HDR)
+    let horizon_col = vec3<f32>(0.18, 0.20, 0.26); // DARK cool grey — key to silver look
+    let ground_col  = vec3<f32>(0.30, 0.27, 0.22); // dark warm ground bounce
 
     let t_sky    = clamp(R.y, 0.0, 1.0);
     let t_ground = clamp(-R.y, 0.0, 1.0);
