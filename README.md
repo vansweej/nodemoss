@@ -15,6 +15,8 @@ NodeMoss is a personal 3D and physics research framework in Rust built around a 
  - `platonic_solids` — five platonic solids orbiting with fly-camera navigation
  - `textured_mesh` — sphere with procedurally generated checkerboard texture, demonstrates GPU texture/sampler caching
  - `trackball_demo` — arc-ball orbit camera with mouse drag (LMB = orbit, RMB = dolly)
+ - `metaballs` — CPU Marching Cubes metaballs with PBR chrome material and fly-camera
+ - `voice_metaballs` — voice-reactive metaballs driven by a [graphynx](https://github.com/vansweej/graphynx) signal pipeline (Window → FFT → BandExtract); three synthetic voice presets switchable at runtime (keys 1/2/3)
  - All framework examples include an FPS counter overlay (press **F3** to toggle)
 
 ## Workspace

@@ -14,7 +14,8 @@ Directions 2–4 are planned — see the [Roadmap](#roadmap) section.
 5. [DynamicMesh Architecture](#5-dynamicmesh-architecture)
 6. [Scene Graph Integration](#6-scene-graph-integration)
 7. [Demo: `examples/metaballs`](#7-demo-examplesmetaballs)
-8. [Roadmap — Four Directions](#8-roadmap--four-directions)
+8. [Voice-Reactive Variant: `examples/voice_metaballs`](#8-voice-reactive-variant-examplesvoice_metaballs)
+9. [Roadmap — Four Directions](#9-roadmap--four-directions)
 
 ---
 
@@ -341,7 +342,56 @@ index format, vertex layout) and feed into the same pipeline + draw call.
 
 ---
 
-## 8. Roadmap — Four Directions
+## 8. Voice-Reactive Variant: `examples/voice_metaballs`
+
+`examples/voice_metaballs` is a voice-reactive extension of the base metaballs
+demo. It integrates the [graphynx](https://github.com/vansweej/graphynx) signal
+processing engine as a path dependency to drive metaball animation parameters
+from real-time spectral analysis.
+
+### Signal pipeline
+
+Each frame, a synthetic voice signal is generated (additive synthesis:
+fundamental + formants + breathiness noise) and fed through a graphynx graph:
+
+```
+[audio: f32 × 1024] → Window(Hann) → FFT(Magnitude) → BandExtract(3 bands, EMA)
+                                                                  ↓
+                                                       [energies: f32 × 3]
+```
+
+The three band energies are mapped to animation parameters:
+
+| Band | Range | Drives |
+|------|-------|--------|
+| Low  | 20–250 Hz | Orbit radii of balls 0 and 1 |
+| Mid  | 250–4 000 Hz | Orbit radii of balls 2 and 3 |
+| High | 4 000–20 000 Hz | ISO threshold (surface tension) |
+
+### Voice presets
+
+Three synthetic voice presets are switchable at runtime:
+
+| Key | Preset  | Fundamental |
+|-----|---------|-------------|
+| `1` | Male    | 120 Hz      |
+| `2` | Female  | 220 Hz      |
+| `3` | Neutral | 170 Hz      |
+
+Switching preset rebuilds the graphynx graph and resets the EMA state.
+
+### Controls
+
+Same as the base metaballs demo, plus keys `1`/`2`/`3` for preset switching.
+
+### Dependencies
+
+Depends on graphynx crates via relative path dependencies (co-located
+development). No CUDA toolchain required — uses `backends-cpu` only.
+
+---
+
+## 9. Roadmap — Four Directions
 
 All four directions render the same metaball field. They differ in *where* the work
 happens (CPU vs GPU) and *what* they produce (triangle mesh vs ray-marched pixels).
