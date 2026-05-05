@@ -93,6 +93,7 @@
 
             # Audio (cpal / live-audio feature)
             alsa-lib
+            pipewire # provides libpipewire-0.3.so.0 needed by the ALSA PipeWire plugin
           ];
 
           # --- macOS: Apple SDK provides all frameworks (Metal, AppKit, QuartzCore, etc.) ---
