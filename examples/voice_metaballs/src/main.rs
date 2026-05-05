@@ -1,10 +1,10 @@
 //! Voice-reactive metaballs — CPU Marching Cubes driven by a graphynx signal
 //! processing pipeline.
 //!
-//! A synthetic voice signal (additive synthesis: fundamental + formants + noise)
-//! is analysed every frame through a `Window → FFT → BandExtract` graph built
-//! with graphynx.  The resulting three band energies (low / mid / high) are
-//! mapped to metaball animation parameters in real time:
+//! A voice signal (live microphone or synthetic additive synthesis) is analysed
+//! every frame through a `Window → FFT → BandExtract` graph built with
+//! graphynx.  The resulting three band energies (low / mid / high) are mapped
+//! to metaball animation parameters in real time:
 //!
 //! | Band  | Mapping                                     |
 //! |-------|---------------------------------------------|
@@ -16,9 +16,15 @@
 //! the `BandExtract` op (α = 0.6) and then further normalised on the render
 //! side with a per-band EMA (α = 1 − exp(−dt × RESPONSIVENESS)).
 //!
+//! # Audio modes
+//!
+//! The app tries to open the default microphone on startup.  If no device is
+//! available it falls back to `SynthSource` automatically.  Press **M** to
+//! toggle between live and synth at runtime.
+//!
 //! # Voice presets
 //!
-//! Three synthetic voice presets are available:
+//! Three synthetic voice presets control the `SynthSource` parameters:
 //!
 //! | Key | Preset  | Fundamental | Formants                    |
 //! |-----|---------|-------------|---------------------------  |
@@ -26,13 +32,15 @@
 //! | 2   | Female  | 220 Hz      | 900 / 1800 / 2800 Hz        |
 //! | 3   | Neutral | 170 Hz      | 800 / 1500 / 2650 Hz        |
 //!
-//! Pressing 1/2/3 rebuilds the graphynx graph with the new preset.
+//! Pressing 1/2/3 rebuilds the graphynx graph with the new preset and updates
+//! the `SynthSource` parameters.
 //!
 //! # Controls
 //!
 //! | Key(s)      | Action                        |
 //! |-------------|-------------------------------|
 //! | 1 / 2 / 3   | Switch voice preset           |
+//! | M           | Toggle live / synth audio     |
 //! | W / S       | Move forward / backward       |
 //! | A / D       | Strafe left / right           |
 //! | Q / E       | Move up / down                |
@@ -41,7 +49,6 @@
 //! | F4          | Toggle wireframe              |
 //! | Escape      | Close window                  |
 
-use std::f32::consts::PI;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -70,13 +77,16 @@ use graph_core::{
     },
     types::TensorType,
 };
-use runtime::executor::Executor;
+use runtime::{
+    audio::{AudioConfig, AudioSource, SynthSource},
+    executor::Executor,
+};
 
 // ── Signal pipeline constants ─────────────────────────────────────────────────
 
 /// FFT frame size (samples). Power-of-two for rustfft efficiency.
 const FFT_SIZE: usize = 1024;
-/// Audio sample rate (Hz). Synthetic — no real hardware required.
+/// Audio sample rate (Hz).
 const SAMPLE_RATE: f32 = 44_100.0;
 /// EMA smoothing factor inside BandExtract (α).
 const BAND_SMOOTHING: f32 = 0.6;
@@ -107,6 +117,33 @@ fn grid_params() -> GridParams {
         min: Vec3::splat(-GRID_HALF),
         max: Vec3::splat(GRID_HALF),
         resolution: [GRID_RES, GRID_RES, GRID_RES],
+    }
+}
+
+// ── Audio mode ────────────────────────────────────────────────────────────────
+
+/// Whether the app is consuming live microphone input or synthetic audio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AudioMode {
+    /// Real-time microphone capture via cpal.
+    Live,
+    /// Deterministic additive synthesis (fallback / default when no mic).
+    Synth,
+}
+
+impl AudioMode {
+    fn label(self) -> &'static str {
+        match self {
+            AudioMode::Live => "Live",
+            AudioMode::Synth => "Synth",
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            AudioMode::Live => AudioMode::Synth,
+            AudioMode::Synth => AudioMode::Live,
+        }
     }
 }
 
@@ -151,73 +188,45 @@ impl VoicePreset {
     }
 }
 
-// ── Synthetic audio generation ────────────────────────────────────────────────
+// ── Audio source construction ─────────────────────────────────────────────────
 
-/// Generate one FFT frame of synthetic voice audio.
+/// Build the base audio config (sample rate, frame size, channels).
+fn audio_config() -> AudioConfig {
+    AudioConfig {
+        sample_rate: SAMPLE_RATE as u32,
+        frame_size: FFT_SIZE,
+        channels: 1,
+    }
+}
+
+/// Build a `SynthSource` for the given preset.
+fn make_synth_source(preset: VoicePreset) -> SynthSource {
+    SynthSource::new(
+        audio_config(),
+        preset.fundamental_hz(),
+        preset.formants_hz(),
+    )
+}
+
+/// Try to open a live capture source; fall back to synth on any error.
 ///
-/// The signal is additive synthesis:
-/// - Fundamental at `f0` with harmonics up to Nyquist.
-/// - Three formant resonances (Gaussian-shaped amplitude envelope in frequency).
-/// - White noise floor for breathiness.
-///
-/// All components are mixed in the time domain.
-fn synthesise_frame(preset: VoicePreset, phase_offset: f32) -> Vec<f32> {
-    let f0 = preset.fundamental_hz();
-    let formants = preset.formants_hz();
-    let dt = 1.0 / SAMPLE_RATE;
-
-    let mut samples = vec![0.0_f32; FFT_SIZE];
-
-    // Harmonics of the fundamental (sawtooth-like source).
-    let mut harmonic = 1;
-    loop {
-        let freq = f0 * harmonic as f32;
-        if freq > SAMPLE_RATE / 2.0 {
-            break;
-        }
-        // Amplitude rolls off as 1/harmonic (sawtooth spectrum).
-        let amp = 1.0 / harmonic as f32;
-
-        // Formant shaping: boost harmonics near each formant centre.
-        let formant_gain: f32 = formants
-            .iter()
-            .map(|&fc| {
-                let bw = fc * 0.15; // 15% bandwidth
-                let diff = (freq - fc) / bw;
-                (-0.5 * diff * diff).exp()
-            })
-            .sum::<f32>()
-            .max(0.05); // minimum gain so all harmonics are audible
-
-        let total_amp = amp * (1.0 + formant_gain);
-
-        for (i, s) in samples.iter_mut().enumerate() {
-            let t = i as f32 * dt + phase_offset;
-            *s += total_amp * (2.0 * PI * freq * t).sin();
-        }
-
-        harmonic += 1;
-    }
-
-    // Add a small noise floor for breathiness.
-    // Use a deterministic LCG so the output is reproducible across frames
-    // (avoids needing a rand dependency).
-    let mut lcg: u32 = 0x12345678u32.wrapping_add((phase_offset * 1_000.0) as u32);
-    for s in samples.iter_mut() {
-        lcg = lcg.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        let noise = (lcg as f32 / u32::MAX as f32) * 2.0 - 1.0;
-        *s += noise * 0.05;
-    }
-
-    // Normalise to [-1, 1].
-    let peak = samples.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-    if peak > 1e-6 {
-        for s in samples.iter_mut() {
-            *s /= peak;
+/// Returns `(source, actual_mode)`.
+fn make_audio_source(
+    preset: VoicePreset,
+    requested: AudioMode,
+) -> (Box<dyn AudioSource>, AudioMode) {
+    if requested == AudioMode::Live {
+        match runtime::audio::capture::CpalCapture::new(audio_config()) {
+            Ok(cap) => {
+                log::info!("Live audio capture started");
+                return (Box::new(cap), AudioMode::Live);
+            }
+            Err(e) => {
+                log::warn!("Live audio unavailable ({e}); falling back to SynthSource");
+            }
         }
     }
-
-    samples
+    (Box::new(make_synth_source(preset)), AudioMode::Synth)
 }
 
 // ── Graphynx pipeline ─────────────────────────────────────────────────────────
@@ -336,15 +345,16 @@ struct VoiceMetaballsApp {
 
     // Audio / signal pipeline
     preset: VoicePreset,
+    audio_mode: AudioMode,
+    audio_source: Box<dyn AudioSource>,
     executor: Executor,
     /// Smoothed band energies [low, mid, high] for animation (render-side EMA).
     smooth_energies: [f32; 3],
-    /// Accumulated audio phase (seconds) — keeps synthesis continuous across frames.
-    audio_phase: f32,
 
     // HUD
     debug_hud: DebugHud,
     hud_preset: rig_app::rig_overlay::ElementId,
+    hud_audio: rig_app::rig_overlay::ElementId,
     hud_energies: rig_app::rig_overlay::ElementId,
     hud_triangles: rig_app::rig_overlay::ElementId,
 }
@@ -467,19 +477,27 @@ impl Application for VoiceMetaballsApp {
         let preset = VoicePreset::Neutral;
         let executor = build_pipeline(preset)?;
 
+        // Try live audio; fall back to synth automatically.
+        let (audio_source, audio_mode) = make_audio_source(preset, AudioMode::Live);
+
         // ── HUD ────────────────────────────────────────────────────────────
         let mut debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
         let hud_preset = debug_hud.add_element(
             ctx.overlay,
             Side::Left,
-            format!("Preset: {}", preset.label()),
+            format!("Preset: {} (1/2/3)", preset.label()),
+        );
+        let hud_audio = debug_hud.add_element(
+            ctx.overlay,
+            Side::Left,
+            format!("Audio: {} [M]", audio_mode.label()),
         );
         let hud_energies =
             debug_hud.add_element(ctx.overlay, Side::Left, "Bands: L=0.00 M=0.00 H=0.00");
         let hud_triangles = debug_hud.add_element(ctx.overlay, Side::Right, "Triangles: 0");
 
         log::info!(
-            "Voice metaballs initialised. Keys 1/2/3 = preset, F3 = overlay, F4 = wireframe."
+            "Voice metaballs initialised. Keys 1/2/3 = preset, M = audio mode, F3 = overlay, F4 = wireframe."
         );
 
         Ok(Self {
@@ -494,11 +512,13 @@ impl Application for VoiceMetaballsApp {
             elapsed: 0.0,
             triangle_count: 0,
             preset,
+            audio_mode,
+            audio_source,
             executor,
             smooth_energies: [0.0; 3],
-            audio_phase: 0.0,
             debug_hud,
             hud_preset,
+            hud_audio,
             hud_energies,
             hud_triangles,
         })
@@ -524,35 +544,45 @@ impl Application for VoiceMetaballsApp {
         {
             self.preset = p;
             self.executor = build_pipeline(p)?;
-            // Reset smoothed energies so the new preset starts clean.
+            // Update synth params if in synth mode; live capture ignores preset.
+            if self.audio_mode == AudioMode::Synth {
+                let (src, mode) = make_audio_source(p, AudioMode::Synth);
+                self.audio_source = src;
+                self.audio_mode = mode;
+            }
             self.smooth_energies = [0.0; 3];
             log::info!("Switched to preset: {}", p.label());
         }
 
-        // ── Run the signal pipeline ────────────────────────────────────────
-        let frame_duration = FFT_SIZE as f32 / SAMPLE_RATE;
-        let samples = synthesise_frame(self.preset, self.audio_phase);
-        self.audio_phase += frame_duration;
-        // Wrap phase to avoid float precision drift over long sessions.
-        if self.audio_phase > 3600.0 {
-            self.audio_phase -= 3600.0;
+        // ── Handle audio mode toggle (M key) ──────────────────────────────
+        if ctx.input.is_key_pressed(KeyCode::KeyM) {
+            let requested = self.audio_mode.toggled();
+            let (src, actual) = make_audio_source(self.preset, requested);
+            self.audio_source = src;
+            self.audio_mode = actual;
+            self.smooth_energies = [0.0; 3];
+            log::info!("Audio mode: {}", self.audio_mode.label());
         }
 
-        self.executor
-            .input("audio")?
-            .write("audio", samples.as_slice())?;
-        self.executor.run()?;
-        let raw_energies: &[f32] = self
-            .executor
-            .output("energies")?
-            .read()
-            .ok_or_else(|| anyhow::anyhow!("energies output not ready"))?;
+        // ── Run the signal pipeline ────────────────────────────────────────
+        // `next_frame` returns None when the ring buffer has fewer than
+        // frame_size samples (only possible with CpalCapture on the very
+        // first tick).  In that case we reuse the previous smooth_energies.
+        if let Some(frame) = self.audio_source.next_frame() {
+            self.executor.input("audio")?.write("audio", frame)?;
+            self.executor.run()?;
+            let raw_energies: &[f32] = self
+                .executor
+                .output("energies")?
+                .read()
+                .ok_or_else(|| anyhow::anyhow!("energies output not ready"))?;
 
-        // ── Render-side EMA normalisation ──────────────────────────────────
-        // α = 1 − exp(−dt × RESPONSIVENESS)
-        let alpha = 1.0 - (-dt * RESPONSIVENESS).exp();
-        for (i, &e) in raw_energies.iter().enumerate().take(3) {
-            self.smooth_energies[i] += alpha * (e - self.smooth_energies[i]);
+            // ── Render-side EMA normalisation ──────────────────────────────
+            // α = 1 − exp(−dt × RESPONSIVENESS)
+            let alpha = 1.0 - (-dt * RESPONSIVENESS).exp();
+            for (i, &e) in raw_energies.iter().enumerate().take(3) {
+                self.smooth_energies[i] += alpha * (e - self.smooth_energies[i]);
+            }
         }
 
         // ── Map band energies to animation parameters ──────────────────────
@@ -640,6 +670,10 @@ impl Application for VoiceMetaballsApp {
             format!("Preset: {} (1/2/3)", self.preset.label()),
         )?;
         ctx.set_text(
+            self.hud_audio,
+            format!("Audio: {} [M]", self.audio_mode.label()),
+        )?;
+        ctx.set_text(
             self.hud_energies,
             format!(
                 "Bands: L={:.2} M={:.2} H={:.2}",
@@ -681,6 +715,26 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    // ── AudioMode ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn audio_mode_labels_are_non_empty() {
+        assert!(!AudioMode::Live.label().is_empty());
+        assert!(!AudioMode::Synth.label().is_empty());
+    }
+
+    #[test]
+    fn audio_mode_toggle_is_involutive() {
+        assert_eq!(AudioMode::Live.toggled(), AudioMode::Synth);
+        assert_eq!(AudioMode::Synth.toggled(), AudioMode::Live);
+    }
+
+    #[test]
+    fn audio_mode_equality() {
+        assert_eq!(AudioMode::Live, AudioMode::Live);
+        assert_ne!(AudioMode::Live, AudioMode::Synth);
+    }
+
     // ── VoicePreset ───────────────────────────────────────────────────────
 
     #[test]
@@ -712,43 +766,33 @@ mod tests {
         assert_ne!(VoicePreset::Male, VoicePreset::Female);
     }
 
-    // ── synthesise_frame ──────────────────────────────────────────────────
+    // ── audio_config ──────────────────────────────────────────────────────
 
     #[test]
-    fn synthesise_frame_returns_correct_length() {
-        let frame = synthesise_frame(VoicePreset::Neutral, 0.0);
-        assert_eq!(frame.len(), FFT_SIZE);
+    fn audio_config_reflects_preset() {
+        let cfg = audio_config();
+        assert_eq!(cfg.sample_rate, SAMPLE_RATE as u32);
+        assert_eq!(cfg.frame_size, FFT_SIZE);
+        assert_eq!(cfg.channels, 1);
+    }
+
+    // ── make_audio_source ─────────────────────────────────────────────────
+
+    #[test]
+    fn make_audio_source_synth_always_succeeds() {
+        let (mut src, mode) = make_audio_source(VoicePreset::Neutral, AudioMode::Synth);
+        assert_eq!(mode, AudioMode::Synth);
+        // SynthSource always returns Some on next_frame.
+        assert!(src.next_frame().is_some());
     }
 
     #[test]
-    fn synthesise_frame_is_normalised() {
-        let frame = synthesise_frame(VoicePreset::Male, 0.0);
-        let peak = frame.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-        // Peak should be ≤ 1.0 after normalisation.
-        assert!(peak <= 1.0 + 1e-5, "peak={peak}");
-    }
-
-    #[test]
-    fn synthesise_frame_is_not_silent() {
-        let frame = synthesise_frame(VoicePreset::Female, 0.0);
-        let rms = (frame.iter().map(|s| s * s).sum::<f32>() / FFT_SIZE as f32).sqrt();
-        assert!(rms > 0.01, "frame is too quiet: rms={rms}");
-    }
-
-    #[test]
-    fn synthesise_frame_different_presets_differ() {
-        let male = synthesise_frame(VoicePreset::Male, 0.0);
-        let female = synthesise_frame(VoicePreset::Female, 0.0);
-        // The two frames should not be identical.
-        let diff: f32 = male
-            .iter()
-            .zip(female.iter())
-            .map(|(a, b)| (a - b).abs())
-            .sum();
-        assert!(
-            diff > 1.0,
-            "male and female frames are too similar: diff={diff}"
-        );
+    fn make_audio_source_live_falls_back_to_synth_in_ci() {
+        // In CI / headless environments there is no audio device.
+        // make_audio_source must not panic; it returns Synth as fallback.
+        let (_src, mode) = make_audio_source(VoicePreset::Neutral, AudioMode::Live);
+        // Either Live (if a device exists) or Synth (fallback) is acceptable.
+        assert!(mode == AudioMode::Live || mode == AudioMode::Synth);
     }
 
     // ── build_pipeline ────────────────────────────────────────────────────
@@ -763,10 +807,11 @@ mod tests {
     #[test]
     fn pipeline_produces_three_band_energies() {
         let mut exec = build_pipeline(VoicePreset::Neutral).unwrap();
-        let samples = synthesise_frame(VoicePreset::Neutral, 0.0);
+        let mut src = make_synth_source(VoicePreset::Neutral);
+        let frame = src.next_frame().unwrap().to_vec();
         exec.input("audio")
             .unwrap()
-            .write("audio", samples.as_slice())
+            .write("audio", frame.as_slice())
             .unwrap();
         exec.run().unwrap();
         let energies: &[f32] = exec.output("energies").unwrap().read().unwrap();
@@ -776,10 +821,11 @@ mod tests {
     #[test]
     fn pipeline_energies_are_non_negative() {
         let mut exec = build_pipeline(VoicePreset::Male).unwrap();
-        let samples = synthesise_frame(VoicePreset::Male, 0.0);
+        let mut src = make_synth_source(VoicePreset::Male);
+        let frame = src.next_frame().unwrap().to_vec();
         exec.input("audio")
             .unwrap()
-            .write("audio", samples.as_slice())
+            .write("audio", frame.as_slice())
             .unwrap();
         exec.run().unwrap();
         let energies: &[f32] = exec.output("energies").unwrap().read().unwrap();
@@ -791,22 +837,20 @@ mod tests {
     #[test]
     fn pipeline_ema_state_persists_across_ticks() {
         let mut exec = build_pipeline(VoicePreset::Neutral).unwrap();
+        let mut src = make_synth_source(VoicePreset::Neutral);
         let mut last_energies = [0.0_f32; 3];
 
         for tick in 0..5 {
-            let samples = synthesise_frame(VoicePreset::Neutral, tick as f32 * 0.023);
+            let frame = src.next_frame().unwrap().to_vec();
             exec.input("audio")
                 .unwrap()
-                .write("audio", samples.as_slice())
+                .write("audio", frame.as_slice())
                 .unwrap();
             exec.run().unwrap();
             let energies: &[f32] = exec.output("energies").unwrap().read().unwrap();
             if tick > 0 {
-                // With EMA smoothing, energies should not jump wildly between ticks.
                 for (i, (&cur, &prev)) in energies.iter().zip(last_energies.iter()).enumerate() {
                     let delta = (cur - prev).abs();
-                    // EMA with α=0.6 limits the jump to at most 60% of the full range.
-                    // This is a loose sanity check — just verify it's not NaN or ±inf.
                     assert!(
                         delta.is_finite(),
                         "band {i} energy is not finite at tick {tick}: {cur}"

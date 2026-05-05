@@ -195,7 +195,6 @@ impl Application for MetaballsApp {
                 12.0,
                 32.0,
             ),
-
         ];
         for (name, pos, color, intensity, range) in light_setup {
             let node = ctx.scene.create_node(*name);
