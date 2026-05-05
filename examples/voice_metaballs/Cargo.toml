@@ -20,4 +20,4 @@ bytemuck   = { version = "1", features = ["derive"] }
 graph-core    = { path = "../../../rustycuda/core" }
 backends      = { path = "../../../rustycuda/backends" }
 backends-cpu  = { path = "../../../rustycuda/backends-cpu" }
-runtime       = { path = "../../../rustycuda/runtime" }
+runtime       = { path = "../../../rustycuda/runtime", features = ["live-audio"] }

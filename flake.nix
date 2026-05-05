@@ -90,6 +90,9 @@
 
             # EGL / OpenGL fallback (libglvnd provides libEGL, libGL)
             libglvnd
+
+            # Audio (cpal / live-audio feature)
+            alsa-lib
           ];
 
           # --- macOS: Apple SDK provides all frameworks (Metal, AppKit, QuartzCore, etc.) ---
