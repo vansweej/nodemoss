@@ -119,6 +119,10 @@
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
               # Vulkan validation layers for debug builds
               export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+              # Point ALSA at the system PipeWire plugin so cpal can capture audio.
+              # The Nix alsa-lib does not bundle libasound_module_pcm_pipewire.so;
+              # the system copy (installed by pipewire-alsa) provides it.
+              export ALSA_PLUGIN_DIR="/usr/lib/x86_64-linux-gnu/alsa-lib"
             '';
           };
         }
