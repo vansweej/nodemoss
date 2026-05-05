@@ -18,6 +18,7 @@ members = [
     "examples/textured_mesh",
     "examples/lit_scene",
     "examples/metaballs",
+    "examples/voice_metaballs",
 ]
 exclude = ["GeometricTools"]
 
