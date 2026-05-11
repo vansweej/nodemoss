@@ -66,6 +66,7 @@
 //! | F4          | Toggle wireframe              |
 //! | Escape      | Close window                  |
 
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -146,13 +147,36 @@ const GATE_OPEN_THRESHOLD: f32 = 0.10;
 /// Normalised energy level below which the gate closes (hysteresis margin).
 const GATE_CLOSE_THRESHOLD: f32 = 0.05;
 
-// ── Speed multiplier smoothing ────────────────────────────────────────────────
+// ── Animation parameter smoothing ────────────────────────────────────────────
 
-/// EMA alpha for the speed multiplier.
+/// Rate constant for smoothing animation parameters (units: 1/second).
 ///
-/// `1/0.03 ≈ 33 frames` to reach 63% of target at 60 fps.  This prevents
-/// jarring velocity discontinuities when the mid band changes rapidly.
-const SPEED_SMOOTH_ALPHA: f32 = 0.03;
+/// Used as `alpha = 1 - exp(-dt * rate)` so smoothing is frame-rate
+/// independent — identical behaviour at 30 fps and 60 fps.
+///
+/// `1/8 = 125 ms` time constant: fast enough to feel reactive, slow enough
+/// to eliminate per-frame jitter from FFT variance.
+const ANIM_SMOOTH_RATE: f32 = 8.0;
+
+/// Rate constant for speed multiplier smoothing (units: 1/second).
+///
+/// Much slower than `ANIM_SMOOTH_RATE` because velocity changes are
+/// perceptually jarring.  `1/2 = 500 ms` time constant.
+const SPEED_SMOOTH_RATE: f32 = 2.0;
+
+/// Rate constant for mid-band orbit spread (units: 1/second).
+///
+/// Faster than `ANIM_SMOOTH_RATE` so the orbit snaps open/closed immediately
+/// when a singer starts or stops — making male/female patterns visually distinct.
+/// `1/16 ≈ 62 ms` time constant.
+const MID_ORBIT_SMOOTH_RATE: f32 = 16.0;
+
+/// Rate constant for the low-band orbit bloom (units: 1/second).
+///
+/// Slower than `ANIM_SMOOTH_RATE` so the orbit expansion lags behind the
+/// radius pulse — giving a "bloom then spread" feel on bass hits.
+/// `1/3 ≈ 333 ms` time constant.
+const LOW_ORBIT_SMOOTH_RATE: f32 = 3.0;
 
 // ── Extra ball debounce ───────────────────────────────────────────────────────
 
@@ -162,6 +186,20 @@ const SPAWN_THRESHOLD: f32 = 0.6;
 /// High-band normalised level below which extra balls begin despawning.
 /// Lower than `SPAWN_THRESHOLD` to create hysteresis.
 const DESPAWN_THRESHOLD: f32 = 0.35;
+
+// ── Pulse LFO ─────────────────────────────────────────────────────────────────
+
+/// Pulse oscillator frequency in Hz — analogous to a synth LFO.
+///
+/// At 1.5 Hz the balls breathe roughly once every 667 ms — fast enough to
+/// feel alive on a sustained note, slow enough to read as a deliberate pulse.
+const PULSE_FREQ: f32 = 1.5;
+
+/// Maximum radius scale modulation depth from the pulse LFO.
+///
+/// At full low-band energy the radius oscillates ±`PULSE_DEPTH` around the
+/// base scale.  0.3 gives a visible but not dramatic breathing effect.
+const PULSE_DEPTH: f32 = 0.3;
 
 /// Consecutive frames above/below threshold before a state transition fires.
 /// At 60 fps this is ~167 ms — prevents flicker from transients.
@@ -204,6 +242,27 @@ const BASE_FREQ: [(f32, f32, f32); 6] = [
     (0.9, 0.5, 1.0), // ball 3
     (1.3, 0.9, 1.5), // ball 4 — extra, fast
     (1.1, 1.2, 0.8), // ball 5 — extra, offset from 4
+];
+
+/// Per-ball phase offsets (x, y, z) that restore the original trig variety.
+///
+/// The original animation used different trig functions per ball per axis
+/// (`sin`, `cos`, `-sin`, `-cos`).  With phase accumulation all axes use a
+/// single `.sin()` call, so the variety is encoded as additive offsets:
+///
+/// | Offset    | Equivalent trig |
+/// |-----------|-----------------|
+/// | `0`       | `sin`           |
+/// | `π/2`     | `cos`           |
+/// | `π`       | `-sin`          |
+/// | `3π/2`    | `-cos`          |
+const PHASE_OFFSET: [(f32, f32, f32); 6] = [
+    (0.0, FRAC_PI_2, 0.0),                   // ball 0: (sin,  cos,  sin)
+    (3.0 * FRAC_PI_2, 0.0, 3.0 * FRAC_PI_2), // ball 1: (-cos, sin,  -cos)
+    (0.0, 3.0 * FRAC_PI_2, FRAC_PI_2),       // ball 2: (sin,  -cos, cos)
+    (3.0 * FRAC_PI_2, PI, PI),               // ball 3: (-cos, -sin, -sin)
+    (0.0, FRAC_PI_2, 0.0),                   // ball 4: (sin,  cos,  sin)
+    (FRAC_PI_2, 0.0, 3.0 * FRAC_PI_2),       // ball 5: (cos,  sin,  -cos)
 ];
 
 // ── Audio mode ────────────────────────────────────────────────────────────────
@@ -618,11 +677,23 @@ struct VoiceMetaballsApp {
     // Normalisation
     peak_tracker: PeakTracker,
 
-    // Animation
+    // Animation — smoothed parameters (dt-based EMA, frame-rate independent)
     /// Accumulated phases for all 6 balls.
     ball_phases: [BallPhase; 6],
     /// Smoothed speed multiplier (slow EMA prevents velocity discontinuities).
     smooth_speed: f32,
+    /// Smoothed ball radius scale (low band).
+    smooth_radius_scale: f32,
+    /// Pulse LFO phase accumulator (radians, 0..TAU).
+    pulse_phase: f32,
+    /// Smoothed vertical bounce amplitude (low band).
+    smooth_bounce_amp: f32,
+    /// Smoothed orbit radius (mid band).
+    smooth_orbit_radius: f32,
+    /// Low-band orbit bloom — lagged behind radius pulse for "bloom then spread".
+    smooth_low_orbit: f32,
+    /// Smoothed ISO threshold (high band).
+    smooth_iso: f32,
     /// Extra ball fade-in/out state machine.
     extra_balls: ExtraBallState,
 
@@ -751,10 +822,32 @@ impl Application for VoiceMetaballsApp {
 
         // ── Signal pipeline ────────────────────────────────────────────────
         let preset = VoicePreset::Neutral;
-        let executor = build_pipeline(preset)?;
+        let mut executor = build_pipeline(preset)?;
 
         // Try live audio; fall back to synth automatically.
-        let (audio_source, audio_mode) = make_audio_source(preset, AudioMode::Live);
+        let (mut audio_source, audio_mode) = make_audio_source(preset, AudioMode::Live);
+
+        // ── PeakTracker warmup ─────────────────────────────────────────────
+        // Run the pipeline for 60 frames using the actual audio source so
+        // peak_max is calibrated before the first render.  Without this,
+        // peak_max starts at [1.0, 1.0, 1.0] and the synth's strong mid
+        // energy normalises to ~1.0 on frame 1, causing a chaotic startup.
+        let mut peak_tracker = PeakTracker::new();
+        for _ in 0..60 {
+            if let Some(frame) = audio_source.next_frame()
+                && executor.input("audio").and_then(|i| i.write("audio", frame)).is_ok()
+            {
+                let _ = executor.run();
+                if let Some(raw) = executor.output("energies").ok().and_then(|o| o.read::<f32>()) {
+                    let scaled = [
+                        raw[0] / BAND_BIN_COUNTS[0],
+                        raw[1] / BAND_BIN_COUNTS[1],
+                        raw[2] / BAND_BIN_COUNTS[2],
+                    ];
+                    peak_tracker.update(&scaled);
+                }
+            }
+        }
 
         // ── HUD ────────────────────────────────────────────────────────────
         let mut debug_hud = DebugHud::new(ctx.overlay, ctx.gpu);
@@ -792,9 +885,15 @@ impl Application for VoiceMetaballsApp {
             audio_mode,
             audio_source,
             executor,
-            peak_tracker: PeakTracker::new(),
+            peak_tracker,
             ball_phases: [BallPhase::default(); 6],
             smooth_speed: 0.5,
+            smooth_radius_scale: 1.0,
+            pulse_phase: 0.0,
+            smooth_bounce_amp: 2.5,
+            smooth_orbit_radius: 2.5,
+            smooth_low_orbit: 0.0,
+            smooth_iso: 1.0,
             extra_balls: ExtraBallState::new(),
             debug_hud,
             hud_preset,
@@ -829,6 +928,11 @@ impl Application for VoiceMetaballsApp {
             }
             self.peak_tracker.reset();
             self.extra_balls.reset();
+            self.smooth_radius_scale = 1.0;
+            self.smooth_bounce_amp = 2.5;
+            self.smooth_orbit_radius = 2.5;
+            self.smooth_low_orbit = 0.0;
+            self.smooth_iso = 1.0;
             log::info!("Switched to preset: {}", p.label());
         }
 
@@ -840,6 +944,11 @@ impl Application for VoiceMetaballsApp {
             self.audio_mode = actual;
             self.peak_tracker.reset();
             self.extra_balls.reset();
+            self.smooth_radius_scale = 1.0;
+            self.smooth_bounce_amp = 2.5;
+            self.smooth_orbit_radius = 2.5;
+            self.smooth_low_orbit = 0.0;
+            self.smooth_iso = 1.0;
             log::info!("Audio mode: {}", self.audio_mode.label());
         }
 
@@ -869,23 +978,39 @@ impl Application for VoiceMetaballsApp {
         let high = self.peak_tracker.normalised[2];
 
         // ── Map band energies to animation parameters ──────────────────────
+        // All parameters are smoothed with a dt-based EMA for frame-rate
+        // independent behaviour (no jitter at 30 fps or 144 fps).
 
-        // Low band → ball radius scale + vertical bounce amplitude.
-        let ball_radius_scale = 1.0 + low * 1.2; // 1.0× → 2.2×
-        let bounce_amp = 2.5 + low * 3.0; // 2.5 → 5.5 units
+        let anim_alpha = 1.0 - (-dt * ANIM_SMOOTH_RATE).exp();
+        let speed_alpha = 1.0 - (-dt * SPEED_SMOOTH_RATE).exp();
+
+        // Low band → ball radius scale + vertical bounce amplitude + pulse LFO.
+        // The LFO runs continuously; its amplitude is gated by `low` so it
+        // only breathes when there is bass energy (i.e. while singing).
+        self.pulse_phase = (self.pulse_phase + dt * PULSE_FREQ * TAU) % TAU;
+        let pulse = self.pulse_phase.sin() * low * PULSE_DEPTH;
+        let target_radius_scale = 1.0 + low * 0.5 + pulse; // 0.7× → 1.8× breathing
+        let target_bounce_amp = 2.5 + low * 3.0; // 2.5 → 5.5 units
+        self.smooth_radius_scale += anim_alpha * (target_radius_scale - self.smooth_radius_scale);
+        self.smooth_bounce_amp += anim_alpha * (target_bounce_amp - self.smooth_bounce_amp);
 
         // Mid band → orbit radius + speed multiplier.
-        let orbit_radius = 1.5 + mid * 3.5; // 1.5 → 5.0 units
-        let target_speed = 0.5 + mid * 2.0; // 0.5× → 2.5×
+        let target_orbit_radius = 2.5 + mid * 2.5; // 2.5 → 5.0 units
+        let target_speed = 0.5 + high * 2.0; // 0.5× at idle → 2.5× on high energy
+        let mid_orbit_alpha = 1.0 - (-dt * MID_ORBIT_SMOOTH_RATE).exp();
+        self.smooth_orbit_radius += mid_orbit_alpha * (target_orbit_radius - self.smooth_orbit_radius);
+        self.smooth_speed += speed_alpha * (target_speed - self.smooth_speed);
 
-        // Smooth the speed multiplier to prevent jarring velocity changes.
-        self.smooth_speed += SPEED_SMOOTH_ALPHA * (target_speed - self.smooth_speed);
+        // Low band → orbit bloom (lagged — "bloom then spread" on bass hits).
+        let low_orbit_alpha = 1.0 - (-dt * LOW_ORBIT_SMOOTH_RATE).exp();
+        self.smooth_low_orbit += low_orbit_alpha * (low * 1.5 - self.smooth_low_orbit);
 
         // High band → ISO threshold + extra balls.
-        let iso = 0.9 + high * 1.6; // 0.9 → 2.5
+        let target_iso = 1.0 + high * 1.5; // 1.0 → 2.5
+        self.smooth_iso += anim_alpha * (target_iso - self.smooth_iso);
 
-        // Extra ball target radius scales with ball_radius_scale.
-        let extra_radius = EXTRA_BASE_RADIUS * ball_radius_scale;
+        // Extra ball target radius scales with smoothed ball_radius_scale.
+        let extra_radius = EXTRA_BASE_RADIUS * self.smooth_radius_scale;
         self.extra_balls.update(high, extra_radius, dt);
 
         // ── Advance phase accumulators ─────────────────────────────────────
@@ -897,13 +1022,15 @@ impl Application for VoiceMetaballsApp {
         // Balls 0–3: main cluster, driven by low + mid bands.
         // Balls 4–5: extra, radius fades in/out with high band.
         let balls: [Ball; 6] = {
+            let orbit = self.smooth_orbit_radius + self.smooth_low_orbit;
             let make_main = |i: usize| {
-                let r = BASE_RADIUS[i] * ball_radius_scale;
+                let r = BASE_RADIUS[i] * self.smooth_radius_scale;
                 let ph = &self.ball_phases[i];
+                let off = PHASE_OFFSET[i];
                 let pos = Vec3::new(
-                    orbit_radius * ph.x.sin(),
-                    bounce_amp * ph.y.cos(),
-                    orbit_radius * ph.z.sin(),
+                    orbit * (ph.x + off.0).sin(),
+                    self.smooth_bounce_amp * (ph.y + off.1).sin(),
+                    orbit * (ph.z + off.2).sin(),
                 );
                 Ball {
                     pos: clamp_ball_pos(pos, r),
@@ -913,12 +1040,13 @@ impl Application for VoiceMetaballsApp {
 
             let make_extra = |i: usize| {
                 let r = self.extra_balls.radius[i - 4];
-                let extra_orbit = orbit_radius * 0.6;
+                let extra_orbit = orbit * 0.6;
                 let ph = &self.ball_phases[i];
+                let off = PHASE_OFFSET[i];
                 let pos = Vec3::new(
-                    extra_orbit * ph.x.sin(),
-                    bounce_amp * 0.7 * ph.y.cos(),
-                    extra_orbit * ph.z.sin(),
+                    extra_orbit * (ph.x + off.0).sin(),
+                    self.smooth_bounce_amp * 0.7 * (ph.y + off.1).sin(),
+                    extra_orbit * (ph.z + off.2).sin(),
                 );
                 Ball {
                     pos: clamp_ball_pos(pos, r.max(0.01)),
@@ -940,7 +1068,7 @@ impl Application for VoiceMetaballsApp {
         let params = grid_params();
         let field = |p: Vec3| metaball_field(&balls, p);
         let normal = |p: Vec3| metaball_normal(&balls, p);
-        let mesh_data = extract(&field, &params, iso, Some(&normal));
+        let mesh_data = extract(&field, &params, self.smooth_iso, Some(&normal));
 
         ctx.scene
             .set_dynamic_bounds(self.metaball_node, mesh_data.local_bounds)?;
@@ -1351,6 +1479,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn main_balls_have_distinct_positions() {
+        // Advance 4 main balls for 60 frames and verify no two land at the
+        // same position.  Regression guard against collapsing all balls back
+        // to an identical trig pattern (the "one blob" bug).
+        let mut phases = [BallPhase::default(); 4];
+        let dt = 1.0 / 60.0;
+        for _ in 0..60 {
+            for (i, ph) in phases.iter_mut().enumerate() {
+                ph.advance(dt, 1.0, BASE_FREQ[i]);
+            }
+        }
+        let orbit = 1.5_f32;
+        let bounce = 2.5_f32;
+        let positions: Vec<(f32, f32, f32)> = (0..4)
+            .map(|i| {
+                let ph = &phases[i];
+                let off = PHASE_OFFSET[i];
+                (
+                    orbit * (ph.x + off.0).sin(),
+                    bounce * (ph.y + off.1).sin(),
+                    orbit * (ph.z + off.2).sin(),
+                )
+            })
+            .collect();
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                let dist = ((positions[i].0 - positions[j].0).powi(2)
+                    + (positions[i].1 - positions[j].1).powi(2)
+                    + (positions[i].2 - positions[j].2).powi(2))
+                .sqrt();
+                assert!(
+                    dist > 0.1,
+                    "balls {i} and {j} are too close after 60 frames: dist={dist:.4}"
+                );
+            }
+        }
+    }
+
     // ── ExtraBallState ────────────────────────────────────────────────────
 
     #[test]
@@ -1635,9 +1802,11 @@ mod tests {
     fn speed_smooth_converges_to_target() {
         let mut smooth_speed = 0.5_f32;
         let target = 2.5_f32;
-        // Run for 200 frames.
+        let dt = 1.0 / 60.0; // simulate 60 fps
+        // Run for 200 frames (~3.3 seconds — well past the 500 ms time constant).
         for _ in 0..200 {
-            smooth_speed += SPEED_SMOOTH_ALPHA * (target - smooth_speed);
+            let alpha = 1.0 - (-dt * SPEED_SMOOTH_RATE).exp();
+            smooth_speed += alpha * (target - smooth_speed);
         }
         assert!(
             (smooth_speed - target).abs() < 0.01,
@@ -1649,9 +1818,11 @@ mod tests {
     fn speed_smooth_single_frame_change_is_bounded() {
         let smooth_speed = 0.5_f32;
         let target = 2.5_f32;
-        let new_speed = smooth_speed + SPEED_SMOOTH_ALPHA * (target - smooth_speed);
+        let dt = 1.0 / 60.0;
+        let alpha = 1.0 - (-dt * SPEED_SMOOTH_RATE).exp();
+        let new_speed = smooth_speed + alpha * (target - smooth_speed);
         let change = (new_speed - smooth_speed).abs();
-        let max_change = SPEED_SMOOTH_ALPHA * (target - smooth_speed).abs();
+        let max_change = alpha * (target - smooth_speed).abs();
         assert!(
             (change - max_change).abs() < 1e-6,
             "single-frame speed change {change} exceeds bound {max_change}"

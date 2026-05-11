@@ -819,3 +819,26 @@ existing test style.
 | BandExtract EMA + PeakTracker = too much lag on transients | Low | Medium | If sluggish, reduce `BAND_SMOOTHING` from 0.6 to 0.2 and rely on PeakTracker for temporal behaviour |
 | TV / ambient audio saturates peak tracker → no headroom for voice | Medium | Medium | Noise gate handles this: ambient sits below `GATE_OPEN_THRESHOLD`; voice transients open the gate |
 | `UpdateContext` lacks `&mut AssetStore` (blocks material reactivity) | High | Low (deferred) | Documented as open question in §10.4; investigate in separate session |
+
+---
+
+## Appendix: Post-Implementation Review Notes
+
+### Jitter fix (applied)
+
+All animation parameters (`ball_radius_scale`, `bounce_amp`, `orbit_radius`, `iso`)
+were originally computed directly from per-frame normalised band values with no temporal
+smoothing. This caused visible jitter at ~30fps because FFT variance caused parameters
+to jump frame-to-frame. Fixed by adding dt-based EMA (`1 - exp(-dt × rate)`) on all
+four parameters plus converting the speed multiplier to the same frame-rate-independent
+formula.
+
+### Future refinement: smooth bands instead of parameters
+
+A cleaner alternative to smoothing 4+ downstream parameters individually is to smooth
+the 3 normalised band values (`low`, `mid`, `high`) themselves, right after the gate
+output. All parameters derived from a band would then inherit the smoothing
+automatically, including any future parameters added later. The trade-off is loss of
+per-parameter rate control (e.g. ISO might want heavier smoothing than radius), but a
+single rate is likely sufficient. Consider refactoring to this approach if additional
+animation axes are added.
