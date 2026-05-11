@@ -201,6 +201,22 @@ const PULSE_FREQ: f32 = 1.5;
 /// base scale.  0.3 gives a visible but not dramatic breathing effect.
 const PULSE_DEPTH: f32 = 0.3;
 
+/// Maximum pulse oscillator frequency in Hz at full trill.
+///
+/// The pulse frequency ramps from `PULSE_FREQ` to `TRILL_FREQ` as a sustained
+/// note builds up — rock vibrato territory.
+const TRILL_FREQ: f32 = 6.0;
+
+/// Rate constant for trill buildup (units: 1/second).
+///
+/// `1/0.33 ≈ 3 s` to reach full trill on a sustained note.
+const TRILL_BUILDUP_RATE: f32 = 0.33;
+
+/// Rate constant for trill decay (units: 1/second).
+///
+/// `1/2 = 500 ms` release tail when the note stops — snappy but not a hard cut.
+const TRILL_DECAY_RATE: f32 = 2.0;
+
 /// Consecutive frames above/below threshold before a state transition fires.
 /// At 60 fps this is ~167 ms — prevents flicker from transients.
 const DEBOUNCE_FRAMES: u32 = 10;
@@ -686,6 +702,9 @@ struct VoiceMetaballsApp {
     smooth_radius_scale: f32,
     /// Pulse LFO phase accumulator (radians, 0..TAU).
     pulse_phase: f32,
+    /// Trill amount [0, 1] — 0 = base pulse rate, 1 = full trill rate.
+    /// Builds up slowly on sustained low energy, decays quickly on release.
+    trill_amount: f32,
     /// Smoothed vertical bounce amplitude (low band).
     smooth_bounce_amp: f32,
     /// Smoothed orbit radius (mid band).
@@ -890,6 +909,7 @@ impl Application for VoiceMetaballsApp {
             smooth_speed: 0.5,
             smooth_radius_scale: 1.0,
             pulse_phase: 0.0,
+            trill_amount: 0.0,
             smooth_bounce_amp: 2.5,
             smooth_orbit_radius: 2.5,
             smooth_low_orbit: 0.0,
@@ -987,7 +1007,14 @@ impl Application for VoiceMetaballsApp {
         // Low band → ball radius scale + vertical bounce amplitude + pulse LFO.
         // The LFO runs continuously; its amplitude is gated by `low` so it
         // only breathes when there is bass energy (i.e. while singing).
-        self.pulse_phase = (self.pulse_phase + dt * PULSE_FREQ * TAU) % TAU;
+        // Trill: sustained low energy gradually accelerates the LFO from
+        // PULSE_FREQ toward TRILL_FREQ, then releases with a 500ms tail.
+        let trill_target = if low > 0.0 { 1.0_f32 } else { 0.0_f32 };
+        let trill_rate = if low > 0.0 { TRILL_BUILDUP_RATE } else { TRILL_DECAY_RATE };
+        let trill_alpha = 1.0 - (-dt * trill_rate).exp();
+        self.trill_amount += trill_alpha * (trill_target - self.trill_amount);
+        let pulse_freq = PULSE_FREQ + self.trill_amount * (TRILL_FREQ - PULSE_FREQ);
+        self.pulse_phase = (self.pulse_phase + dt * pulse_freq * TAU) % TAU;
         let pulse = self.pulse_phase.sin() * low * PULSE_DEPTH;
         let target_radius_scale = 1.0 + low * 0.5 + pulse; // 0.7× → 1.8× breathing
         let target_bounce_amp = 2.5 + low * 3.0; // 2.5 → 5.5 units
