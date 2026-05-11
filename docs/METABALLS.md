@@ -349,45 +349,248 @@ demo. It integrates the [graphynx](https://github.com/vansweej/graphynx) signal
 processing engine as a path dependency to drive metaball animation parameters
 from real-time spectral analysis.
 
-### Signal pipeline
+The app tries to open the default microphone on startup. If no device is
+available it falls back to `SynthSource` automatically. Press **M** to toggle
+between live and synth at runtime.
 
-Each frame, a synthetic voice signal is generated (additive synthesis:
-fundamental + formants + breathiness noise) and fed through a graphynx graph:
+### 8.1 Architecture overview
+
+The update loop is structured as three sequential layers:
+
+```mermaid
+graph LR
+    subgraph "Layer 1 — Normalisation"
+        A[Raw band energies\nfrom graphynx] --> B[Pre-scale\nby 1/bin_count]
+        B --> C[PeakTracker\nattack / release / floor]
+        C --> D[Hysteresis gate]
+    end
+
+    subgraph "Layer 2 — Animation Mapping"
+        D -->|low 0..1| E[Ball radius\npulsing]
+        D -->|low 0..1| F[Bounce\namplitude]
+        D -->|mid 0..1| G[Orbit\nradius]
+        D -->|mid 0..1| H[Speed\nmultiplier]
+        D -->|high 0..1| I[ISO\nthreshold]
+        D -->|high 0..1| J[Extra ball\nfade-in/out]
+    end
+
+    subgraph "Layer 3 — Geometry"
+        E & F & G & H --> K[Phase\naccumulation]
+        I --> L[Marching\nCubes 32³]
+        J --> L
+        K --> M[Position\nclamping]
+        M --> L
+        L --> N[GPU upload\n+ render]
+    end
+```
+
+### 8.2 Signal pipeline
+
+Each frame, audio is captured and fed through a graphynx graph:
 
 ```
-[audio: f32 × 1024] → Window(Hann) → FFT(Magnitude) → BandExtract(3 bands, EMA)
+[audio: f32 × 1024] → Window(Hann) → FFT(Magnitude) → BandExtract(3 bands, EMA α=0.6)
                                                                   ↓
                                                        [energies: f32 × 3]
 ```
 
-The three band energies are mapped to animation parameters:
+Raw energies are then **pre-scaled by `1/bin_count`** before entering the peak
+tracker. This compensates for the large difference in bin counts between bands:
 
-| Band | Range | Drives |
-|------|-------|--------|
-| Low  | 20–250 Hz | Orbit radii of balls 0 and 1 |
-| Mid  | 250–4 000 Hz | Orbit radii of balls 2 and 3 |
-| High | 4 000–20 000 Hz | ISO threshold (surface tension) |
+| Band | Hz range | Approx. bin count (FFT=1024, sr=44100) |
+|------|----------|----------------------------------------|
+| Low  | 20–250   | ~5                                     |
+| Mid  | 250–4000 | ~87                                    |
+| High | 4000–20000 | ~372                                 |
 
-### Voice presets
+Without pre-scaling, the high band outputs ~74× more than the low band for
+identical signal content, causing the low band to appear near-zero during
+peak-tracker startup.
+
+### 8.3 Normalisation — PeakTracker
+
+Raw (pre-scaled) energies are normalised to [0, 1] by a per-band adaptive peak
+tracker with a hysteresis gate.
+
+**Algorithm (per frame, per band):**
+
+1. `peak_max = max(peak_max × RELEASE, scaled_raw)` — fast attack, slow release
+2. `norm = scaled_raw / max(peak_max, FLOOR)` — FLOOR prevents divide-by-zero
+3. Gate hysteresis: open when `norm > 0.10`, close when `norm < 0.05`
+4. Output: `normalised = if gate_open { norm } else { 0.0 }`
+
+The gate hysteresis prevents flicker when the normalised value hovers near the
+threshold (e.g. during the slow peak-max decay after a loud sound stops).
+
+```mermaid
+sequenceDiagram
+    participant Raw as Scaled Raw Energy
+    participant Peak as peak_max
+    participant Norm as Normalised
+    participant Gate as Gate Output
+
+    Note over Raw,Gate: Loud sound arrives
+    Raw->>Peak: raw > peak_max → instant update
+    Peak->>Norm: norm = raw / peak_max ≈ 1.0
+    Norm->>Gate: above open threshold → gate opens → ~1.0
+
+    Note over Raw,Gate: Sound fades to medium
+    Raw->>Peak: raw < peak_max → slow decay (×0.997/frame)
+    Peak->>Norm: norm = medium / decaying_peak → proportional
+    Norm->>Gate: stays above close threshold → gate stays open
+
+    Note over Raw,Gate: Sound stops completely
+    Raw->>Peak: raw ≈ 0 → peak continues decaying
+    Peak->>Norm: norm ≈ 0
+    Norm->>Gate: drops below close threshold → gate closes → 0.0
+```
+
+### 8.4 Multi-axis animation mapping
+
+Each frequency band drives a **distinct, legible visual channel**:
+
+| Band | Primary axis | Secondary axis | Visual read at full energy |
+|------|-------------|---------------|---------------------------|
+| **Low** (20–250 Hz) | Ball **radius** pulsing (1.0× → 2.2×) | Vertical **bounce amplitude** (2.5 → 5.5 units) | Balls swell and bounce higher |
+| **Mid** (250–4000 Hz) | Orbit **radius** (1.5 → 5.0 units) | Orbit **speed** multiplier (0.5× → 2.5×) | Balls spread outward and orbit faster |
+| **High** (4000–20000 Hz) | **ISO threshold** (0.9 → 2.5) | Extra **ball count** (2 extra balls fade in) | Surface tightens; satellite blobs appear |
+
+**Idle state** (all bands gated to 0): 4 small balls, tight orbit (1.5 units),
+slow drift (0.5×), blobby merged surface (ISO=0.9). A calm "breathing blob" that
+expands and fractures when sound arrives.
+
+### 8.5 Phase accumulation
+
+Ball positions are computed from **accumulated phases** rather than wall-clock
+time. This ensures that changes to the speed multiplier never cause position
+discontinuities — only the *rate* of phase accumulation changes:
+
+```
+phase += dt × speed_mult × base_freq
+position = orbit_radius × sin(phase)
+```
+
+The speed multiplier itself is smoothed with a slow EMA (α = 0.03, ~33 frames
+to 63% of target) to prevent jarring velocity changes.
+
+### 8.6 Extra ball state machine
+
+Six `Ball` structs are always allocated. Balls 0–3 are always visible. Balls 4–5
+fade in when the high band is sustained above the spawn threshold for 10
+consecutive frames (~167 ms), preventing flicker from transients.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle : startup
+
+    Idle --> Counting : high > 0.6
+    Counting --> Idle : high drops below 0.6\nbefore 10 frames
+    Counting --> Spawning : 10 consecutive frames\nabove 0.6
+
+    Spawning --> Active : radius reaches target
+
+    Active --> Decounting : high < 0.35
+    Decounting --> Active : high rises above 0.35\nbefore 10 frames
+    Decounting --> Despawning : 10 consecutive frames\nbelow 0.35
+
+    Despawning --> Idle : radius reaches 0
+```
+
+### 8.7 Voice presets
 
 Three synthetic voice presets are switchable at runtime:
 
-| Key | Preset  | Fundamental |
-|-----|---------|-------------|
-| `1` | Male    | 120 Hz      |
-| `2` | Female  | 220 Hz      |
-| `3` | Neutral | 170 Hz      |
+| Key | Preset  | Fundamental | Formants                 |
+|-----|---------|-------------|--------------------------|
+| `1` | Male    | 120 Hz      | 700 / 1200 / 2500 Hz     |
+| `2` | Female  | 220 Hz      | 900 / 1800 / 2800 Hz     |
+| `3` | Neutral | 170 Hz      | 800 / 1500 / 2650 Hz     |
 
-Switching preset rebuilds the graphynx graph and resets the EMA state.
+Switching preset rebuilds the graphynx graph and resets the peak tracker and
+extra ball state.
 
-### Controls
+### 8.8 Controls
 
-Same as the base metaballs demo, plus keys `1`/`2`/`3` for preset switching.
+| Key | Action |
+|-----|--------|
+| `1` / `2` / `3` | Switch voice preset |
+| `M` | Toggle live / synth audio |
+| `W` / `S` | Move forward / backward |
+| `A` / `D` | Strafe left / right |
+| `Q` / `E` | Move up / down |
+| Arrow keys | Rotate camera (yaw / pitch) |
+| `F3` | Toggle overlay |
+| `F4` | Toggle wireframe |
+| `Escape` | Exit |
 
-### Dependencies
+### 8.9 HUD overlay
+
+| Element | Content |
+|---------|---------|
+| Preset | Current voice preset + key hint |
+| Audio | Current audio mode (Live / Synth) + key hint |
+| Bands | Normalised band energies L / M / H in [0, 1] |
+| Peaks | Current `peak_max` per band (shows tracker adaptation) |
+| Triangles | Output triangle count from last MC extraction |
+
+### 8.10 Dependencies
 
 Depends on graphynx crates via relative path dependencies (co-located
 development). No CUDA toolchain required — uses `backends-cpu` only.
+
+---
+
+## 8.11 Future: Material Reactivity
+
+> **NOT IMPLEMENTED** — planned for a separate session.
+
+### Concept
+
+Map audio analysis to PBR material properties, giving the metaball surface a
+visual "mood" that reflects the sound character:
+
+| Audio feature | Material axis | Idle | Full energy |
+|--------------|--------------|------|-------------|
+| Spectral centroid (brightness) | `roughness` | 0.10 (mirror-shiny) | 0.85 (matte) |
+| Overall energy (loudness) | `diffuse` colour | Cool blue-grey | Warm orange |
+
+```mermaid
+flowchart LR
+    subgraph "Future: Material Reactivity"
+        SC["Spectral Centroid\n(4th graphynx output)"]
+        EN["Overall Energy\n(sum of all bands)"]
+        SC -->|brightness 0..1| ROUGH["roughness\n0.10 → 0.85"]
+        EN -->|loudness 0..1| COLOR["diffuse lerp\ncool → warm"]
+        ROUGH & COLOR --> MAT["MaterialParams\nmutation"]
+        MAT --> REND["Renderer reads params\nfresh each draw call\n(already per-frame)"]
+    end
+```
+
+### Why this is feasible without pipeline changes
+
+The renderer (`crates/render/src/renderer.rs`, lines 638–664) creates a fresh
+`MaterialUniforms` GPU buffer **every draw call**, reading from
+`material.parameters` at that moment. Mutating `MaterialParams` between frames
+is therefore automatically picked up by the renderer — no pipeline rebuild, no
+new bind group layout, no shader changes required.
+
+### Implementation path
+
+1. **Add spectral centroid** as a 4th graphynx output (new `SpectralCentroid` op,
+   or compute from the raw spectrum in the example).
+2. **Obtain mutable `AssetStore` access in `update()`**. Currently `UpdateContext`
+   does not expose `&mut AssetStore`. Options:
+   - Add `assets: &mut AssetStore` to `UpdateContext` (preferred)
+   - Stage material changes in app state and apply in `render()` before
+     `render_scene()`
+3. **Mutate `MaterialParams`** each frame based on normalised audio values, with
+   a slow EMA (α ≈ 0.05) to prevent abrupt colour/roughness jumps.
+
+### Open question
+
+Does adding `&mut AssetStore` to `UpdateContext` break the ownership model?
+The renderer also borrows assets during `render()`. Investigate in a separate
+session before implementing.
 
 ---
 
