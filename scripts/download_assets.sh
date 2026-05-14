@@ -135,7 +135,6 @@ prepare_directories() {
         "${MODEL_DIR}/ogre" \
         "${MODEL_DIR}/bob" \
         "${MODEL_DIR}/blub" \
-        "${TEXTURE_DIR}/brick_red" \
         "${TEXTURE_DIR}/wood_oak" \
         "${TEXTURE_DIR}/metal_rust" \
         "${TEXTURE_DIR}/stone_cobble" \
@@ -299,6 +298,48 @@ copy_ambient_map() {
     echo "copied texture: ${destination}"
 }
 
+copy_optional_ambient_map() {
+    local extract_dir="$1"
+    local pattern="$2"
+    local destination="$3"
+    local fallback="$4"
+    local source
+
+    if [[ -s "${destination}" ]]; then
+        echo "skip existing texture: ${destination}"
+        return
+    fi
+
+    source="$(first_match "${extract_dir}" "${pattern}")"
+    if [[ -n "${source}" ]]; then
+        cp "${source}" "${destination}"
+        echo "copied texture: ${destination}"
+        return
+    fi
+
+    if [[ "${fallback}" == "white" ]]; then
+        write_white_png "${destination}"
+        echo "generated fallback white texture: ${destination}"
+        return
+    fi
+
+    echo "error: could not find '${pattern}' in ${extract_dir}" >&2
+    exit 1
+}
+
+write_white_png() {
+    local destination="$1"
+
+    if command -v base64 >/dev/null 2>&1; then
+        base64 --decode >"${destination}" <<'PNG'
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=
+PNG
+    else
+        echo "error: base64 is required to generate fallback textures" >&2
+        exit 1
+    fi
+}
+
 ambient_texture_set_complete() {
     local destination_dir="$1"
 
@@ -348,14 +389,13 @@ download_ambient_texture_set() {
     copy_ambient_map "${extract_dir}" '*_Color.png' "${destination_dir}/diffuse.png"
     copy_ambient_map "${extract_dir}" '*_NormalGL.png' "${destination_dir}/normal.png"
     copy_ambient_map "${extract_dir}" '*_Roughness.png' "${destination_dir}/roughness.png"
-    copy_ambient_map "${extract_dir}" '*_AmbientOcclusion.png' "${destination_dir}/ao.png"
+    copy_optional_ambient_map "${extract_dir}" '*_AmbientOcclusion.png' "${destination_dir}/ao.png" white
 }
 
 verify_ambient_texture_sets() {
     local missing=0
 
     for destination_name in \
-        brick_red \
         wood_oak \
         metal_rust \
         stone_cobble \
@@ -392,7 +432,6 @@ main() {
     download_keenan_model bob
     download_keenan_model blub
 
-    download_ambient_texture_set Bricks076 brick_red
     download_ambient_texture_set WoodFloor051 wood_oak
     download_ambient_texture_set Metal032 metal_rust
     download_ambient_texture_set PavingStones131 stone_cobble

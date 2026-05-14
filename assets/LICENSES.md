@@ -64,6 +64,10 @@ If direct ambientCG downloads fail, place each `<ID>_2K-PNG.zip` in
 texture directories may contain only `.gitkeep` placeholders until those ZIPs are
 available locally.
 
+Some ambientCG ZIPs do not include an ambient-occlusion map. For those sets, the
+script writes a generated 1×1 white `ao.png` fallback so every directory still follows
+the four-file convention.
+
 ambientCG assets are CC0 / public domain. Each set is normalized to this layout:
 
 | File | Source map suffix | Current renderer use |
@@ -71,11 +75,10 @@ ambientCG assets are CC0 / public domain. Each set is normalized to this layout:
 | `diffuse.png` | `*_Color.png` | Used now as sRGB diffuse color. |
 | `normal.png` | `*_NormalGL.png` | Stored for future PBR work. |
 | `roughness.png` | `*_Roughness.png` | Stored for future PBR work. |
-| `ao.png` | `*_AmbientOcclusion.png` | Stored for future PBR work. |
+| `ao.png` | `*_AmbientOcclusion.png` or generated white fallback | Stored for future PBR work. |
 
 | Texture set | Destination | ambientCG ID | License |
 |-------------|-------------|--------------|---------|
-| Red brick | `assets/textures/brick_red/` | `Bricks076` | CC0 / public domain |
 | Oak wood floor | `assets/textures/wood_oak/` | `WoodFloor051` | CC0 / public domain |
 | Rusted metal | `assets/textures/metal_rust/` | `Metal032` | CC0 / public domain |
 | Cobblestone | `assets/textures/stone_cobble/` | `PavingStones131` | CC0 / public domain |
@@ -83,3 +86,6 @@ ambientCG assets are CC0 / public domain. Each set is normalized to this layout:
 | Worn concrete | `assets/textures/concrete_worn/` | `Concrete034` | CC0 / public domain |
 | Denim fabric | `assets/textures/fabric_denim/` | `Fabric045` | CC0 / public domain |
 | Grass terrain | `assets/textures/terrain_grass/` | `Ground037` | CC0 / public domain |
+
+`Bricks076` / `assets/textures/brick_red/` was removed from the committed asset set
+because the direct archive URL was unavailable during the download pass.

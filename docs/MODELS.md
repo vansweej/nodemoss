@@ -23,7 +23,7 @@ flowchart LR
     end
 
     subgraph assets/textures/
-        PBRTextures["PBR texture sets\nbrick · wood · metal\ncobble · marble\nconcrete · fabric · grass"]
+        PBRTextures["PBR texture sets\nwood · metal · cobble\nmarble · concrete\nfabric · grass"]
     end
 ```
 
@@ -75,6 +75,8 @@ available. At the time of this update, the checked-in directories contain placeh
 only; populate them with `scripts/download_assets.sh` or manually before using them.
 If ambientCG's direct download URLs fail, download each `<ID>_2K-PNG.zip` manually
 into `.asset-downloads/ambientcg/` and rerun the script; it will use the cached ZIPs.
+Some ambientCG sets do not include an ambient-occlusion map. In that case the script
+generates a 1×1 white `ao.png`, which represents “no occlusion” for future PBR use.
 
 ```mermaid
 graph TD
@@ -92,14 +94,17 @@ graph TD
 
 | Texture set | Directory | Status |
 |-------------|-----------|--------|
-| Bricks076 | `assets/textures/brick_red/` | Placeholder; populate from ambientCG. |
-| WoodFloor051 | `assets/textures/wood_oak/` | Placeholder; populate from ambientCG. |
-| Metal032 | `assets/textures/metal_rust/` | Placeholder; populate from ambientCG. |
-| PavingStones131 | `assets/textures/stone_cobble/` | Placeholder; populate from ambientCG. |
-| Marble012 | `assets/textures/marble_white/` | Placeholder; populate from ambientCG. |
-| Concrete034 | `assets/textures/concrete_worn/` | Placeholder; populate from ambientCG. |
-| Fabric045 | `assets/textures/fabric_denim/` | Placeholder; populate from ambientCG. |
-| Ground037 | `assets/textures/terrain_grass/` | Placeholder; populate from ambientCG. |
+| WoodFloor051 | `assets/textures/wood_oak/` | Downloaded; four-file convention. |
+| Metal032 | `assets/textures/metal_rust/` | Downloaded; generated white AO fallback. |
+| PavingStones131 | `assets/textures/stone_cobble/` | Downloaded; four-file convention. |
+| Marble012 | `assets/textures/marble_white/` | Downloaded; four-file convention. |
+| Concrete034 | `assets/textures/concrete_worn/` | Downloaded; four-file convention. |
+| Fabric045 | `assets/textures/fabric_denim/` | Downloaded; four-file convention. |
+| Ground037 | `assets/textures/terrain_grass/` | Downloaded; four-file convention. |
+
+`Bricks076` was originally planned for `assets/textures/brick_red/`, but its direct
+ambientCG archive URL was unavailable during this pass, so the brick set is not part
+of the committed library.
 
 ---
 
