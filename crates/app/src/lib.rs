@@ -321,6 +321,45 @@ mod tests {
         assert!(cam_pos.length() > 0.1);
     }
 
+    #[test]
+    fn trackball_dolly_changes_distance() {
+        use rig_scene::SceneGraph;
+        let mut scene = SceneGraph::new();
+        let target = scene.create_node("target");
+        let camera = scene.create_node("camera");
+        scene.update_all_world_transforms().unwrap();
+
+        let mut trackball = TrackBall::new(target, 5.0);
+        let input = InputState::default();
+        trackball.dolly_by(-2.0);
+        trackball.update(&input, &mut scene, camera, 0.016).unwrap();
+        scene.update_all_world_transforms().unwrap();
+
+        let cam_world = scene.world_transform(camera).unwrap();
+        let cam_pos = cam_world.transform_point3(glam::Vec3::ZERO);
+        assert!((cam_pos.length() - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn trackball_pan_moves_focus() {
+        use rig_scene::SceneGraph;
+        let mut scene = SceneGraph::new();
+        let target = scene.create_node("target");
+        let camera = scene.create_node("camera");
+        scene.update_all_world_transforms().unwrap();
+
+        let mut trackball = TrackBall::new(target, 5.0);
+        let input = InputState::default();
+        trackball.pan_by(2.0, 1.0);
+        trackball.update(&input, &mut scene, camera, 0.016).unwrap();
+        scene.update_all_world_transforms().unwrap();
+
+        let cam_world = scene.world_transform(camera).unwrap();
+        let cam_pos = cam_world.transform_point3(glam::Vec3::ZERO);
+        assert!((cam_pos.x - 2.0).abs() < 1e-5);
+        assert!((cam_pos.y - 1.0).abs() < 1e-5);
+    }
+
     struct TestApp;
 
     impl Application for TestApp {

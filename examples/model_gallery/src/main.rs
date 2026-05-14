@@ -8,15 +8,18 @@
 //!     cargo run -p model_gallery              # default: teapot
 //!     cargo run -p model_gallery -- bunny
 //!     cargo run -p model_gallery -- spot      # textured
+//!     cargo run -p model_gallery -- --help
 //!
 //! # Controls
 //!
-//! | Key(s)     | Action                  |
+//! | Input      | Action                  |
 //! |------------|-------------------------|
+//! | LMB drag   | Orbit camera            |
+//! | RMB drag   | Dolly (zoom in/out)     |
 //! | W / S      | Move forward / backward |
 //! | A / D      | Strafe left / right     |
 //! | Q / E      | Move up / down          |
-//! | Arrow keys | Rotate camera           |
+//! | Arrow keys | Orbit camera            |
 //! | F3         | Toggle overlay          |
 //! | Escape     | Close window            |
 
@@ -26,7 +29,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use rig_app::{
-    Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
+    Application, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext, TrackBall,
     UpdateContext,
     rig_assets::{MaterialAsset, MaterialParams, ShaderAsset},
     rig_import::{AssetPath, FilesystemSource, Importer, MeshConfig},
@@ -38,6 +41,9 @@ use rig_app::{
 };
 
 const TARGET_RADIUS: f32 = 2.0;
+const KEYBOARD_DOLLY_SPEED: f32 = 4.0;
+const KEYBOARD_ORBIT_SPEED: f32 = 1.5;
+const KEYBOARD_PAN_SPEED: f32 = 4.0;
 
 #[derive(Clone, Copy, Debug)]
 struct ModelSpec {
@@ -108,23 +114,36 @@ static SELECTED_MODEL: OnceLock<ModelSpec> = OnceLock::new();
 
 struct ModelGalleryApp {
     camera_node: NodeId,
-    camera_rig: CameraRig,
-    model_root: NodeId,
-    elapsed: f32,
+    trackball: TrackBall,
     debug_hud: DebugHud,
     stats_id: ElementId,
     overlay_text: String,
 }
 
-fn parse_model_arg() -> Result<ModelSpec> {
+enum CliAction {
+    Help,
+    Run(ModelSpec),
+}
+
+fn parse_cli_action() -> Result<CliAction> {
     let Some(name) = std::env::args().nth(1) else {
-        return Ok(MODELS[0]);
+        return Ok(CliAction::Run(MODELS[0]));
     };
+
+    if is_help_arg(&name) {
+        return Ok(CliAction::Help);
+    }
+
     MODELS
         .iter()
         .copied()
         .find(|model| model.name.eq_ignore_ascii_case(&name))
+        .map(CliAction::Run)
         .ok_or_else(|| anyhow::anyhow!(usage(&name)))
+}
+
+fn is_help_arg(name: &str) -> bool {
+    matches!(name, "--help" | "-h")
 }
 
 fn usage(name: &str) -> String {
@@ -133,7 +152,79 @@ fn usage(name: &str) -> String {
         .map(|model| model.name)
         .collect::<Vec<_>>()
         .join(", ");
-    format!("unknown model '{name}'. Available models: {names}")
+    format!(
+        "unknown model '{name}'. Available models: {names}\nRun `cargo run -p model_gallery -- --help` for usage."
+    )
+}
+
+fn help_text() -> String {
+    let models = MODELS
+        .iter()
+        .map(|model| {
+            let kind = if model.textured {
+                "textured"
+            } else {
+                "geometry"
+            };
+            let default_suffix = if model.name == MODELS[0].name {
+                " (default)"
+            } else {
+                ""
+            };
+            format!("    {:<12} {kind}{default_suffix}", model.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "model_gallery — CLI-driven 3D model viewer\n\n{usage}\n\nMODELS:\n{models}\n\n{controls}",
+        usage = HELP_USAGE,
+        controls = HELP_CONTROLS
+    )
+}
+
+const HELP_USAGE: &str = "USAGE:
+    cargo run -p model_gallery
+    cargo run -p model_gallery -- MODEL
+    cargo run -p model_gallery -- --help";
+
+const HELP_CONTROLS: &str = "CONTROLS:
+    LMB drag     Orbit camera
+    RMB drag     Dolly (zoom in/out)
+    W / S        Move forward / backward
+    A / D        Strafe left / right
+    Q / E        Move up / down
+    Arrow keys   Orbit camera
+    F3           Toggle overlay
+    Escape       Close window";
+
+fn print_help() {
+    println!("{}", help_text());
+}
+
+fn update_keyboard_controls(trackball: &mut TrackBall, input: &rig_app::InputState, dt: f32) {
+    let yaw = key_axis(input, KeyCode::ArrowRight, KeyCode::ArrowLeft) * KEYBOARD_ORBIT_SPEED * dt;
+    let pitch = key_axis(input, KeyCode::ArrowDown, KeyCode::ArrowUp) * KEYBOARD_ORBIT_SPEED * dt;
+    if yaw != 0.0 || pitch != 0.0 {
+        trackball.orbit_by(yaw, pitch);
+    }
+
+    let dolly = key_axis(input, KeyCode::KeyW, KeyCode::KeyS) * KEYBOARD_DOLLY_SPEED * dt;
+    if dolly != 0.0 {
+        trackball.dolly_by(dolly);
+    }
+
+    let right = key_axis(input, KeyCode::KeyA, KeyCode::KeyD) * KEYBOARD_PAN_SPEED * dt;
+    let up = key_axis(input, KeyCode::KeyQ, KeyCode::KeyE) * KEYBOARD_PAN_SPEED * dt;
+    if right != 0.0 || up != 0.0 {
+        trackball.pan_by(right, up);
+    }
+}
+
+fn key_axis(input: &rig_app::InputState, negative: KeyCode, positive: KeyCode) -> f32 {
+    let negative = input.is_key_pressed(negative) as i8;
+    let positive = input.is_key_pressed(positive) as i8;
+    (positive - negative) as f32
 }
 
 impl Application for ModelGalleryApp {
@@ -174,6 +265,7 @@ impl Application for ModelGalleryApp {
             .map(|(material, _name)| ctx.assets.add_material(material))
             .collect::<Vec<_>>();
 
+        let orbit_target = ctx.scene.create_node(format!("{}_orbit_target", spec.name));
         let model_root = ctx.scene.create_node(spec.name);
         ctx.scene.set_local_transform(
             model_root,
@@ -183,6 +275,7 @@ impl Application for ModelGalleryApp {
                 scale: Vec3::splat(scale),
             },
         )?;
+        ctx.scene.attach_child(orbit_target, model_root)?;
 
         let mut vertex_count = 0_usize;
         let mut triangle_count = 0_usize;
@@ -222,12 +315,7 @@ impl Application for ModelGalleryApp {
 
         Ok(Self {
             camera_node,
-            camera_rig: CameraRig {
-                translation_speed: 4.0,
-                rotation_speed: 1.5,
-            },
-            model_root,
-            elapsed: 0.0,
+            trackball: TrackBall::new(orbit_target, TARGET_RADIUS * 3.0),
             debug_hud,
             stats_id,
             overlay_text,
@@ -235,17 +323,10 @@ impl Application for ModelGalleryApp {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext<'_>, dt: f32) -> Result<()> {
-        self.elapsed += dt;
-        let transform = ctx.scene.local_transform(self.model_root)?;
-        ctx.scene.set_local_transform(
-            self.model_root,
-            Transform {
-                rotation: Quat::from_rotation_y(self.elapsed * 0.3),
-                ..transform
-            },
-        )?;
         *ctx.active_camera = Some(self.camera_node);
-        self.camera_rig.update(ctx, self.camera_node, dt)?;
+        update_keyboard_controls(&mut self.trackball, ctx.input, dt);
+        self.trackball
+            .update(ctx.input, ctx.scene, self.camera_node, dt)?;
         Ok(())
     }
 
@@ -296,7 +377,7 @@ fn index_size(format: rig_app::rig_assets::IndexFormat) -> usize {
 
 fn add_camera(ctx: &mut StartupContext<'_>) -> Result<NodeId> {
     let camera = ctx.scene.create_node("camera");
-    let eye = Vec3::new(0.0, 0.0, 6.0);
+    let eye = Vec3::new(0.0, 0.0, TARGET_RADIUS * 3.0);
     ctx.scene.set_local_transform(
         camera,
         Transform {
@@ -342,8 +423,12 @@ fn add_light(ctx: &mut StartupContext<'_>) -> Result<()> {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let spec = match parse_model_arg() {
-        Ok(spec) => spec,
+    let spec = match parse_cli_action() {
+        Ok(CliAction::Help) => {
+            print_help();
+            return Ok(());
+        }
+        Ok(CliAction::Run(spec)) => spec,
         Err(err) => {
             eprintln!("{err}");
             bail!(err);
@@ -356,4 +441,34 @@ fn main() -> Result<()> {
         title: format!("Model Gallery — {}", spec.name),
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_help_flags() {
+        assert!(is_help_arg("--help"));
+        assert!(is_help_arg("-h"));
+        assert!(!is_help_arg("bunny"));
+    }
+
+    #[test]
+    fn help_text_lists_every_model() {
+        let help = help_text();
+
+        for model in MODELS {
+            assert!(help.contains(model.name));
+        }
+    }
+
+    #[test]
+    fn help_text_lists_mouse_and_keyboard_controls() {
+        let help = help_text();
+
+        assert!(help.contains("LMB drag"));
+        assert!(help.contains("W / S"));
+        assert!(help.contains("Arrow keys"));
+    }
 }
