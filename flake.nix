@@ -108,6 +108,7 @@
             nativeBuildInputs = [
               rustToolchain
               pkgs.cargo-tarpaulin
+              pkgs.git-lfs
               architecture-prompts.packages.${system}.default
             ]
             ++ pkgs.lib.optionals isLinux linuxNativeBuildInputs;
