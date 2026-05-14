@@ -1,7 +1,10 @@
 //! Math primitives for the rig framework.
 
+pub mod interpolation;
+
 pub use glam;
 pub use glam::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
+pub use interpolation::Interpolation;
 
 /// Decomposed transform used for scene authoring.
 #[derive(Clone, Copy, Debug, PartialEq)]
