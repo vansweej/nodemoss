@@ -39,9 +39,15 @@ download_file() {
 
     echo "download: ${url}"
     if command -v curl >/dev/null 2>&1; then
-        curl --fail --location --output "${temp_output}" "${url}"
+        if ! curl --fail --location --output "${temp_output}" "${url}"; then
+            rm -f "${temp_output}"
+            return 1
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget --output-document="${temp_output}" "${url}"
+        if ! wget --output-document="${temp_output}" "${url}"; then
+            rm -f "${temp_output}"
+            return 1
+        fi
     else
         echo "error: curl or wget is required for downloads" >&2
         exit 1
@@ -293,6 +299,25 @@ copy_ambient_map() {
     echo "copied texture: ${destination}"
 }
 
+ambient_texture_set_complete() {
+    local destination_dir="$1"
+
+    [[ -s "${destination_dir}/diffuse.png" \
+        && -s "${destination_dir}/normal.png" \
+        && -s "${destination_dir}/roughness.png" \
+        && -s "${destination_dir}/ao.png" ]]
+}
+
+warn_manual_ambient_download() {
+    local ambient_id="$1"
+    local zip_path="$2"
+
+    echo "warning: ambientCG download failed for ${ambient_id}" >&2
+    echo "         Manual fallback: download ${ambient_id}_2K-PNG.zip from" >&2
+    echo "         https://ambientcg.com/get?file=${ambient_id}_2K-PNG.zip" >&2
+    echo "         save it as ${zip_path}, then rerun this script." >&2
+}
+
 download_ambient_texture_set() {
     local ambient_id="$1"
     local destination_name="$2"
@@ -301,7 +326,15 @@ download_ambient_texture_set() {
     local extract_dir="${DOWNLOAD_DIR}/ambientcg/${ambient_id}"
 
     mkdir -p "${destination_dir}"
-    download_file "https://ambientcg.com/get?file=${ambient_id}_2K-PNG.zip" "${zip_path}"
+    if ambient_texture_set_complete "${destination_dir}"; then
+        echo "skip complete ambientCG texture set: ${destination_dir}"
+        return
+    fi
+
+    if ! download_file "https://ambientcg.com/get?file=${ambient_id}_2K-PNG.zip" "${zip_path}"; then
+        warn_manual_ambient_download "${ambient_id}" "${zip_path}"
+        return
+    fi
 
     if [[ -f "${extract_dir}/.extracted" ]]; then
         echo "skip existing extraction: ${extract_dir}"
@@ -316,6 +349,32 @@ download_ambient_texture_set() {
     copy_ambient_map "${extract_dir}" '*_NormalGL.png' "${destination_dir}/normal.png"
     copy_ambient_map "${extract_dir}" '*_Roughness.png' "${destination_dir}/roughness.png"
     copy_ambient_map "${extract_dir}" '*_AmbientOcclusion.png' "${destination_dir}/ao.png"
+}
+
+verify_ambient_texture_sets() {
+    local missing=0
+
+    for destination_name in \
+        brick_red \
+        wood_oak \
+        metal_rust \
+        stone_cobble \
+        marble_white \
+        concrete_worn \
+        fabric_denim \
+        terrain_grass
+    do
+        local destination_dir="${TEXTURE_DIR}/${destination_name}"
+        if ! ambient_texture_set_complete "${destination_dir}"; then
+            echo "warning: incomplete ambientCG texture set: ${destination_dir}" >&2
+            missing=$((missing + 1))
+        fi
+    done
+
+    if (( missing > 0 )); then
+        echo "warning: ${missing} ambientCG texture set(s) are still placeholders or incomplete." >&2
+        echo "         The renderer does not consume these PBR maps yet, but docs list them as future assets." >&2
+    fi
 }
 
 main() {
@@ -341,6 +400,8 @@ main() {
     download_ambient_texture_set Concrete034 concrete_worn
     download_ambient_texture_set Fabric045 fabric_denim
     download_ambient_texture_set Ground037 terrain_grass
+
+    verify_ambient_texture_sets
 
     echo
     echo "Asset download pass complete."

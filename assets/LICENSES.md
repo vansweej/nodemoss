@@ -59,6 +59,11 @@ matching references.
 Downloaded by `scripts/download_assets.sh` from ambientCG via
 `https://ambientcg.com/get?file=<ID>_2K-PNG.zip`.
 
+If direct ambientCG downloads fail, place each `<ID>_2K-PNG.zip` in
+`.asset-downloads/ambientcg/` and rerun `scripts/download_assets.sh`. The checked-in
+texture directories may contain only `.gitkeep` placeholders until those ZIPs are
+available locally.
+
 ambientCG assets are CC0 / public domain. Each set is normalized to this layout:
 
 | File | Source map suffix | Current renderer use |

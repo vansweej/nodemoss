@@ -73,6 +73,8 @@ ambientCG texture directories are scaffolded for future PBR work. The download
 script normalizes each set to four predictable filenames when the upstream ZIPs are
 available. At the time of this update, the checked-in directories contain placeholders
 only; populate them with `scripts/download_assets.sh` or manually before using them.
+If ambientCG's direct download URLs fail, download each `<ID>_2K-PNG.zip` manually
+into `.asset-downloads/ambientcg/` and rerun the script; it will use the cached ZIPs.
 
 ```mermaid
 graph TD
