@@ -1,7 +1,12 @@
 //! Immutable shared asset store for the rig framework.
 
+pub mod animation;
 pub mod marching_cubes;
 pub mod mesh_factory;
+
+pub use animation::{
+    AnimationChannel, AnimationClip, ChannelProperty, KeyframeSampler, KeyframeValues,
+};
 
 use std::sync::Arc;
 
@@ -22,6 +27,9 @@ pub struct TextureHandle(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SamplerHandle(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AnimationClipHandle(u32);
 
 impl MeshHandle {
     pub fn from_raw(v: u32) -> Self {
@@ -64,6 +72,16 @@ impl TextureHandle {
 }
 
 impl SamplerHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl AnimationClipHandle {
     pub fn from_raw(v: u32) -> Self {
         Self(v)
     }
@@ -270,6 +288,8 @@ pub enum AssetError {
     InvalidTexture,
     #[error("invalid sampler handle")]
     InvalidSampler,
+    #[error("invalid animation clip handle")]
+    InvalidAnimationClip,
 }
 
 #[derive(Default)]
@@ -279,6 +299,7 @@ pub struct AssetStore {
     shaders: Vec<ShaderAsset>,
     textures: Vec<TextureAsset>,
     samplers: Vec<SamplerDescriptor>,
+    animation_clips: Vec<AnimationClip>,
 }
 
 impl AssetStore {
@@ -316,6 +337,12 @@ impl AssetStore {
         handle
     }
 
+    pub fn add_animation_clip(&mut self, clip: AnimationClip) -> AnimationClipHandle {
+        let handle = AnimationClipHandle(self.animation_clips.len() as u32);
+        self.animation_clips.push(clip);
+        handle
+    }
+
     pub fn mesh(&self, handle: MeshHandle) -> Result<&MeshAsset, AssetError> {
         self.meshes
             .get(handle.index())
@@ -345,12 +372,21 @@ impl AssetStore {
             .get(handle.index())
             .ok_or(AssetError::InvalidSampler)
     }
+
+    pub fn animation_clip(
+        &self,
+        handle: AnimationClipHandle,
+    ) -> Result<&AnimationClip, AssetError> {
+        self.animation_clips
+            .get(handle.index())
+            .ok_or(AssetError::InvalidAnimationClip)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_math::Vec3;
+    use rig_math::{Interpolation, Vec3};
 
     fn sample_layout() -> VertexLayout {
         VertexLayout {
@@ -380,6 +416,23 @@ mod tests {
                 center: Vec3::ZERO,
                 radius: 1.0,
             },
+        }
+    }
+
+    fn sample_animation_clip(name: &str, duration: f32) -> AnimationClip {
+        AnimationClip {
+            name: name.to_string(),
+            duration,
+            looping: true,
+            channels: vec![AnimationChannel {
+                target_node: "node".to_string(),
+                property: ChannelProperty::Translation,
+                sampler: KeyframeSampler {
+                    times: vec![0.0, duration],
+                    interpolation: Interpolation::Linear,
+                    values: KeyframeValues::Translations(vec![Vec3::ZERO, Vec3::X]),
+                },
+            }],
         }
     }
 
@@ -537,6 +590,48 @@ mod tests {
         assert!(matches!(
             store.sampler(SamplerHandle(99)),
             Err(AssetError::InvalidSampler)
+        ));
+    }
+
+    #[test]
+    fn animation_clip_handle_from_raw_round_trips() {
+        let handle = AnimationClipHandle::from_raw(3);
+        assert_eq!(handle.index(), 3);
+        assert_eq!(handle, AnimationClipHandle::from_raw(3));
+    }
+
+    #[test]
+    fn add_animation_clip_returns_retrievable_asset() {
+        let mut store = AssetStore::new();
+        let clip = sample_animation_clip("wave", 4.0);
+
+        let handle = store.add_animation_clip(clip);
+        let retrieved = store.animation_clip(handle).unwrap();
+
+        assert_eq!(handle.index(), 0);
+        assert_eq!(retrieved.name, "wave");
+        assert_eq!(retrieved.duration, 4.0);
+        assert_eq!(retrieved.channels.len(), 1);
+    }
+
+    #[test]
+    fn add_two_animation_clips_returns_incrementing_handles() {
+        let mut store = AssetStore::new();
+
+        let first = store.add_animation_clip(sample_animation_clip("first", 1.0));
+        let second = store.add_animation_clip(sample_animation_clip("second", 2.0));
+
+        assert_eq!(first.index(), 0);
+        assert_eq!(second.index(), 1);
+    }
+
+    #[test]
+    fn invalid_animation_clip_handle_returns_error() {
+        let store = AssetStore::new();
+
+        assert!(matches!(
+            store.animation_clip(AnimationClipHandle::from_raw(99)),
+            Err(AssetError::InvalidAnimationClip)
         ));
     }
 
