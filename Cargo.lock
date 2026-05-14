@@ -236,6 +236,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "asset_showcase"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1004,6 +1014,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gen_test_textures"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,6 +1642,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "multi_obj"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
 name = "multi_object"
 version = "0.1.0"
 dependencies = [
@@ -1832,6 +1860,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "obj_load"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
+name = "obj_textured"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
 ]
 
 [[package]]
@@ -2625,6 +2673,7 @@ dependencies = [
  "pollster",
  "rig-assets",
  "rig-gpu",
+ "rig-import",
  "rig-math",
  "rig-overlay",
  "rig-render",
@@ -2649,6 +2698,27 @@ dependencies = [
  "thiserror 2.0.18",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "rig-import"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "image",
+ "rig-assets",
+ "rig-loader",
+ "rig-math",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rig-loader"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "thiserror 2.0.18",
+ "tobj",
 ]
 
 [[package]]
@@ -2856,6 +2926,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shader_load"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3037,6 +3117,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "texture_formats"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
+name = "texture_load"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
 name = "textured_mesh"
 version = "0.1.0"
 dependencies = [
@@ -3140,6 +3240,15 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tobj"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04aca6092e5978e708ee784e8ab9b5cf3cdb598b28f99a2f257446e7081a7025"
+dependencies = [
+ "ahash",
+]
 
 [[package]]
 name = "toml_datetime"

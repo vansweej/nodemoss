@@ -1,0 +1,6 @@
+newmtl checker
+Ka 0.20 0.20 0.20
+Kd 1.00 1.00 1.00
+Ks 0.20 0.20 0.20
+Ns 16
+map_Kd ../textures/checker.png

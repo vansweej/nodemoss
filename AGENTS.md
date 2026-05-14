@@ -16,10 +16,13 @@ graphics/                       # workspace root (this directory)
     SCENEGRAPH.md               # scene graph deep-dive (arena tree + scene-facing components)
     RESOURCES.md                # assets, GPU resources, frame resources
     APPLICATION.md              # runtime, event loop, contexts, interaction
+    LOADING.md                  # file loading pipeline, importer adaptation, examples
   crates/
     math/                       # rig-math    — glam re-exports + Transform, BoundingSphere, Projection, Camera
     scene/                      # rig-scene   — arena SceneGraph, generational NodeId, cameras/lights/renderables
     assets/                     # rig-assets  — immutable meshes, materials, shader source, textures
+    loader/                     # rig-loader  — file/source abstraction + image/OBJ/WGSL decoders
+    import/                     # rig-import  — decoded asset adaptation into AssetStore assets
     gpu/                        # rig-gpu     — GpuContext (device/queue/surface), Frame, GpuError
     render/                     # rig-render  — concrete wgpu renderer, immutable cache, frame resources
     overlay/                    # rig-overlay — 2D text overlay (glyphon), retained ElementRegistry
@@ -31,6 +34,13 @@ graphics/                       # workspace root (this directory)
     multi_object/               # milestone 3 — multiple objects, camera rig
     offscreen_demo/             # milestone 3 — offscreen render target + blit
     platonic_solids/            # milestone 3 — five animated solids, fly-camera, overlay
+    obj_load/                   # milestone 7 — geometry-only OBJ loading
+    obj_textured/               # milestone 7 — OBJ + MTL diffuse texture loading
+    multi_obj/                  # milestone 7 — importer cache demonstration
+    texture_load/               # milestone 7 — texture file on procedural mesh
+    texture_formats/            # milestone 7 — PNG/JPEG/TGA loading
+    shader_load/                # milestone 7 — runtime WGSL loading
+    asset_showcase/             # milestone 7 — combined loading showcase
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
@@ -47,7 +57,7 @@ for language-specific coding standards, error handling, and tooling rules.
 | Windowing        | **winit**   | Cross-platform. Integrates with wgpu.                    |
 | Math             | **glam**    | Fast, bytemuck-compatible. Extended by rig-math.         |
 | Scene graph      | **Hybrid**  | Arena tree + scene-facing component maps.                 |
-| Project layout   | **Cargo workspace** | 7 crates with clean dependency boundaries.        |
+| Project layout   | **Cargo workspace** | Core crates plus loader/import pipeline.          |
 | GPU resources    | **Immutable cache + frame resources** | Share immutable GPU state, allocate mutable frame data explicitly. |
 | 2D overlay       | **glyphon** | GPU text rendering; retained element registry in rig-overlay. |
 
@@ -60,13 +70,17 @@ rig-scene         (depends on rig-math)
   ^
 rig-assets        (depends on rig-math)
   ^
+rig-loader        (leaf — depends on image, tobj, thiserror)
+  ^
+rig-import        (depends on rig-loader, rig-assets, rig-math)
+  ^
 rig-gpu           (depends on wgpu, winit)
   ^
 rig-render        (depends on rig-gpu, rig-math, rig-scene, rig-assets)
   ^
 rig-overlay       (depends on rig-gpu, glyphon)
   ^
-rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, winit)
+rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, rig-import, winit)
   ^
 examples/         (depend on rig-app)
 ```
@@ -143,6 +157,7 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 4. **Overlay system** — `rig-gpu` crate, `rig-overlay` crate (glyphon), FPS counters in all examples, F3 toggle ✓
 5. **Texture support** — 3-group bind layout (frame/material/object), GPU texture/sampler cache, `TEXTURED_SHADER`, `textured_mesh` example ✓
 6. **Lights + Phong shading** — `LightUniform`/`LightsBuffer` types, group 0 binding 1 (lights buffer), `pack_lights_buffer()`, `PHONG_SHADER` (Blinn-Phong), `lit_scene` example ✓
+7. **Asset loading** — `rig-loader`, `rig-import`, OBJ/MTL, PNG/JPEG/TGA, runtime WGSL, seven progressive examples ✓
 
 ## Documentation
 
@@ -152,3 +167,4 @@ All architecture docs live in `docs/` and use Mermaid diagrams extensively. Read
 - `SCENEGRAPH.md` — arena tree internals, components, traversal, culling
 - `RESOURCES.md` — immutable assets, GPU cache, frame resources, pipeline specialization
 - `APPLICATION.md` — Application trait, redraw-driven runner, contexts, camera utilities
+- `LOADING.md` — AssetSource, Loader, Importer, cache behavior, loading examples

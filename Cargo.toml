@@ -8,6 +8,9 @@ members = [
     "crates/render",
     "crates/overlay",
     "crates/app",
+    "crates/loader",
+    "crates/import",
+    "tools/gen_test_textures",
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
     "examples/mesh_showcase",
@@ -19,6 +22,13 @@ members = [
     "examples/lit_scene",
     "examples/metaballs",
     "examples/voice_metaballs",
+    "examples/obj_load",
+    "examples/obj_textured",
+    "examples/multi_obj",
+    "examples/texture_load",
+    "examples/texture_formats",
+    "examples/shader_load",
+    "examples/asset_showcase",
 ]
 exclude = ["GeometricTools"]
 
@@ -36,6 +46,8 @@ rig-gpu = { path = "crates/gpu" }
 rig-render = { path = "crates/render" }
 rig-overlay = { path = "crates/overlay" }
 rig-app = { path = "crates/app" }
+rig-loader = { path = "crates/loader" }
+rig-import = { path = "crates/import" }
 
 # External dependencies
 wgpu = "29.0.1"
@@ -48,3 +60,4 @@ pollster = "0.4"
 thiserror = "2.0"
 anyhow = "1.0"
 image = "0.25"
+tobj = "4"

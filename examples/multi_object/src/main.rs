@@ -142,11 +142,13 @@ impl Application for MultiObjectApp {
 
         // --- Camera ----------------------------------------------------------
         let camera = ctx.scene.create_node("camera");
+        let eye = Vec3::new(0.0, 1.0, 6.0);
+        let pitch = -eye.y.atan2(eye.z);
         ctx.scene.set_local_transform(
             camera,
             Transform {
-                translation: Vec3::new(0.0, 1.0, 6.0),
-                rotation: Quat::IDENTITY,
+                translation: eye,
+                rotation: Quat::from_rotation_x(pitch),
                 scale: Vec3::ONE,
             },
         )?;
