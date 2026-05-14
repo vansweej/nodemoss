@@ -66,7 +66,11 @@ sequenceDiagram
     Loader-->>Caller: decoded data
 ```
 
-OBJ loading reads referenced MTL files as siblings of the OBJ path.
+OBJ loading reads referenced MTL files as siblings of the OBJ path. ASCII PLY
+loading is geometry-only and returns one mesh with no materials.
+
+For the curated model library and license notes, see [`MODELS.md`](MODELS.md) and
+[`assets/LICENSES.md`](../assets/LICENSES.md).
 
 ## 5. Importer call flow
 
@@ -200,7 +204,59 @@ flowchart TD
 
 Loader errors describe source/format failures. Import errors describe validation and adaptation failures.
 
-## 13. Future extension points
+## 13. PLY format support
+
+PLY support is intentionally narrow: ASCII-only, geometry-only, and hand-rolled in
+`std` without an external crate. The decoder extracts positions and optional normals,
+leaves UVs/materials empty, and fan-triangulates n-gon faces. When normals are absent,
+`rig-import` can generate smooth normals during mesh adaptation.
+
+```mermaid
+flowchart TD
+    read_mesh["Loader::read_mesh(path)"] --> check_ext{extension?}
+    check_ext -->|.obj| decode_obj["decode_obj\n+ MTL sibling resolution"]
+    check_ext -->|.ply| decode_ply["decode_ply\nASCII only"]
+    check_ext -->|other| error["LoadError::\nUnsupportedFormat"]
+    decode_obj --> model["DecodedModel"]
+    decode_ply --> model
+```
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Loader
+    participant Source as AssetSource
+    participant PLY as decode_ply
+
+    Caller->>Loader: read_mesh("mesh.ply")
+    Loader->>Source: read(path)
+    Source-->>Loader: bytes
+    Loader->>PLY: decode_ply(&bytes)
+    Note over PLY: parse ASCII header line by line
+    Note over PLY: record vertex/face element counts
+    Note over PLY: detect nx/ny/nz presence
+    Note over PLY: read N vertex rows → positions + normals
+    Note over PLY: read N face rows → fan-triangulate indices
+    PLY-->>Loader: DecodedModel (1 mesh, 0 materials)
+    Loader-->>Caller: DecodedModel
+```
+
+## 14. Combined model bounds
+
+`LoadedModel.bounds` is the combined enclosing `BoundingSphere` across every mesh
+in the imported model. It is computed at import time and used by callers for
+auto-scaling, fit-to-view behavior, and future culling decisions.
+
+```mermaid
+flowchart LR
+    m1["ImportedMesh 1\ncenter₁  r₁"] --> aabb["Combined AABB\nmin = min of all (centerᵢ − rᵢ)\nmax = max of all (centerᵢ + rᵢ)"]
+    m2["ImportedMesh 2\ncenter₂  r₂"] --> aabb
+    mN["ImportedMesh N\ncenterₙ  rₙ"] --> aabb
+    aabb --> sphere["LoadedModel.bounds\ncenter = midpoint(min, max)\nradius = half-diagonal"]
+    sphere --> usage["scale = target / bounds.radius\noffset = −bounds.center × scale"]
+```
+
+## 15. Future extension points
 
 ```mermaid
 flowchart LR

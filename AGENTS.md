@@ -17,12 +17,13 @@ graphics/                       # workspace root (this directory)
     RESOURCES.md                # assets, GPU resources, frame resources
     APPLICATION.md              # runtime, event loop, contexts, interaction
     LOADING.md                  # file loading pipeline, importer adaptation, examples
+    MODELS.md                   # curated model/texture library, provenance, viewer usage
   crates/
     math/                       # rig-math    — glam re-exports + Transform, BoundingSphere, Projection, Camera
     scene/                      # rig-scene   — arena SceneGraph, generational NodeId, cameras/lights/renderables
     assets/                     # rig-assets  — immutable meshes, materials, shader source, textures
-    loader/                     # rig-loader  — file/source abstraction + image/OBJ/WGSL decoders
-    import/                     # rig-import  — decoded asset adaptation into AssetStore assets
+    loader/                     # rig-loader  — file/source abstraction + image/OBJ/PLY/WGSL decoders
+    import/                     # rig-import  — decoded asset adaptation into AssetStore assets + model bounds
     gpu/                        # rig-gpu     — GpuContext (device/queue/surface), Frame, GpuError
     render/                     # rig-render  — concrete wgpu renderer, immutable cache, frame resources
     overlay/                    # rig-overlay — 2D text overlay (glyphon), retained ElementRegistry
@@ -41,6 +42,7 @@ graphics/                       # workspace root (this directory)
     texture_formats/            # milestone 7 — PNG/JPEG/TGA loading
     shader_load/                # milestone 7 — runtime WGSL loading
     asset_showcase/             # milestone 7 — combined loading showcase
+    model_gallery/              # milestone 8 — CLI model viewer over curated assets
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
@@ -70,9 +72,9 @@ rig-scene         (depends on rig-math)
   ^
 rig-assets        (depends on rig-math)
   ^
-rig-loader        (leaf — depends on image, tobj, thiserror)
+rig-loader        (leaf — depends on image, tobj, thiserror; PLY decoded without external crate)
   ^
-rig-import        (depends on rig-loader, rig-assets, rig-math)
+rig-import        (depends on rig-loader, rig-assets, rig-math; LoadedModel carries combined BoundingSphere)
   ^
 rig-gpu           (depends on wgpu, winit)
   ^
@@ -158,6 +160,10 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 5. **Texture support** — 3-group bind layout (frame/material/object), GPU texture/sampler cache, `TEXTURED_SHADER`, `textured_mesh` example ✓
 6. **Lights + Phong shading** — `LightUniform`/`LightsBuffer` types, group 0 binding 1 (lights buffer), `pack_lights_buffer()`, `PHONG_SHADER` (Blinn-Phong), `lit_scene` example ✓
 7. **Asset loading** — `rig-loader`, `rig-import`, OBJ/MTL, PNG/JPEG/TGA, runtime WGSL, seven progressive examples ✓
+8. **Asset library + PLY loader** — Git LFS, curated OBJ model library (Stanford,
+   Keenan Crane CC0), ambientCG PBR texture scaffolding, hand-rolled ASCII PLY
+   decoder in rig-loader, combined BoundingSphere on LoadedModel,
+   model_gallery CLI viewer ✓
 
 ## Documentation
 
@@ -168,3 +174,4 @@ All architecture docs live in `docs/` and use Mermaid diagrams extensively. Read
 - `RESOURCES.md` — immutable assets, GPU cache, frame resources, pipeline specialization
 - `APPLICATION.md` — Application trait, redraw-driven runner, contexts, camera utilities
 - `LOADING.md` — AssetSource, Loader, Importer, cache behavior, loading examples
+- `MODELS.md` — model library provenance, texture conventions, auto-scaling patterns
