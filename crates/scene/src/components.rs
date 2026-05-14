@@ -114,6 +114,25 @@ impl SceneGraph {
         Ok(&self.node(node)?.name)
     }
 
+    /// Find the first live node whose name equals `name`.
+    ///
+    /// O(n) linear scan over all node slots — intended for bind-time use
+    /// (called once when a clip is assigned), not per-frame.
+    /// Returns `None` if no matching node exists.
+    pub fn find_node_by_name(&self, name: &str) -> Option<NodeId> {
+        self.nodes.iter().enumerate().find_map(|(index, slot)| {
+            let node = slot.node.as_ref()?;
+            if node.name == name {
+                Some(NodeId {
+                    index: index as u32,
+                    generation: slot.generation,
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn visibility(&self, id: NodeId) -> Result<VisibilityMode> {
         Ok(self.node(id)?.visibility)
     }

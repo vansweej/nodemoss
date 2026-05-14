@@ -922,6 +922,32 @@ mod tests {
     }
 
     #[test]
+    fn find_node_by_name_returns_matching_node() {
+        let mut scene = SceneGraph::new();
+        let _alpha = scene.create_node("alpha");
+        let beta = scene.create_node("beta");
+        assert_eq!(scene.find_node_by_name("beta"), Some(beta));
+    }
+
+    #[test]
+    fn find_node_by_name_returns_none_for_missing() {
+        let mut scene = SceneGraph::new();
+        let _node = scene.create_node("present");
+        assert_eq!(scene.find_node_by_name("missing"), None);
+    }
+
+    #[test]
+    fn find_node_by_name_skips_destroyed_nodes() {
+        let mut scene = SceneGraph::new();
+        let first = scene.create_node("arm");
+        scene.destroy_node(first).unwrap();
+        let second = scene.create_node("arm");
+        let found = scene.find_node_by_name("arm").unwrap();
+        assert_eq!(found, second);
+        assert_ne!(found, first);
+    }
+
+    #[test]
     fn create_node_reuses_free_list_slot() {
         let mut scene = SceneGraph::new();
         let id1 = scene.create_node("first");
