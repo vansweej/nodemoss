@@ -5,6 +5,8 @@ use std::path::Path;
 use crate::decode::{decode_obj, decode_ply, decode_shader, decode_texture};
 use crate::{AssetPath, AssetSource, DecodedImage, DecodedModel, DecodedShader, LoadError};
 
+const LFS_POINTER_PREFIX: &[u8] = b"version https://git-lfs.github.com/spec/v1";
+
 /// Reads bytes from an [`AssetSource`] and dispatches them to format decoders.
 pub struct Loader {
     source: Box<dyn AssetSource>,
@@ -22,6 +24,7 @@ impl Loader {
     pub fn read_texture(&self, path: &AssetPath) -> Result<DecodedImage, LoadError> {
         ensure_extension(path, &["png", "jpg", "jpeg", "tga"])?;
         let bytes = self.source.read(path)?;
+        ensure_not_lfs_pointer(path, &bytes)?;
         decode_texture(&bytes, path.extension().unwrap_or_default())
     }
 
@@ -29,6 +32,7 @@ impl Loader {
     pub fn read_mesh(&self, path: &AssetPath) -> Result<DecodedModel, LoadError> {
         ensure_extension(path, &["obj", "ply"])?;
         let bytes = self.source.read(path)?;
+        ensure_not_lfs_pointer(path, &bytes)?;
         match path
             .extension()
             .unwrap_or_default()
@@ -44,13 +48,31 @@ impl Loader {
     pub fn read_shader(&self, path: &AssetPath) -> Result<DecodedShader, LoadError> {
         ensure_extension(path, &["wgsl"])?;
         let bytes = self.source.read(path)?;
+        ensure_not_lfs_pointer(path, &bytes)?;
         decode_shader(&bytes)
     }
 
     fn read_mtl(&self, model_path: &AssetPath, mtl_path: &Path) -> Result<Vec<u8>, LoadError> {
         let mtl_name = mtl_path.to_string_lossy();
-        self.source.read(&model_path.sibling(mtl_name.as_ref()))
+        let path = model_path.sibling(mtl_name.as_ref());
+        let bytes = self.source.read(&path)?;
+        ensure_not_lfs_pointer(&path, &bytes)?;
+        Ok(bytes)
     }
+}
+
+fn ensure_not_lfs_pointer(path: &AssetPath, bytes: &[u8]) -> Result<(), LoadError> {
+    if is_lfs_pointer(bytes) {
+        return Err(LoadError::LfsPointer {
+            path: path.as_str().to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn is_lfs_pointer(bytes: &[u8]) -> bool {
+    bytes.starts_with(LFS_POINTER_PREFIX)
 }
 
 fn ensure_extension(path: &AssetPath, supported: &[&str]) -> Result<(), LoadError> {
@@ -140,6 +162,60 @@ mod tests {
     }
 
     #[test]
+    fn detects_lfs_pointer_in_mesh() {
+        let source = MemorySource::new().with("model.obj", lfs_pointer_bytes());
+        let loader = Loader::new(source);
+
+        assert!(matches!(
+            loader.read_mesh(&AssetPath::new("model.obj")),
+            Err(LoadError::LfsPointer { path }) if path == "model.obj"
+        ));
+    }
+
+    #[test]
+    fn detects_lfs_pointer_in_mesh_material() {
+        let obj =
+            b"mtllib model.mtl\no tri\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n".to_vec();
+        let source = MemorySource::new()
+            .with("model.obj", obj)
+            .with("model.mtl", lfs_pointer_bytes());
+        let loader = Loader::new(source);
+
+        assert!(matches!(
+            loader.read_mesh(&AssetPath::new("model.obj")),
+            Err(LoadError::LfsPointer { path }) if path == "model.mtl"
+        ));
+    }
+
+    #[test]
+    fn detects_lfs_pointer_in_texture() {
+        let source = MemorySource::new().with("tex.png", lfs_pointer_bytes());
+        let loader = Loader::new(source);
+
+        assert!(matches!(
+            loader.read_texture(&AssetPath::new("tex.png")),
+            Err(LoadError::LfsPointer { path }) if path == "tex.png"
+        ));
+    }
+
+    #[test]
+    fn detects_lfs_pointer_in_shader() {
+        let source = MemorySource::new().with("shader.wgsl", lfs_pointer_bytes());
+        let loader = Loader::new(source);
+
+        assert!(matches!(
+            loader.read_shader(&AssetPath::new("shader.wgsl")),
+            Err(LoadError::LfsPointer { path }) if path == "shader.wgsl"
+        ));
+    }
+
+    #[test]
+    fn is_lfs_pointer_returns_false_for_real_content() {
+        assert!(!is_lfs_pointer(b"v 0 0 0\nv 1 0 0\n"));
+        assert!(!is_lfs_pointer(b""));
+    }
+
+    #[test]
     fn unsupported_extension_returns_error() {
         let loader = Loader::new(MemorySource::new());
 
@@ -147,5 +223,9 @@ mod tests {
             loader.read_texture(&AssetPath::new("texture.bmp")),
             Err(LoadError::UnsupportedFormat(ext)) if ext == "bmp"
         ));
+    }
+
+    fn lfs_pointer_bytes() -> Vec<u8> {
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:abc123\nsize 42\n".to_vec()
     }
 }

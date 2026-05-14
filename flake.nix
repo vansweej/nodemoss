@@ -116,16 +116,23 @@
             buildInputs =
               pkgs.lib.optionals isLinux linuxBuildInputs ++ pkgs.lib.optionals isDarwin darwinBuildInputs;
 
-            shellHook = pkgs.lib.optionalString isLinux ''
-              # wgpu loads libvulkan.so.1 via dlopen at runtime
-              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
-              # Vulkan validation layers for debug builds
-              export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
-              # Point ALSA at the system PipeWire plugin so cpal can capture audio.
-              # The Nix alsa-lib does not bundle libasound_module_pcm_pipewire.so;
-              # the system copy (installed by pipewire-alsa) provides it.
-              export ALSA_PLUGIN_DIR="/usr/lib/x86_64-linux-gnu/alsa-lib"
-            '';
+            shellHook =
+              ''
+                # Configure local LFS filters and fetch any un-smudged objects.
+                # This is idempotent — on a hot shell re-entry it completes instantly.
+                git lfs install --local --skip-smudge 2>/dev/null || true
+                git lfs pull 2>/dev/null || true
+              ''
+              + pkgs.lib.optionalString isLinux ''
+                # wgpu loads libvulkan.so.1 via dlopen at runtime
+                export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
+                # Vulkan validation layers for debug builds
+                export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+                # Point ALSA at the system PipeWire plugin so cpal can capture audio.
+                # The Nix alsa-lib does not bundle libasound_module_pcm_pipewire.so;
+                # the system copy (installed by pipewire-alsa) provides it.
+                export ALSA_PLUGIN_DIR="/usr/lib/x86_64-linux-gnu/alsa-lib"
+              '';
           };
         }
       );

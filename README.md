@@ -35,6 +35,30 @@ NodeMoss is a personal 3D and physics research framework in Rust built around a 
 
 ## Development
 
+### First-time setup
+
+This repository uses **Git LFS** for binary assets (models, textures) under
+`assets/`. The Nix dev shell includes `git-lfs` and automatically pulls LFS
+objects on entry, so the standard workflow is:
+
+```bash
+git clone <repo-url>
+nix develop --impure        # installs LFS filters + pulls asset content
+cargo build --workspace
+```
+
+If you enter the dev shell and models still fail to load with an error like
+`"… is a Git LFS pointer (not actual content)"`, run manually:
+
+```bash
+git lfs pull
+```
+
+> **Without Nix:** Install `git-lfs` via your system package manager, then run
+> `git lfs install && git lfs pull` before building.
+
+### Common commands
+
 ```bash
 nix develop --impure
 cargo build --workspace

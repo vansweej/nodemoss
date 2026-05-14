@@ -195,6 +195,7 @@ flowchart TD
     LE["LoadError"] --> NF["NotFound"]
     LE --> IO["Io"]
     LE --> UF["UnsupportedFormat"]
+    LE --> LFS["LfsPointer"]
     LE --> DE["Decode"]
     IE["ImportError"] --> Load["Load(LoadError)"]
     IE --> Missing["MissingPositions"]
@@ -202,7 +203,9 @@ flowchart TD
     IE --> Dep["UnresolvedDependency"]
 ```
 
-Loader errors describe source/format failures. Import errors describe validation and adaptation failures.
+Loader errors describe source/format failures. `LfsPointer` means the file is a
+Git LFS pointer stub rather than actual asset content; run `git lfs pull` inside
+the Nix dev shell. Import errors describe validation and adaptation failures.
 
 ## 13. PLY format support
 

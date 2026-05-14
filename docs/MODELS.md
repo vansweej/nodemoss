@@ -5,6 +5,23 @@
 
 ---
 
+## 0. Git LFS prerequisites
+
+Binary asset payloads under `assets/` are tracked by Git LFS (see
+[`.gitattributes`](../.gitattributes)). If LFS content has not been fetched,
+the loader will report:
+
+```text
+assets/models/teapot.obj is a Git LFS pointer (not actual content) — run `git lfs pull` inside the Nix dev shell
+```
+
+The Nix dev shell (`nix develop --impure`) runs `git lfs install --local` and
+`git lfs pull` automatically via `shellHook`. On a fresh clone, simply entering
+the dev shell is enough. See the [README](../README.md#first-time-setup) for
+details.
+
+---
+
 ## 1. Asset provenance
 
 The asset library combines geometry-only OBJ models, textured OBJ models, and

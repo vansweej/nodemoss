@@ -1,5 +1,6 @@
 //! OBJ mesh decoder.
 
+use std::cell::RefCell;
 use std::io::Cursor;
 use std::path::Path;
 
@@ -21,13 +22,29 @@ where
         ..Default::default()
     };
 
+    let mtl_error = RefCell::new(None);
     let (models, materials) = tobj::load_obj_buf(&mut reader, &options, |path| {
-        let bytes = mtl_loader(path).map_err(|_| tobj::LoadError::OpenFileFailed)?;
+        let bytes = match mtl_loader(path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                mtl_error.replace(Some(err));
+                return Err(tobj::LoadError::OpenFileFailed);
+            }
+        };
         let mut reader = Cursor::new(bytes);
         tobj::load_mtl_buf(&mut reader)
     })
-    .map_err(|err| LoadError::Decode(err.to_string()))?;
-    let materials = materials.map_err(|err| LoadError::Decode(err.to_string()))?;
+    .map_err(|err| {
+        mtl_error
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| LoadError::Decode(err.to_string()))
+    })?;
+    let materials = materials.map_err(|err| {
+        mtl_error
+            .into_inner()
+            .unwrap_or_else(|| LoadError::Decode(err.to_string()))
+    })?;
 
     Ok(DecodedModel {
         meshes: models.into_iter().map(decoded_mesh).collect(),

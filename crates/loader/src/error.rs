@@ -16,6 +16,14 @@ pub enum LoadError {
     /// The path extension is not handled by the requested loader entry point.
     #[error("unsupported format '{0}'")]
     UnsupportedFormat(String),
+    /// The source returned a Git LFS pointer instead of actual asset bytes.
+    #[error(
+        "{path} is a Git LFS pointer (not actual content) — run `git lfs pull` inside the Nix dev shell"
+    )]
+    LfsPointer {
+        /// Asset path that resolved to an LFS pointer.
+        path: String,
+    },
     /// The decoder rejected the bytes as malformed or unsupported data.
     #[error("decode error: {0}")]
     Decode(String),
