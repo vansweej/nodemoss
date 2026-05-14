@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::decode::{decode_obj, decode_shader, decode_texture};
+use crate::decode::{decode_obj, decode_ply, decode_shader, decode_texture};
 use crate::{AssetPath, AssetSource, DecodedImage, DecodedModel, DecodedShader, LoadError};
 
 /// Reads bytes from an [`AssetSource`] and dispatches them to format decoders.
@@ -25,11 +25,19 @@ impl Loader {
         decode_texture(&bytes, path.extension().unwrap_or_default())
     }
 
-    /// Read and decode an OBJ mesh, including sibling MTL files.
+    /// Read and decode an OBJ or PLY mesh.
     pub fn read_mesh(&self, path: &AssetPath) -> Result<DecodedModel, LoadError> {
-        ensure_extension(path, &["obj"])?;
+        ensure_extension(path, &["obj", "ply"])?;
         let bytes = self.source.read(path)?;
-        decode_obj(&bytes, |mtl_path| self.read_mtl(path, mtl_path))
+        match path
+            .extension()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "ply" => decode_ply(&bytes),
+            _ => decode_obj(&bytes, |mtl_path| self.read_mtl(path, mtl_path)),
+        }
     }
 
     /// Read and decode a WGSL shader as UTF-8 text.
@@ -114,6 +122,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(model.materials.len(), 1);
+    }
+
+    #[test]
+    fn read_mesh_dispatches_ply() {
+        let ply = b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n".to_vec();
+        let source = MemorySource::new().with("models/triangle.ply", ply);
+        let loader = Loader::new(source);
+
+        let model = loader
+            .read_mesh(&AssetPath::new("models/triangle.ply"))
+            .unwrap();
+
+        assert_eq!(model.meshes.len(), 1);
+        assert_eq!(model.meshes[0].indices, vec![0, 1, 2]);
+        assert!(model.materials.is_empty());
     }
 
     #[test]
