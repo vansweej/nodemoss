@@ -73,7 +73,13 @@ impl Importer {
             .map(|mesh| import_decoded_mesh(mesh, config))
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(LoadedModel { meshes, materials })
+        let bounds = combined_bounds(&meshes);
+
+        Ok(LoadedModel {
+            meshes,
+            materials,
+            bounds,
+        })
     }
 
     /// Import a WGSL shader and register it in the asset store.
@@ -374,6 +380,23 @@ fn compute_bounding_sphere(positions: &[f32]) -> BoundingSphere {
     BoundingSphere { center, radius }
 }
 
+fn combined_bounds(meshes: &[ImportedMesh]) -> BoundingSphere {
+    if meshes.is_empty() {
+        return BoundingSphere::default();
+    }
+
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for bounds in meshes.iter().map(|mesh| mesh.mesh.local_bounds) {
+        min = min.min(bounds.center - Vec3::splat(bounds.radius));
+        max = max.max(bounds.center + Vec3::splat(bounds.radius));
+    }
+
+    let center = (min + max) * 0.5;
+    let radius = (max - center).length();
+    BoundingSphere { center, radius }
+}
+
 #[allow(dead_code)]
 #[cfg(test)]
 mod tests {
@@ -529,5 +552,35 @@ mod tests {
         assert_eq!(adapted.width, 1);
         assert_eq!(adapted.height, 1);
         assert_eq!(adapted.data, vec![50, 0, 0, 128]);
+    }
+
+    #[test]
+    fn import_mesh_combined_bounds_encloses_all_mesh_bounds() {
+        let obj = b"o left\nv -3 0 0\nv -2 0 0\nv -3 1 0\nf 1 2 3\no right\nv 4 0 0\nv 5 0 0\nv 4 1 0\nf 4 5 6\n".to_vec();
+        let mut importer = Importer::new(MemorySource::new().with("models/two.obj", obj));
+        let mut store = AssetStore::new();
+        let shader = store.add_shader(ShaderAsset {
+            source: Arc::from("shader"),
+        });
+
+        let model = importer
+            .import_mesh(
+                &AssetPath::new("models/two.obj"),
+                &MeshConfig::default(),
+                shader,
+                &mut store,
+            )
+            .unwrap();
+
+        assert_eq!(model.meshes.len(), 2);
+        for mesh in &model.meshes {
+            let bounds = mesh.mesh.local_bounds;
+            let distance = bounds.center.distance(model.bounds.center) + bounds.radius;
+            assert!(
+                distance <= model.bounds.radius + 1.0e-5,
+                "combined bounds should enclose {bounds:?} within {:?}",
+                model.bounds
+            );
+        }
     }
 }

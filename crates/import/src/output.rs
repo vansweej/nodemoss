@@ -1,6 +1,7 @@
 //! Import result types.
 
 use rig_assets::{MaterialAsset, MeshAsset};
+use rig_math::BoundingSphere;
 
 /// A single adapted mesh ready for registration in `AssetStore`.
 #[derive(Clone, Debug)]
@@ -20,4 +21,6 @@ pub struct LoadedModel {
     pub meshes: Vec<ImportedMesh>,
     /// Adapted materials paired with source material names.
     pub materials: Vec<(MaterialAsset, String)>,
+    /// Combined bounds enclosing every imported mesh in model-local space.
+    pub bounds: BoundingSphere,
 }
