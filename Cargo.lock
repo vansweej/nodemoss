@@ -1632,6 +1632,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "model_gallery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

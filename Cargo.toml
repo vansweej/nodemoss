@@ -29,6 +29,7 @@ members = [
     "examples/texture_formats",
     "examples/shader_load",
     "examples/asset_showcase",
+    "examples/model_gallery",
 ]
 exclude = ["GeometricTools"]
 
