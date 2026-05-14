@@ -837,10 +837,17 @@ impl Application for VoiceMetaballsApp {
         let mut peak_tracker = PeakTracker::new();
         for _ in 0..60 {
             if let Some(frame) = audio_source.next_frame()
-                && executor.input("audio").and_then(|i| i.write("audio", frame)).is_ok()
+                && executor
+                    .input("audio")
+                    .and_then(|i| i.write("audio", frame))
+                    .is_ok()
             {
                 let _ = executor.run();
-                if let Some(raw) = executor.output("energies").ok().and_then(|o| o.read::<f32>()) {
+                if let Some(raw) = executor
+                    .output("energies")
+                    .ok()
+                    .and_then(|o| o.read::<f32>())
+                {
                     let scaled = [
                         raw[0] / BAND_BIN_COUNTS[0],
                         raw[1] / BAND_BIN_COUNTS[1],
@@ -996,7 +1003,8 @@ impl Application for VoiceMetaballsApp {
         let target_orbit_radius = 2.5 + mid * 2.5; // 2.5 → 5.0 units
         let target_speed = 0.5 + high * 2.0; // 0.5× at idle → 2.5× on high energy
         let mid_orbit_alpha = 1.0 - (-dt * MID_ORBIT_SMOOTH_RATE).exp();
-        self.smooth_orbit_radius += mid_orbit_alpha * (target_orbit_radius - self.smooth_orbit_radius);
+        self.smooth_orbit_radius +=
+            mid_orbit_alpha * (target_orbit_radius - self.smooth_orbit_radius);
         self.smooth_speed += speed_alpha * (target_speed - self.smooth_speed);
 
         // Low band → orbit bloom (lagged — "bloom then spread" on bass hits).

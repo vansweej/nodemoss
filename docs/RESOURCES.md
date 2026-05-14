@@ -1,6 +1,6 @@
 # Assets, GPU Resources, and Frame Resources
 
-**Crates**: `rig-assets`, `rig-render`, `rig-math`
+**Crates**: `rig-assets`, `rig-render`, `rig-math`, `rig-loader`, `rig-import`
 **Purpose**: Define how immutable assets become GPU resources and how per-frame data is managed safely
 
 ---
@@ -84,6 +84,10 @@ Trying to use one mechanism for both produces aliasing bugs and confused ownersh
 ## 3. Immutable Assets
 
 `rig-assets` defines shareable content that exists independently of any renderer instance.
+
+File-backed assets enter the system through the loading pipeline documented in
+[`LOADING.md`](LOADING.md): `rig-loader` decodes source formats into format-faithful data,
+and `rig-import` adapts that data into the immutable asset types below.
 
 ### 3.1 Mesh assets
 

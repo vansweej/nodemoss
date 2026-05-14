@@ -16,6 +16,7 @@ rig-gpu.workspace = true
 rig-render.workspace = true
 rig-overlay.workspace = true
 rig-scene.workspace = true
+rig-import.workspace = true
 winit.workspace = true
 log.workspace = true
 anyhow.workspace = true

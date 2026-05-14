@@ -1,0 +1,14 @@
+[package]
+name = "multi_obj"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "multi_obj"
+path = "src/main.rs"
+
+[dependencies]
+rig-app = { path = "../../crates/app" }
+anyhow = "1"
+env_logger = "0.11"
+log = "0.4"
