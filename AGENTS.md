@@ -74,7 +74,7 @@ rig-math          (leaf — depends only on glam)
   ^
 rig-scene         (depends on rig-math)
   ^
-rig-assets        (depends on rig-math)
+rig-assets        (depends on rig-math; + mikktspace for tangent generation)
   ^
 rig-loader        (leaf — depends on image, tobj, thiserror; PLY decoded without external crate)
   ^
@@ -90,7 +90,9 @@ rig-render        (depends on rig-gpu, rig-math, rig-scene, rig-assets)
   ^
 rig-overlay       (depends on rig-gpu, glyphon)
   ^
-rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, rig-import, rig-anim, winit)
+rig-gltf          (depends on gltf, rig-assets, rig-scene, rig-math; peer of rig-import, not a consumer)
+  ^
+rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, rig-import, rig-gltf, rig-anim, winit)
   ^
 examples/         (depend on rig-app)
 ```
