@@ -12,3 +12,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
 [dependencies]
 rig-math.workspace = true
 thiserror.workspace = true
+mikktspace.workspace = true

@@ -34,6 +34,7 @@ members = [
     "examples/asset_showcase",
     "examples/model_gallery",
     "examples/tentacle_demo",
+    "examples/normal_map_demo",
 ]
 exclude = ["GeometricTools"]
 
@@ -68,3 +69,4 @@ thiserror = "2.0"
 anyhow = "1.0"
 image = "0.25"
 tobj = "4"
+mikktspace = "0.3"

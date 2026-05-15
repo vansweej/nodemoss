@@ -314,7 +314,7 @@ fn add_loaded_texture_material(
     Ok(ctx.assets.add_material(MaterialAsset {
         shader,
         parameters: MaterialParams::default(),
-        textures: vec![(texture, sampler)],
+        textures: vec![Some((texture, sampler))],
     }))
 }
 

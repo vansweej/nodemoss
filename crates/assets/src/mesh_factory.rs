@@ -26,7 +26,8 @@
 //! Position: Float32x3  @ location 0, offset  0
 //! Normal:   Float32x3  @ location 1, offset 12
 //! UV:       Float32x2  @ location 2, offset 24
-//! stride = 32 bytes
+//! Tangent:  Float32x4  @ location 3, offset 32
+//! stride = 48 bytes
 //! ```
 //!
 //! Index format is `Uint16` for meshes with ≤ 65 535 vertices, `Uint32` otherwise.
@@ -35,13 +36,14 @@ use std::sync::Arc;
 
 use rig_math::{BoundingSphere, Vec3};
 
+use crate::tangent_utils::normal_derived_tangent;
 use crate::{IndexFormat, MeshAsset, VertexAttribute, VertexFormat, VertexLayout};
 
 // ---------------------------------------------------------------------------
 // Standard layout constants
 // ---------------------------------------------------------------------------
 
-const STRIDE: u64 = 32; // 3×f32 pos + 3×f32 normal + 2×f32 uv = 32 bytes
+const STRIDE: u64 = 48; // 3×f32 pos + 3×f32 normal + 2×f32 uv + 4×f32 tangent = 48 bytes
 
 pub(crate) fn standard_layout() -> VertexLayout {
     VertexLayout {
@@ -62,6 +64,11 @@ pub(crate) fn standard_layout() -> VertexLayout {
                 format: VertexFormat::Float32x2,
                 offset: 24,
             },
+            VertexAttribute {
+                shader_location: 3,
+                format: VertexFormat::Float32x4,
+                offset: 32,
+            },
         ],
     }
 }
@@ -70,11 +77,20 @@ pub(crate) fn standard_layout() -> VertexLayout {
 // Internal vertex helpers
 // ---------------------------------------------------------------------------
 
-fn push_vertex(buf: &mut Vec<u8>, pos: [f32; 3], normal: [f32; 3], uv: [f32; 2]) {
+fn push_vertex(
+    buf: &mut Vec<u8>,
+    pos: [f32; 3],
+    normal: [f32; 3],
+    uv: [f32; 2],
+    tangent: [f32; 4],
+) {
     for f in pos.iter().chain(normal.iter()) {
         buf.extend_from_slice(&f.to_le_bytes());
     }
     for f in &uv {
+        buf.extend_from_slice(&f.to_le_bytes());
+    }
+    for f in &tangent {
         buf.extend_from_slice(&f.to_le_bytes());
     }
 }
@@ -214,8 +230,9 @@ pub fn create_box(width: f32, height: f32, depth: f32) -> MeshAsset {
         ];
 
         let base = (face_idx * 4) as u16;
+        let tangent = normal_derived_tangent(*normal);
         for (corner, uv) in corners.iter().zip(uvs.iter()) {
-            push_vertex(&mut vertex_data, *corner, *normal, *uv);
+            push_vertex(&mut vertex_data, *corner, *normal, *uv, tangent);
         }
 
         // Two CCW triangles: (0,1,2) and (1,3,2)
@@ -276,7 +293,12 @@ pub fn create_sphere(radius: f32, slices: u32, stacks: u32) -> MeshAsset {
             let pos = [radius * nx, radius * ny, radius * nz];
             let normal = [nx, ny, nz];
             let u = slice as f32 / slices as f32;
-            push_vertex(&mut vertex_data, pos, normal, [u, v]);
+            let tangent = if sin_phi.abs() > 1.0e-5 {
+                [-sin_theta, 0.0, cos_theta, 1.0]
+            } else {
+                normal_derived_tangent(normal)
+            };
+            push_vertex(&mut vertex_data, pos, normal, [u, v], tangent);
         }
     }
 
@@ -330,12 +352,31 @@ pub fn create_plane(width: f32, depth: f32) -> MeshAsset {
 
     // Four corners: positions, shared normal (+Y), UV [0,1]
     let normal = [0.0_f32, 1.0, 0.0];
+    let tangent = [1.0_f32, 0.0, 0.0, 1.0];
     let mut vertex_data: Vec<u8> = Vec::with_capacity(4 * STRIDE as usize);
 
-    push_vertex(&mut vertex_data, [-hx, 0.0, -hz], normal, [0.0, 0.0]);
-    push_vertex(&mut vertex_data, [hx, 0.0, -hz], normal, [1.0, 0.0]);
-    push_vertex(&mut vertex_data, [-hx, 0.0, hz], normal, [0.0, 1.0]);
-    push_vertex(&mut vertex_data, [hx, 0.0, hz], normal, [1.0, 1.0]);
+    push_vertex(
+        &mut vertex_data,
+        [-hx, 0.0, -hz],
+        normal,
+        [0.0, 0.0],
+        tangent,
+    );
+    push_vertex(
+        &mut vertex_data,
+        [hx, 0.0, -hz],
+        normal,
+        [1.0, 0.0],
+        tangent,
+    );
+    push_vertex(
+        &mut vertex_data,
+        [-hx, 0.0, hz],
+        normal,
+        [0.0, 1.0],
+        tangent,
+    );
+    push_vertex(&mut vertex_data, [hx, 0.0, hz], normal, [1.0, 1.0], tangent);
 
     // Two CCW triangles (viewed from above, +Y direction)
     let mut index_data: Vec<u8> = Vec::with_capacity(6 * 2);
@@ -386,7 +427,13 @@ pub fn create_tetrahedron() -> MeshAsset {
 
     let mut vertex_data: Vec<u8> = Vec::with_capacity(4 * STRIDE as usize);
     for pos in &positions {
-        push_vertex(&mut vertex_data, *pos, *pos, platonic_uv(*pos));
+        push_vertex(
+            &mut vertex_data,
+            *pos,
+            *pos,
+            platonic_uv(*pos),
+            normal_derived_tangent(*pos),
+        );
     }
 
     // CCW winding for outside view (matches GTE)
@@ -444,7 +491,13 @@ pub fn create_hexahedron() -> MeshAsset {
 
     let mut vertex_data: Vec<u8> = Vec::with_capacity(8 * STRIDE as usize);
     for pos in &positions {
-        push_vertex(&mut vertex_data, *pos, *pos, platonic_uv(*pos));
+        push_vertex(
+            &mut vertex_data,
+            *pos,
+            *pos,
+            platonic_uv(*pos),
+            normal_derived_tangent(*pos),
+        );
     }
 
     // 12 triangles — CCW outside view (matches GTE)
@@ -496,7 +549,13 @@ pub fn create_octahedron() -> MeshAsset {
 
     let mut vertex_data: Vec<u8> = Vec::with_capacity(6 * STRIDE as usize);
     for pos in &positions {
-        push_vertex(&mut vertex_data, *pos, *pos, platonic_uv(*pos));
+        push_vertex(
+            &mut vertex_data,
+            *pos,
+            *pos,
+            platonic_uv(*pos),
+            normal_derived_tangent(*pos),
+        );
     }
 
     // 8 triangles — CCW outside view (matches GTE)
@@ -569,7 +628,13 @@ pub fn create_dodecahedron() -> MeshAsset {
 
     let mut vertex_data: Vec<u8> = Vec::with_capacity(20 * STRIDE as usize);
     for pos in &positions {
-        push_vertex(&mut vertex_data, *pos, *pos, platonic_uv(*pos));
+        push_vertex(
+            &mut vertex_data,
+            *pos,
+            *pos,
+            platonic_uv(*pos),
+            normal_derived_tangent(*pos),
+        );
     }
 
     // 36 triangles — CCW outside view (matches GTE)
@@ -638,7 +703,13 @@ pub fn create_icosahedron() -> MeshAsset {
 
     let mut vertex_data: Vec<u8> = Vec::with_capacity(12 * STRIDE as usize);
     for pos in &positions {
-        push_vertex(&mut vertex_data, *pos, *pos, platonic_uv(*pos));
+        push_vertex(
+            &mut vertex_data,
+            *pos,
+            *pos,
+            platonic_uv(*pos),
+            normal_derived_tangent(*pos),
+        );
     }
 
     // 20 triangles — CCW outside view (matches GTE)

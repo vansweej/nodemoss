@@ -3,6 +3,7 @@
 pub mod animation;
 pub mod marching_cubes;
 pub mod mesh_factory;
+pub mod tangent_utils;
 
 pub use animation::{
     AnimationChannel, AnimationClip, ChannelProperty, KeyframeSampler, KeyframeValues,
@@ -144,10 +145,10 @@ pub enum MeshSource {
 
 /// Output of a dynamic mesh generator (e.g. Marching Cubes).
 ///
-/// Vertex data uses the framework's `standard_layout()` (pos + normal + uv, stride 32).
+/// Vertex data uses the framework's `standard_layout()` (pos + normal + uv + tangent, stride 48).
 /// Index data is `u32` (Uint32 format).
 pub struct DynamicMeshData {
-    /// Raw vertex bytes in `standard_layout()` format (stride 32).
+    /// Raw vertex bytes in `standard_layout()` format (stride 48).
     pub vertex_data: Vec<u8>,
     /// Raw index bytes as packed little-endian values matching `index_format`.
     pub index_data: Vec<u8>,
@@ -160,7 +161,8 @@ pub struct DynamicMeshData {
 }
 
 /// Returns the standard vertex layout used by `MeshFactory` and dynamic meshes:
-/// `Position: Float32x3` @ 0, `Normal: Float32x3` @ 12, `UV: Float32x2` @ 24, stride 32.
+/// `Position: Float32x3` @ 0, `Normal: Float32x3` @ 12,
+/// `UV: Float32x2` @ 24, `Tangent: Float32x4` @ 32, stride 48.
 pub fn standard_vertex_layout() -> VertexLayout {
     mesh_factory::standard_layout()
 }
@@ -245,8 +247,23 @@ impl Default for MaterialParams {
 pub struct MaterialAsset {
     pub shader: ShaderHandle,
     pub parameters: MaterialParams,
-    /// Texture slots: each entry is a `(texture, sampler)` pair.
-    pub textures: Vec<(TextureHandle, SamplerHandle)>,
+    /// PBR texture slots: 0=base color, 1=normal, 2=metallic-roughness,
+    /// 3=occlusion, 4=emissive. Missing slots use renderer fallback textures.
+    pub textures: Vec<Option<(TextureHandle, SamplerHandle)>>,
+}
+
+impl MaterialAsset {
+    /// Number of material texture slots in the standard PBR bind group.
+    pub const SLOT_COUNT: usize = 5;
+
+    /// Create a material with no populated texture slots.
+    pub fn untextured(shader: ShaderHandle, parameters: MaterialParams) -> Self {
+        Self {
+            shader,
+            parameters,
+            textures: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -814,12 +831,12 @@ mod tests {
         let mat = store.add_material(MaterialAsset {
             shader,
             parameters: MaterialParams::default(),
-            textures: vec![(tex, samp)],
+            textures: vec![Some((tex, samp))],
         });
 
         let retrieved = store.material(mat).unwrap();
         assert_eq!(retrieved.textures.len(), 1);
-        assert_eq!(retrieved.textures[0], (tex, samp));
+        assert_eq!(retrieved.textures[0], Some((tex, samp)));
     }
 
     #[test]

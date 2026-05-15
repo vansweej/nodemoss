@@ -18,20 +18,28 @@ use rig_app::{
 struct Vertex {
     position: [f32; 3],
     color: [f32; 3],
+    uv: [f32; 2],
+    tangent: [f32; 4],
 }
 
 const VERTICES: [Vertex; 3] = [
     Vertex {
         position: [0.0, 0.5, 0.0],
         color: [1.0, 0.0, 0.0],
+        uv: [0.5, 1.0],
+        tangent: [1.0, 0.0, 0.0, 1.0],
     },
     Vertex {
         position: [-0.5, -0.5, 0.0],
         color: [0.0, 1.0, 0.0],
+        uv: [0.0, 0.0],
+        tangent: [1.0, 0.0, 0.0, 1.0],
     },
     Vertex {
         position: [0.5, -0.5, 0.0],
         color: [0.0, 0.0, 1.0],
+        uv: [1.0, 0.0],
+        tangent: [1.0, 0.0, 0.0, 1.0],
     },
 ];
 
@@ -68,6 +76,16 @@ impl Application for TriangleSceneApp {
                         shader_location: 1,
                         format: VertexFormat::Float32x3,
                         offset: std::mem::size_of::<[f32; 3]>() as u64,
+                    },
+                    VertexAttribute {
+                        shader_location: 2,
+                        format: VertexFormat::Float32x2,
+                        offset: std::mem::size_of::<[f32; 6]>() as u64,
+                    },
+                    VertexAttribute {
+                        shader_location: 3,
+                        format: VertexFormat::Float32x4,
+                        offset: std::mem::size_of::<[f32; 8]>() as u64,
                     },
                 ],
             },

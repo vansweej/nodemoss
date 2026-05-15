@@ -141,6 +141,7 @@ cargo clippy --workspace -- -D warnings
 - **Modules**: one public type per file where practical; re-export from `lib.rs`.
 - **GPU code**: WGSL shaders, embedded via `include_str!` or loaded at runtime from `assets/`.
 - **Platform code**: use `#[cfg(target_os = "...")]` only when absolutely necessary; prefer wgpu/winit abstractions.
+- **Demo controls**: every framework demo should include `TrackBall` orbit/dolly controls plus `CameraRig` WASD/arrow-key camera control for now; document the controls in the example HUD or module docs.
 
 ## Architecture decisions (summary)
 

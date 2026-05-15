@@ -7,7 +7,8 @@
 //! Position: Float32x3  @ location 0, offset  0
 //! Normal:   Float32x3  @ location 1, offset 12
 //! UV:       Float32x2  @ location 2, offset 24
-//! stride = 32 bytes
+//! Tangent:  Float32x4  @ location 3, offset 32
+//! stride = 48 bytes
 //! ```
 //!
 //! Normals are computed via central differences of the scalar field — smooth Phong
@@ -20,6 +21,7 @@ use std::collections::HashMap;
 use rig_math::{BoundingSphere, Vec3};
 
 use crate::DynamicMeshData;
+use crate::tangent_utils::normal_derived_tangent;
 
 // ---------------------------------------------------------------------------
 // Paul Bourke lookup tables
@@ -365,7 +367,7 @@ pub struct GridParams {
 /// `field` is called at each grid vertex. Vertices where `field(p) >= iso_value` are
 /// considered *inside* the surface.
 ///
-/// Output uses `standard_layout()` (pos + normal + uv, stride 32 bytes).
+/// Output uses `standard_layout()` (pos + normal + uv + tangent, stride 48 bytes).
 /// If `normal_fn` is `Some`, it is called to compute the outward unit normal at each
 /// new vertex position (analytical gradient). If `None`, normals are computed via
 /// central differences of the field (6 extra `field` calls per vertex).
@@ -577,6 +579,9 @@ fn push_vertex(buf: &mut Vec<u8>, pos: Vec3, normal: [f32; 3], uv: [f32; 2]) {
     for f in &uv {
         buf.extend_from_slice(&f.to_le_bytes());
     }
+    for f in &normal_derived_tangent(normal) {
+        buf.extend_from_slice(&f.to_le_bytes());
+    }
 }
 
 fn push_u32(buf: &mut Vec<u8>, idx: u32) {
@@ -590,6 +595,8 @@ fn push_u32(buf: &mut Vec<u8>, idx: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const STANDARD_VERTEX_STRIDE: usize = 48;
 
     fn sphere_field(center: Vec3, radius: f32) -> impl Fn(Vec3) -> f32 {
         move |p: Vec3| {
@@ -644,7 +651,7 @@ mod tests {
     fn all_indices_are_within_vertex_count() {
         let field = sphere_field(Vec3::ZERO, 1.0);
         let result = extract(&field, &default_params(16), 1.0, None);
-        let vertex_count = (result.vertex_data.len() / 32) as u32;
+        let vertex_count = (result.vertex_data.len() / STANDARD_VERTEX_STRIDE) as u32;
         let indices: Vec<u32> = result
             .index_data
             .chunks_exact(4)
@@ -662,16 +669,16 @@ mod tests {
     fn vertex_data_length_is_multiple_of_stride() {
         let field = sphere_field(Vec3::ZERO, 1.0);
         let result = extract(&field, &default_params(16), 1.0, None);
-        assert_eq!(result.vertex_data.len() % 32, 0);
+        assert_eq!(result.vertex_data.len() % STANDARD_VERTEX_STRIDE, 0);
     }
 
     #[test]
     fn all_normals_are_unit_length() {
         let field = sphere_field(Vec3::ZERO, 1.0);
         let result = extract(&field, &default_params(16), 1.0, None);
-        let vertex_count = result.vertex_data.len() / 32;
+        let vertex_count = result.vertex_data.len() / STANDARD_VERTEX_STRIDE;
         for i in 0..vertex_count {
-            let base = i * 32 + 12; // normal at offset 12
+            let base = i * STANDARD_VERTEX_STRIDE + 12; // normal at offset 12
             let nx = f32::from_le_bytes(result.vertex_data[base..base + 4].try_into().unwrap());
             let ny = f32::from_le_bytes(result.vertex_data[base + 4..base + 8].try_into().unwrap());
             let nz =
@@ -688,10 +695,10 @@ mod tests {
     fn bounding_sphere_contains_all_vertices() {
         let field = sphere_field(Vec3::ZERO, 1.0);
         let result = extract(&field, &default_params(16), 1.0, None);
-        let vertex_count = result.vertex_data.len() / 32;
+        let vertex_count = result.vertex_data.len() / STANDARD_VERTEX_STRIDE;
         let bounds = result.local_bounds;
         for i in 0..vertex_count {
-            let base = i * 32;
+            let base = i * STANDARD_VERTEX_STRIDE;
             let px = f32::from_le_bytes(result.vertex_data[base..base + 4].try_into().unwrap());
             let py = f32::from_le_bytes(result.vertex_data[base + 4..base + 8].try_into().unwrap());
             let pz =
@@ -723,10 +730,10 @@ mod tests {
         // have a positive dot product with the vector from origin to triangle centroid.
         let field = sphere_field(Vec3::ZERO, 1.0);
         let result = extract(&field, &default_params(16), 1.0, None);
-        let vertex_count = result.vertex_data.len() / 32;
+        let vertex_count = result.vertex_data.len() / STANDARD_VERTEX_STRIDE;
         let positions: Vec<Vec3> = (0..vertex_count)
             .map(|i| {
-                let base = i * 32;
+                let base = i * STANDARD_VERTEX_STRIDE;
                 let px = f32::from_le_bytes(result.vertex_data[base..base + 4].try_into().unwrap());
                 let py =
                     f32::from_le_bytes(result.vertex_data[base + 4..base + 8].try_into().unwrap());

@@ -46,7 +46,7 @@ const RING_COUNT: usize = AXIS_SLICES + 1;
 const VERTICES_PER_RING: usize = RADIAL_SEGMENTS + 1;
 const VERTEX_COUNT: usize = RING_COUNT * VERTICES_PER_RING;
 const INDEX_COUNT: usize = RADIAL_SEGMENTS * AXIS_SLICES * 6;
-const STRIDE: u64 = 32;
+const STRIDE: u64 = 48;
 
 struct TentacleDemo {
     camera_node: NodeId,
@@ -263,6 +263,7 @@ fn create_cylinder_mesh() -> MeshAsset {
                 [radius * cos, y, radius * sin],
                 [cos, 0.0, sin],
                 [u, v],
+                [-sin, 0.0, cos, 1.0],
             );
         }
     }
@@ -403,12 +404,28 @@ fn standard_layout() -> VertexLayout {
                 format: VertexFormat::Float32x2,
                 offset: 24,
             },
+            VertexAttribute {
+                shader_location: 3,
+                format: VertexFormat::Float32x4,
+                offset: 32,
+            },
         ],
     }
 }
 
-fn push_vertex(buf: &mut Vec<u8>, pos: [f32; 3], normal: [f32; 3], uv: [f32; 2]) {
-    for f in pos.iter().chain(normal.iter()).chain(uv.iter()) {
+fn push_vertex(
+    buf: &mut Vec<u8>,
+    pos: [f32; 3],
+    normal: [f32; 3],
+    uv: [f32; 2],
+    tangent: [f32; 4],
+) {
+    for f in pos
+        .iter()
+        .chain(normal.iter())
+        .chain(uv.iter())
+        .chain(tangent.iter())
+    {
         buf.extend_from_slice(&f.to_le_bytes());
     }
 }

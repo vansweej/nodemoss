@@ -227,6 +227,7 @@ mod tests {
         assert!(NORMAL_COLOR_SHADER.contains("@location(0) position"));
         assert!(NORMAL_COLOR_SHADER.contains("@location(1) normal"));
         assert!(NORMAL_COLOR_SHADER.contains("@location(2) uv"));
+        assert!(NORMAL_COLOR_SHADER.contains("@location(3) tangent"));
     }
 
     #[test]
@@ -674,7 +675,7 @@ mod tests {
         assert!(TEXTURED_SHADER.contains("@group(0) @binding(0)"));
         assert!(TEXTURED_SHADER.contains("@group(1) @binding(0)"));
         assert!(TEXTURED_SHADER.contains("@group(1) @binding(1)"));
-        assert!(TEXTURED_SHADER.contains("@group(1) @binding(2)"));
+        assert!(TEXTURED_SHADER.contains("@group(1) @binding(10)"));
         assert!(TEXTURED_SHADER.contains("@group(2) @binding(0)"));
         assert!(TEXTURED_SHADER.contains("fn vs_main"));
         assert!(TEXTURED_SHADER.contains("fn fs_main"));
@@ -684,6 +685,7 @@ mod tests {
     fn triangle_shader_uses_three_groups() {
         assert!(TRIANGLE_SHADER.contains("@group(0) @binding(0)"));
         assert!(TRIANGLE_SHADER.contains("@group(1) @binding(0)"));
+        assert!(TRIANGLE_SHADER.contains("@group(1) @binding(10)"));
         assert!(TRIANGLE_SHADER.contains("@group(2) @binding(0)"));
     }
 
@@ -711,6 +713,10 @@ mod tests {
             "missing sampler"
         );
         assert!(
+            PBR_SHADER.contains("@group(1) @binding(10)"),
+            "missing emissive sampler"
+        );
+        assert!(
             PBR_SHADER.contains("@group(2) @binding(0)"),
             "missing object uniforms"
         );
@@ -726,6 +732,10 @@ mod tests {
         // PBR-specific fields in MaterialUniforms
         assert!(PBR_SHADER.contains("metallic"), "missing metallic field");
         assert!(PBR_SHADER.contains("roughness"), "missing roughness field");
+        assert!(
+            PBR_SHADER.contains("surface_normal"),
+            "missing normal-map TBN path"
+        );
         // BRDF functions
         assert!(
             PBR_SHADER.contains("fn distribution_ggx"),

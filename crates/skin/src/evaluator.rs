@@ -145,7 +145,7 @@ impl SkinEvaluator {
 
 /// Core LBS vertex loop. Called by both `evaluate` and `evaluate_with_palette`.
 ///
-/// Reads rest-pose vertices from `mesh.vertex_data` (standard layout, stride 32),
+/// Reads rest-pose vertices from `mesh.vertex_data` (standard layout, stride 48),
 /// applies weighted joint transforms, writes skinned vertices to a new `Vec<u8>`,
 /// and computes a bounding sphere from the skinned positions.
 fn lbs_inner(
@@ -208,7 +208,7 @@ fn lbs_inner(
         write_f32_le(&mut out_vertices, ob + 12, skinned_normal.x);
         write_f32_le(&mut out_vertices, ob + 16, skinned_normal.y);
         write_f32_le(&mut out_vertices, ob + 20, skinned_normal.z);
-        out_vertices[ob + 24..ob + 32].copy_from_slice(&src[base + 24..base + 32]);
+        out_vertices[ob + 24..ob + stride].copy_from_slice(&src[base + 24..base + stride]);
     }
 
     let (center, radius) = if vertex_count == 0 {

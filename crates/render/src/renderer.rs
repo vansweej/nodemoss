@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use rig_assets::{AssetStore, DynamicMeshId, MeshSource, ShaderHandle};
+use rig_assets::{AssetStore, DynamicMeshId, MaterialAsset, MeshSource, ShaderHandle};
 use rig_gpu::{Frame, GpuContext};
 use rig_math::Mat4;
 use rig_scene::{
@@ -46,6 +46,12 @@ pub struct Renderer {
     #[allow(dead_code)]
     pub(crate) fallback_texture: wgpu::Texture,
     pub(crate) fallback_texture_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    pub(crate) fallback_normal_texture: wgpu::Texture,
+    pub(crate) fallback_normal_texture_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    pub(crate) fallback_black_texture: wgpu::Texture,
+    pub(crate) fallback_black_texture_view: wgpu::TextureView,
     pub(crate) fallback_sampler: wgpu::Sampler,
     // Per-frame object uniforms
     pub(crate) frame_resources: FrameResources,
@@ -95,40 +101,41 @@ impl Renderer {
                 ],
             });
 
-        // ── Group 1: material uniforms + texture + sampler ───────────────────
+        // ── Group 1: material uniforms + 5 PBR texture/sampler slots ──────────
+        let mut material_entries = Vec::with_capacity(1 + MaterialAsset::SLOT_COUNT * 2);
+        material_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: NonZeroU64::new(std::mem::size_of::<MaterialUniforms>() as u64),
+            },
+            count: None,
+        });
+        for slot in 0..MaterialAsset::SLOT_COUNT {
+            let texture_binding = 1 + (slot as u32 * 2);
+            material_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: texture_binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            });
+            material_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: texture_binding + 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+        }
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("material bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: NonZeroU64::new(
-                                std::mem::size_of::<MaterialUniforms>() as u64,
-                            ),
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
+                entries: &material_entries,
             });
 
         // ── Group 2: per-object uniforms (world matrix, dynamic offset) ───────
@@ -165,43 +172,21 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        // ── Fallback 1×1 white RGBA texture ──────────────────────────────────
-        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("fallback white texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        // Write white pixels immediately (we have queue access)
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &fallback_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[255_u8, 255, 255, 255],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
+        // ── Fallback 1×1 material textures ────────────────────────────────────
+        let (fallback_texture, fallback_texture_view) = create_fallback_texture(
+            device,
+            &gpu.queue,
+            "fallback white texture",
+            [255, 255, 255, 255],
         );
-        let fallback_texture_view =
-            fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (fallback_normal_texture, fallback_normal_texture_view) = create_fallback_texture(
+            device,
+            &gpu.queue,
+            "fallback normal texture",
+            [128, 128, 255, 255],
+        );
+        let (fallback_black_texture, fallback_black_texture_view) =
+            create_fallback_texture(device, &gpu.queue, "fallback black texture", [0, 0, 0, 255]);
         let fallback_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("fallback sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -241,6 +226,10 @@ impl Renderer {
             lights_buffer,
             fallback_texture,
             fallback_texture_view,
+            fallback_normal_texture,
+            fallback_normal_texture_view,
+            fallback_black_texture,
+            fallback_black_texture_view,
             fallback_sampler,
             frame_resources,
             cache: ImmutableResourceCache::default(),
@@ -644,22 +633,24 @@ impl Renderer {
             // safely without branching).
             let material_bind_group = {
                 let params = &material.parameters;
-                let mat_uniforms = if !material.textures.is_empty() {
-                    MaterialUniforms {
-                        base_color: params.diffuse,
-                        metallic: params.metallic,
-                        roughness: params.roughness,
-                        flags: 1,
-                        _pad: 0,
-                    }
-                } else {
-                    MaterialUniforms {
-                        base_color: params.diffuse,
-                        metallic: params.metallic,
-                        roughness: params.roughness,
-                        flags: 0,
-                        _pad: 0,
-                    }
+                let flags = material
+                    .textures
+                    .iter()
+                    .take(MaterialAsset::SLOT_COUNT)
+                    .enumerate()
+                    .fold(0_u32, |flags, (slot, texture)| {
+                        if texture.is_some() {
+                            flags | (1_u32 << slot)
+                        } else {
+                            flags
+                        }
+                    });
+                let mat_uniforms = MaterialUniforms {
+                    base_color: params.diffuse,
+                    metallic: params.metallic,
+                    roughness: params.roughness,
+                    flags,
+                    _pad: 0,
                 };
                 let mat_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("material uniform buffer"),
@@ -670,68 +661,63 @@ impl Renderer {
                 gpu.queue
                     .write_buffer(&mat_buf, 0, bytemuck::bytes_of(&mat_uniforms));
 
-                // Resolve texture + sampler: use the asset's first slot if present,
-                // otherwise fall back to the renderer's built-in 1×1 white texture.
-                if !material.textures.is_empty() {
-                    let (tex_handle, samp_handle) = material.textures[0];
-                    let tex_asset = assets
-                        .texture(tex_handle)
-                        .map_err(|e| RenderError::Asset(e.to_string()))?;
-                    let samp_desc = assets
-                        .sampler(samp_handle)
-                        .map_err(|e| RenderError::Asset(e.to_string()))?;
-                    // Obtain raw pointers to break the two-borrow problem on self.cache.
-                    // SAFETY: Both borrows are non-overlapping (different HashMaps) and the
-                    // returned references remain valid for the duration of this block.
-                    let tex_view =
-                        self.cache
-                            .texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
-                            as *const wgpu::TextureView;
-                    let sampler = self.cache.sampler(&gpu.device, samp_handle, samp_desc)
-                        as *const wgpu::Sampler;
-                    // SAFETY: pointers dereference into stable HashMap values; no removal occurs.
-                    let tex_view = unsafe { &*tex_view };
-                    let sampler = unsafe { &*sampler };
-                    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("textured material bind group"),
-                        layout: &self.material_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: mat_buf.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(tex_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                        ],
-                    })
-                } else {
-                    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("untextured material bind group"),
-                        layout: &self.material_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: mat_buf.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(
-                                    &self.fallback_texture_view,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Sampler(&self.fallback_sampler),
-                            },
-                        ],
-                    })
+                let mut resolved_slots = Vec::with_capacity(MaterialAsset::SLOT_COUNT);
+                for slot in 0..MaterialAsset::SLOT_COUNT {
+                    let fallback_view = match slot {
+                        0 => &self.fallback_texture_view,
+                        1 => &self.fallback_normal_texture_view,
+                        _ => &self.fallback_black_texture_view,
+                    };
+
+                    if let Some((tex_handle, samp_handle)) =
+                        material.textures.get(slot).and_then(|texture| *texture)
+                    {
+                        let tex_asset = assets
+                            .texture(tex_handle)
+                            .map_err(|e| RenderError::Asset(e.to_string()))?;
+                        let samp_desc = assets
+                            .sampler(samp_handle)
+                            .map_err(|e| RenderError::Asset(e.to_string()))?;
+                        // Obtain raw pointers to break the two-borrow problem on self.cache.
+                        // SAFETY: Both borrows are non-overlapping (different HashMaps) and the
+                        // returned references remain valid for the duration of this block.
+                        let tex_view =
+                            self.cache
+                                .texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
+                                as *const wgpu::TextureView;
+                        let sampler = self.cache.sampler(&gpu.device, samp_handle, samp_desc)
+                            as *const wgpu::Sampler;
+                        // SAFETY: pointers dereference into stable HashMap values; no removal occurs.
+                        let tex_view = unsafe { &*tex_view };
+                        let sampler = unsafe { &*sampler };
+                        resolved_slots.push((tex_view, sampler));
+                    } else {
+                        resolved_slots.push((fallback_view, &self.fallback_sampler));
+                    }
                 }
+
+                let mut entries = Vec::with_capacity(1 + MaterialAsset::SLOT_COUNT * 2);
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: mat_buf.as_entire_binding(),
+                });
+                for (slot, (texture_view, sampler)) in resolved_slots.iter().enumerate() {
+                    let texture_binding = 1 + (slot as u32 * 2);
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: texture_binding,
+                        resource: wgpu::BindingResource::TextureView(texture_view),
+                    });
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: texture_binding + 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    });
+                }
+
+                gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("material bind group"),
+                    layout: &self.material_bind_group_layout,
+                    entries: &entries,
+                })
             };
 
             pass.set_bind_group(1, &material_bind_group, &[]);
@@ -968,6 +954,50 @@ impl Renderer {
         pass.draw(0..3, 0..1);
         Ok(())
     }
+}
+
+#[cfg(not(tarpaulin_include))]
+fn create_fallback_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &'static str,
+    rgba: [u8; 4],
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 /// Pack a slice of extracted lights into a [`LightsBuffer`] for GPU upload.

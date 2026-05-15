@@ -6,6 +6,7 @@ use std::sync::Arc;
 use rig_assets::{
     AssetStore, IndexFormat, MaterialAsset, MaterialParams, MeshAsset, SamplerDescriptor,
     SamplerHandle, ShaderAsset, ShaderHandle, TextureAsset, TextureFormat, TextureHandle,
+    tangent_utils,
 };
 use rig_loader::{
     AssetPath, AssetSource, ColorSpace, DecodedImage, DecodedMaterial, DecodedMesh, Loader,
@@ -147,7 +148,7 @@ impl Importer {
                     },
                     other => other,
                 })?;
-            vec![slot]
+            vec![Some(slot)]
         } else {
             Vec::new()
         };
@@ -266,7 +267,21 @@ fn import_decoded_mesh(
     } else {
         vec![0.0; vertex_count * 3]
     };
-    let vertex_data = interleave_vertices(&mesh.positions, &normals, &mesh.uvs, vertex_count);
+    let tangents = if tangent_utils::has_valid_uvs(&mesh.uvs, vertex_count) {
+        tangent_utils::generate_tangents(&mesh.positions, &normals, &mesh.uvs, &indices)
+    } else {
+        normals
+            .chunks_exact(3)
+            .map(|normal| tangent_utils::normal_derived_tangent([normal[0], normal[1], normal[2]]))
+            .collect()
+    };
+    let vertex_data = interleave_vertices(
+        &mesh.positions,
+        &normals,
+        &mesh.uvs,
+        &tangents,
+        vertex_count,
+    );
     let (index_data, index_format) = pack_indices(&indices, vertex_count);
 
     Ok(ImportedMesh {
@@ -309,9 +324,10 @@ fn interleave_vertices(
     positions: &[f32],
     normals: &[f32],
     uvs: &[f32],
+    tangents: &[[f32; 4]],
     vertex_count: usize,
 ) -> Vec<u8> {
-    let mut floats = Vec::with_capacity(vertex_count * 8);
+    let mut floats = Vec::with_capacity(vertex_count * 12);
     for index in 0..vertex_count {
         floats.extend_from_slice(&positions[index * 3..index * 3 + 3]);
         floats.extend_from_slice(&normals[index * 3..index * 3 + 3]);
@@ -320,6 +336,7 @@ fn interleave_vertices(
         } else {
             floats.extend_from_slice(&[0.0, 0.0]);
         }
+        floats.extend_from_slice(&tangents[index]);
     }
     bytemuck::cast_slice(&floats).to_vec()
 }
@@ -489,7 +506,7 @@ mod tests {
         assert_eq!(model.meshes.len(), 1);
         assert_eq!(model.materials.len(), 1);
         assert_eq!(model.materials[0].0.textures.len(), 1);
-        assert_eq!(model.materials[0].0.textures[0].0.index(), 0);
+        assert_eq!(model.materials[0].0.textures[0].unwrap().0.index(), 0);
     }
 
     #[test]

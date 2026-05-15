@@ -75,7 +75,7 @@ impl Application for TexturedMeshApp {
         let material = ctx.assets.add_material(MaterialAsset {
             shader,
             parameters: MaterialParams::default(),
-            textures: vec![(tex_handle, samp_handle)],
+            textures: vec![Some((tex_handle, samp_handle))],
         });
 
         // ── Sphere mesh ───────────────────────────────────────────────────────

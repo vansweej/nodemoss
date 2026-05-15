@@ -71,7 +71,7 @@ pub struct LightsBuffer {
 
 // ── Embedded shaders ─────────────────────────────────────────────────────────
 
-/// Vertex-color triangle shader — 3-group layout (group 0 = frame, 1 = material, 2 = object).
+/// Vertex-color triangle shader — 3-group layout with the standard 11-binding material group.
 pub const TRIANGLE_SHADER: &str = r#"
 struct FrameUniforms {
     view: mat4x4<f32>,
@@ -105,13 +105,23 @@ struct LightsBuffer {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> lights: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
-@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
+@group(1) @binding(1) var t_base_color: texture_2d<f32>;
+@group(1) @binding(2) var s_base_color: sampler;
+@group(1) @binding(3) var t_normal: texture_2d<f32>;
+@group(1) @binding(4) var s_normal: sampler;
+@group(1) @binding(5) var t_metallic_roughness: texture_2d<f32>;
+@group(1) @binding(6) var s_metallic_roughness: sampler;
+@group(1) @binding(7) var t_occlusion: texture_2d<f32>;
+@group(1) @binding(8) var s_occlusion: sampler;
+@group(1) @binding(9) var t_emissive: texture_2d<f32>;
+@group(1) @binding(10) var s_emissive: sampler;
 @group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
 }
 
 struct VertexOutput {
@@ -134,10 +144,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// WGSL shader that maps vertex normals to RGB colour — 3-group layout.
+/// WGSL shader that maps vertex normals to RGB colour — 11-binding material group.
 ///
 /// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
-/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+/// (`Float32x3`), UV @ location 2 (`Float32x2`), tangent @ location 3 (`Float32x4`).
 pub const NORMAL_COLOR_SHADER: &str = r#"
 struct FrameUniforms {
     view: mat4x4<f32>,
@@ -171,14 +181,23 @@ struct LightsBuffer {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> lights: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
-@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
+@group(1) @binding(1) var t_base_color: texture_2d<f32>;
+@group(1) @binding(2) var s_base_color: sampler;
+@group(1) @binding(3) var t_normal: texture_2d<f32>;
+@group(1) @binding(4) var s_normal: sampler;
+@group(1) @binding(5) var t_metallic_roughness: texture_2d<f32>;
+@group(1) @binding(6) var s_metallic_roughness: sampler;
+@group(1) @binding(7) var t_occlusion: texture_2d<f32>;
+@group(1) @binding(8) var s_occlusion: sampler;
+@group(1) @binding(9) var t_emissive: texture_2d<f32>;
+@group(1) @binding(10) var s_emissive: sampler;
 @group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
     @location(2) uv:       vec2<f32>,
+    @location(3) tangent:  vec4<f32>,
 }
 
 struct VertexOutput {
@@ -201,10 +220,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// WGSL shader that samples a diffuse texture — 3-group layout.
+/// WGSL shader that samples a base-color texture — 11-binding material group.
 ///
 /// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
-/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+/// (`Float32x3`), UV @ location 2 (`Float32x2`), tangent @ location 3 (`Float32x4`).
 pub const TEXTURED_SHADER: &str = r#"
 struct FrameUniforms {
     view: mat4x4<f32>,
@@ -238,14 +257,23 @@ struct LightsBuffer {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> lights: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
-@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
+@group(1) @binding(1) var t_base_color: texture_2d<f32>;
+@group(1) @binding(2) var s_base_color: sampler;
+@group(1) @binding(3) var t_normal: texture_2d<f32>;
+@group(1) @binding(4) var s_normal: sampler;
+@group(1) @binding(5) var t_metallic_roughness: texture_2d<f32>;
+@group(1) @binding(6) var s_metallic_roughness: sampler;
+@group(1) @binding(7) var t_occlusion: texture_2d<f32>;
+@group(1) @binding(8) var s_occlusion: sampler;
+@group(1) @binding(9) var t_emissive: texture_2d<f32>;
+@group(1) @binding(10) var s_emissive: sampler;
 @group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
     @location(2) uv:       vec2<f32>,
+    @location(3) tangent:  vec4<f32>,
 }
 
 struct VertexOutput {
@@ -264,15 +292,15 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
+    let tex_color = textureSample(t_base_color, s_base_color, in.uv);
     return tex_color * material.base_color;
 }
 "#;
 
-/// Blinn-Phong shading shader — 3-group layout, supports up to 16 lights from group 0 binding 1.
+/// Blinn-Phong shading shader — 11-binding material group, supports up to 16 lights.
 ///
 /// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
-/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+/// (`Float32x3`), UV @ location 2 (`Float32x2`), tangent @ location 3 (`Float32x4`).
 pub const PHONG_SHADER: &str = r#"
 const MAX_LIGHTS: u32 = 16u;
 
@@ -305,14 +333,23 @@ struct ObjectUniforms {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> lights_data: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
-@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
+@group(1) @binding(1) var t_base_color: texture_2d<f32>;
+@group(1) @binding(2) var s_base_color: sampler;
+@group(1) @binding(3) var t_normal: texture_2d<f32>;
+@group(1) @binding(4) var s_normal: sampler;
+@group(1) @binding(5) var t_metallic_roughness: texture_2d<f32>;
+@group(1) @binding(6) var s_metallic_roughness: sampler;
+@group(1) @binding(7) var t_occlusion: texture_2d<f32>;
+@group(1) @binding(8) var s_occlusion: sampler;
+@group(1) @binding(9) var t_emissive: texture_2d<f32>;
+@group(1) @binding(10) var s_emissive: sampler;
 @group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
 }
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -341,7 +378,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let N = normalize(in.world_normal);
     let V = normalize(frame.camera_pos.xyz - in.world_position);
-    let base = material.base_color.rgb;
+    var base = material.base_color.rgb;
+    if ((material.flags & 1u) != 0u) {
+        base = base * textureSample(t_base_color, s_base_color, in.uv).rgb;
+    }
 
     var color = base * 0.05; // ambient
 
@@ -379,7 +419,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Cook-Torrance PBR shader — metallic-roughness workflow, 3-group layout.
+/// Cook-Torrance PBR shader — metallic-roughness workflow with normal mapping.
 ///
 /// Implements GGX NDF (Trowbridge-Reitz), Smith's Schlick-GGX geometry term,
 /// Fresnel-Schlick, a roughness-aware hemisphere ambient that approximates
@@ -394,7 +434,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 /// - `roughness`      — 0 = mirror-smooth, 1 = fully diffuse
 ///
 /// Vertex layout: position @ location 0 (`Float32x3`), normal @ location 1
-/// (`Float32x3`), UV @ location 2 (`Float32x2`). Stride = 32 bytes.
+/// (`Float32x3`), UV @ location 2 (`Float32x2`), tangent @ location 3 (`Float32x4`).
 pub const PBR_SHADER: &str = r#"
 const PI: f32 = 3.14159265358979323846;
 const MAX_LIGHTS: u32 = 16u;
@@ -428,20 +468,30 @@ struct ObjectUniforms {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> lights_data: LightsBuffer;
 @group(1) @binding(0) var<uniform> material: MaterialUniforms;
-@group(1) @binding(1) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
+@group(1) @binding(1) var t_base_color: texture_2d<f32>;
+@group(1) @binding(2) var s_base_color: sampler;
+@group(1) @binding(3) var t_normal: texture_2d<f32>;
+@group(1) @binding(4) var s_normal: sampler;
+@group(1) @binding(5) var t_metallic_roughness: texture_2d<f32>;
+@group(1) @binding(6) var s_metallic_roughness: sampler;
+@group(1) @binding(7) var t_occlusion: texture_2d<f32>;
+@group(1) @binding(8) var s_occlusion: sampler;
+@group(1) @binding(9) var t_emissive: texture_2d<f32>;
+@group(1) @binding(10) var s_emissive: sampler;
 @group(2) @binding(0) var<uniform> object: ObjectUniforms;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
     @location(2) uv:       vec2<f32>,
+    @location(3) tangent:  vec4<f32>,
 }
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
     @location(1) world_normal:   vec3<f32>,
     @location(2) uv:             vec2<f32>,
+    @location(3) world_tangent:  vec4<f32>,
 }
 
 @vertex
@@ -455,6 +505,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     );
     out.world_position = world_pos.xyz;
     out.world_normal   = normalize(normal_mat * in.normal);
+    out.world_tangent  = vec4<f32>(normalize(normal_mat * in.tangent.xyz), in.tangent.w);
     out.clip_position  = frame.proj * frame.view * world_pos;
     out.uv             = in.uv;
     return out;
@@ -556,17 +607,53 @@ fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
     return mix(env_full, vec3<f32>(0.5), env_mip_bias);
 }
 
+fn material_flag(slot: u32) -> bool {
+    return (material.flags & (1u << slot)) != 0u;
+}
+
+fn surface_normal(in: VertexOutput) -> vec3<f32> {
+    let N = normalize(in.world_normal);
+    let T = normalize(in.world_tangent.xyz - N * dot(N, in.world_tangent.xyz));
+    let B = normalize(cross(N, T) * in.world_tangent.w);
+    if (material_flag(1u)) {
+        let sampled = textureSample(t_normal, s_normal, in.uv).xyz * 2.0 - vec3<f32>(1.0);
+        return normalize(mat3x3<f32>(T, B, N) * sampled);
+    }
+    return N;
+}
+
 // ── Fragment shader ───────────────────────────────────────────────────────────
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let albedo    = material.base_color.rgb;
-    let metallic  = material.metallic;
+    var albedo = material.base_color.rgb;
+    if (material_flag(0u)) {
+        albedo = albedo * textureSample(t_base_color, s_base_color, in.uv).rgb;
+    }
+
+    var metallic = material.metallic;
+    var roughness_value = material.roughness;
+    if (material_flag(2u)) {
+        let mr = textureSample(t_metallic_roughness, s_metallic_roughness, in.uv);
+        roughness_value = roughness_value * mr.g;
+        metallic = metallic * mr.b;
+    }
+
+    var occlusion = 1.0;
+    if (material_flag(3u)) {
+        occlusion = textureSample(t_occlusion, s_occlusion, in.uv).r;
+    }
+
+    var emissive = vec3<f32>(0.0);
+    if (material_flag(4u)) {
+        emissive = emissive + textureSample(t_emissive, s_emissive, in.uv).rgb;
+    }
+
     // Clamp roughness to 0.02 minimum so mirror-smooth is possible but the
     // GGX denominator never reaches zero.
-    let roughness = clamp(material.roughness, 0.02, 1.0);
+    let roughness = clamp(roughness_value, 0.02, 1.0);
 
-    let N   = normalize(in.world_normal);
+    let N   = surface_normal(in);
     let V   = normalize(frame.camera_pos.xyz - in.world_position);
     let NdV = max(dot(N, V), 0.0);
 
@@ -622,10 +709,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let kD_env    = (vec3<f32>(1.0) - F_env) * (1.0 - metallic);
     let irradiance = mix(vec3<f32>(0.25), albedo, 0.5); // cheap diffuse irradiance
     let env_spec  = sample_environment(R, roughness);
-    let ambient   = kD_env * irradiance * albedo + F_env * env_spec;
+    let ambient   = (kD_env * irradiance * albedo + F_env * env_spec) * occlusion;
 
     // ── Combine and tone-map ──────────────────────────────────────────────
-    let hdr_color = ambient + Lo;
+    let hdr_color = ambient + Lo + emissive;
 
     // ACES filmic tone mapping: maps HDR radiance to display-referred [0,1].
     // Specular highlights can safely exceed 1.0 before this point.
