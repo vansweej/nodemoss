@@ -1,7 +1,7 @@
 # Material Pipeline, Terrain Generation & glTF Roadmap
 
 **Project**: Personal 3D & Physics Research Framework in Rust
-**Status**: Planning — brainstormed 2026-05-15
+**Status**: Phase A in progress — implementation plan finalised 2026-05-16
 **Covers**: PBR material expansion, normal maps, procedural terrain, glTF loader
 
 ---
@@ -580,6 +580,83 @@ fn startup(ctx: &mut StartupContext) -> Self {
     });
 }
 ```
+
+### 4.8 Implementation plan
+
+Phase A is implemented in seven commits. Each commit is self-contained and
+leaves the workspace in a compilable, testable state.
+
+#### Commit 1 — Tangent utility module
+
+`feat(assets): add tangent_utils module with mikktspace and normal-derived tangent generation`
+
+1. Add `mikktspace = "0.3"` to `[workspace.dependencies]` in root `Cargo.toml`.
+   Add `mikktspace.workspace = true` to `crates/assets/Cargo.toml`.
+2. Create `crates/assets/src/tangent_utils.rs`:
+   - `pub fn generate_tangents(positions, normals, uvs, indices) -> Vec<[f32; 4]>` — implements `mikktspace::Geometry`; falls back to `normal_derived_tangent` per vertex if mikktspace fails.
+   - `pub fn normal_derived_tangent(normal: [f32; 3]) -> [f32; 4]` — `T = normalize(cross(N, UP))`, fallback axis `RIGHT` when N≈UP; returns `[Tx, Ty, Tz, 1.0]`.
+   - `pub fn has_valid_uvs(uvs: &[f32], vertex_count: usize) -> bool` — true if `uvs.len() == vertex_count * 2` and at least one non-zero UV.
+3. Add `pub mod tangent_utils;` to `crates/assets/src/lib.rs`.
+4. Unit tests: normal-derived orthogonality, UP-facing fallback, `has_valid_uvs`, simple quad mikktspace round-trip.
+
+#### Commit 2 — Expand vertex layout to 48 bytes
+
+`feat(assets): expand standard vertex layout to 48 bytes with tangent attribute`
+
+1. `mesh_factory.rs`: `STRIDE = 32` → `48`; add `VertexAttribute { shader_location: 3, format: Float32x4, offset: 32 }` to `standard_layout()`; update doc comment.
+2. `push_vertex` gains `tangent: [f32; 4]` parameter; writes 4 tangent floats after UV.
+3. `create_box`: `normal_derived_tangent(face_normal)` per face.
+4. `create_sphere`: `[-sin(theta), 0, cos(theta), 1.0]` per vertex; pole fallback via `normal_derived_tangent`.
+5. `create_plane`: `[1, 0, 0, 1.0]` for all vertices.
+6. Platonic solids (5 functions): `normal_derived_tangent(normal)` per vertex.
+7. `lib.rs`: update `DynamicMeshData` and `standard_vertex_layout()` doc comments (stride 32 → 48).
+8. `marching_cubes.rs`: append `normal_derived_tangent(normal)` per vertex; capacity `* 8` → `* 12` floats.
+9. `importer.rs`: `interleave_vertices` gains `tangents: &[[f32; 4]]`; capacity `* 8` → `* 12`; writes tangent after UV. `import_decoded_mesh` calls `has_valid_uvs` → `generate_tangents` or maps `normal_derived_tangent`; passes result to `interleave_vertices`.
+
+#### Commit 3 — MaterialAsset texture slots to Vec of Options
+
+`refactor(assets): change MaterialAsset.textures to Vec<Option<(TextureHandle, SamplerHandle)>>`
+
+1. `lib.rs`: `textures: Vec<(TextureHandle, SamplerHandle)>` → `Vec<Option<(TextureHandle, SamplerHandle)>>` with slot-index doc comment (0=base color, 1=normal, 2=metallic-roughness, 3=occlusion, 4=emissive).
+2. Add `impl MaterialAsset { pub fn untextured(...) -> Self; pub const SLOT_COUNT: usize = 5; }`.
+3. `importer.rs`: diffuse texture → `textures: vec![Some((tex, samp))]`; other slots `None`.
+4. `renderer.rs`: update texture resolution logic to use `Option`-aware access; `flags` encodes populated slots bitwise.
+5. All examples: `textures: vec![(t, s)]` → `textures: vec![Some((t, s))]`.
+
+#### Commit 4 — Expand renderer to 11-binding material bind group
+
+`feat(render): expand material bind group to 11 bindings with PBR fallback textures`
+
+1. `Renderer` struct: add `fallback_normal_texture_view` (1×1 `[128,128,255,255]`) and `fallback_black_texture_view` (1×1 `[0,0,0,255]`); both share `fallback_sampler`.
+2. `material_bind_group_layout`: 3 entries → 11 entries (binding 0 = uniform, bindings 1–10 = 5×(Texture2D + Sampler)).
+3. Rewrite bind group creation: compute `flags` from slot presence; resolve real or fallback per slot; single `BindGroup` with all 11 entries; no textured/untextured branching.
+
+#### Commit 5 — PBR shader with TBN and 5-slot sampling
+
+`feat(render): add PBR shader with tangent-space normal mapping and 5-slot material sampling`
+
+1. Create `crates/render/src/shaders/pbr.wgsl` (or embed inline).
+   - Vertex inputs: locations 0–3 (position, normal, uv, tangent).
+   - Group 0: `FrameUniforms` + `LightsBuffer`. Group 1: `MaterialUniforms` + 5×(texture+sampler). Group 2: `ObjectUniforms`.
+   - Fragment: TBN → conditional normal map override → 5-slot material sampling → Blinn-Phong lighting loop → emissive → output.
+2. Declare `pub const PBR_SHADER: &str` in `helpers.rs`.
+
+#### Commit 6 — Refactor existing shaders to 11-binding layout
+
+`refactor(render): update all shaders to declare 11-binding material group and tangent attribute`
+
+1. `PHONG_SHADER`: add `@location(3) tangent: vec4f`; declare all 11 group-1 bindings; keep Blinn-Phong; sample only binding 1 with `flags & 1`.
+2. `TEXTURED_SHADER`: same additions; sample only binding 1.
+3. `NORMAL_COLOR_SHADER`: add tangent input; declare 11 bindings; no texture sampling.
+4. `TRIANGLE_SHADER`: add tangent input; declare 11 bindings; minimal pass-through.
+
+#### Commit 7 — normal_map_demo example
+
+`feat(examples): add normal_map_demo showcasing PBR normal mapping`
+
+1. Create `examples/normal_map_demo/`; add to workspace `members`.
+2. `startup()`: plane mesh; procedural 64×64 sine-wave normal map; `MaterialAsset` with `PBR_SHADER`, slot 0 = white, slot 1 = normal map; directional light; camera.
+3. `update()`: rotate light to show normal map effect.
 
 ---
 
