@@ -24,6 +24,7 @@ pub use rig_math;
 pub use rig_overlay;
 pub use rig_render;
 pub use rig_scene;
+pub use rig_skin;
 pub use winit;
 
 use anyhow::Result;

@@ -75,6 +75,35 @@ impl TrackBall {
         self.focus_offset += right * right_delta + up * up_delta;
     }
 
+    /// Synchronize the orbit state from the camera's current local transform.
+    ///
+    /// This lets examples combine [`TrackBall`] with other camera controllers:
+    /// apply keyboard/fly-camera changes first, call this method, then call
+    /// [`update`](Self::update) to apply mouse orbit/dolly without snapping the
+    /// camera back to stale trackball state.
+    pub fn sync_to_camera(
+        &mut self,
+        scene: &SceneGraph,
+        camera_node: NodeId,
+    ) -> Result<(), rig_scene::SceneError> {
+        let camera = scene.local_transform(camera_node)?;
+        let target_world = scene
+            .world_transform(self.target)?
+            .transform_point3(Vec3::ZERO);
+        let back = (camera.rotation * Vec3::Z).normalize_or_zero();
+        if back == Vec3::ZERO {
+            return Ok(());
+        }
+
+        self.pitch = (-back.y).asin().clamp(MIN_PITCH, MAX_PITCH);
+        self.yaw = back.x.atan2(back.z);
+
+        let target_to_camera = camera.translation - target_world;
+        self.distance = target_to_camera.dot(back).max(MIN_DISTANCE);
+        self.focus_offset = camera.translation - target_world - back * self.distance;
+        Ok(())
+    }
+
     fn rotation(&self) -> Quat {
         Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
     }

@@ -10,7 +10,7 @@ pub use animation::{
 
 use std::sync::Arc;
 
-use rig_math::BoundingSphere;
+use rig_math::{BoundingSphere, Mat4};
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -30,6 +30,12 @@ pub struct SamplerHandle(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AnimationClipHandle(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SkinAssetHandle(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SkinWeightsHandle(u32);
 
 impl MeshHandle {
     pub fn from_raw(v: u32) -> Self {
@@ -91,6 +97,26 @@ impl AnimationClipHandle {
     }
 }
 
+impl SkinAssetHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl SkinWeightsHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// Opaque handle to a dynamic (per-frame mutable) mesh registered with the renderer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DynamicMeshId(u32);
@@ -123,8 +149,10 @@ pub enum MeshSource {
 pub struct DynamicMeshData {
     /// Raw vertex bytes in `standard_layout()` format (stride 32).
     pub vertex_data: Vec<u8>,
-    /// Raw index bytes as packed `u32` little-endian values.
+    /// Raw index bytes as packed little-endian values matching `index_format`.
     pub index_data: Vec<u8>,
+    /// Index element format for `index_data`.
+    pub index_format: IndexFormat,
     /// Number of indices (triangles = index_count / 3).
     pub index_count: u32,
     /// Axis-aligned bounding sphere of the output vertices, in local space.
@@ -276,6 +304,75 @@ pub struct TextureAsset {
     pub data: Arc<[u8]>,
 }
 
+/// Immutable skin definition — one per skeleton.
+///
+/// Stored in `AssetStore`. Multiple `SkinEvaluator` instances (one per
+/// character instance) can share one `SkinAsset` via handle.
+#[derive(Clone, Debug)]
+pub struct SkinAsset {
+    /// Joint names in joint-index order.
+    /// Resolved to `NodeId`s at bind-time by `SkinEvaluator::bind()`.
+    pub joint_names: Vec<String>,
+    /// Inverse bind matrix per joint.
+    /// `IBM[j]` transforms a vertex from model space into joint-j's local
+    /// space at rest pose.
+    pub inverse_bind_matrices: Vec<Mat4>,
+}
+
+/// Per-vertex skinning weights — paired with a `MeshAsset` by the caller.
+///
+/// Stored separately from `SkinAsset` so the same skeleton can drive
+/// different meshes (e.g. body + clothing layers).
+#[derive(Clone, Debug)]
+pub struct SkinWeights {
+    /// Up to 8 joint indices per vertex (`[joints_0[4], joints_1[4]]`).
+    /// Indices reference `SkinAsset::joint_names`.
+    pub joints: Vec<[u16; 8]>,
+    /// Up to 8 normalized weights per vertex (sum ≈ 1.0).
+    /// Unused influences must have weight 0.0.
+    pub weights: Vec<[f32; 8]>,
+}
+
+impl SkinWeights {
+    /// Construct from glTF's two-set layout (`JOINTS_0/1` + `WEIGHTS_0/1`).
+    ///
+    /// Both primary sets must have the same length (= vertex count).
+    /// The second set (`joints_1`/`weights_1`) may be empty for ≤4-influence
+    /// meshes — influences 4–7 are zeroed in that case.
+    pub fn from_gltf_sets(
+        joints_0: &[[u16; 4]],
+        weights_0: &[[f32; 4]],
+        joints_1: &[[u16; 4]],
+        weights_1: &[[f32; 4]],
+    ) -> Self {
+        let count = joints_0.len();
+        let mut joints = Vec::with_capacity(count);
+        let mut weights = Vec::with_capacity(count);
+        for i in 0..count {
+            let j0 = joints_0[i];
+            let j1 = if i < joints_1.len() {
+                joints_1[i]
+            } else {
+                [0; 4]
+            };
+            let w0 = weights_0[i];
+            let w1 = if i < weights_1.len() {
+                weights_1[i]
+            } else {
+                [0.0; 4]
+            };
+            joints.push([j0[0], j0[1], j0[2], j0[3], j1[0], j1[1], j1[2], j1[3]]);
+            weights.push([w0[0], w0[1], w0[2], w0[3], w1[0], w1[1], w1[2], w1[3]]);
+        }
+        Self { joints, weights }
+    }
+
+    /// Number of vertices that have weight data.
+    pub fn vertex_count(&self) -> usize {
+        self.joints.len()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AssetError {
     #[error("invalid mesh handle")]
@@ -290,6 +387,10 @@ pub enum AssetError {
     InvalidSampler,
     #[error("invalid animation clip handle")]
     InvalidAnimationClip,
+    #[error("invalid skin asset handle")]
+    InvalidSkin,
+    #[error("invalid skin weights handle")]
+    InvalidSkinWeights,
 }
 
 #[derive(Default)]
@@ -300,6 +401,8 @@ pub struct AssetStore {
     textures: Vec<TextureAsset>,
     samplers: Vec<SamplerDescriptor>,
     animation_clips: Vec<AnimationClip>,
+    skins: Vec<SkinAsset>,
+    skin_weights: Vec<SkinWeights>,
 }
 
 impl AssetStore {
@@ -343,6 +446,18 @@ impl AssetStore {
         handle
     }
 
+    pub fn add_skin(&mut self, skin: SkinAsset) -> SkinAssetHandle {
+        let handle = SkinAssetHandle(self.skins.len() as u32);
+        self.skins.push(skin);
+        handle
+    }
+
+    pub fn add_skin_weights(&mut self, weights: SkinWeights) -> SkinWeightsHandle {
+        let handle = SkinWeightsHandle(self.skin_weights.len() as u32);
+        self.skin_weights.push(weights);
+        handle
+    }
+
     pub fn mesh(&self, handle: MeshHandle) -> Result<&MeshAsset, AssetError> {
         self.meshes
             .get(handle.index())
@@ -380,6 +495,18 @@ impl AssetStore {
         self.animation_clips
             .get(handle.index())
             .ok_or(AssetError::InvalidAnimationClip)
+    }
+
+    pub fn skin(&self, handle: SkinAssetHandle) -> Result<&SkinAsset, AssetError> {
+        self.skins
+            .get(handle.index())
+            .ok_or(AssetError::InvalidSkin)
+    }
+
+    pub fn skin_weights(&self, handle: SkinWeightsHandle) -> Result<&SkinWeights, AssetError> {
+        self.skin_weights
+            .get(handle.index())
+            .ok_or(AssetError::InvalidSkinWeights)
     }
 }
 
@@ -433,6 +560,13 @@ mod tests {
                     values: KeyframeValues::Translations(vec![Vec3::ZERO, Vec3::X]),
                 },
             }],
+        }
+    }
+
+    fn sample_skin() -> SkinAsset {
+        SkinAsset {
+            joint_names: vec!["root".to_string(), "tip".to_string()],
+            inverse_bind_matrices: vec![Mat4::IDENTITY, Mat4::IDENTITY],
         }
     }
 
@@ -686,5 +820,86 @@ mod tests {
         let retrieved = store.material(mat).unwrap();
         assert_eq!(retrieved.textures.len(), 1);
         assert_eq!(retrieved.textures[0], (tex, samp));
+    }
+
+    #[test]
+    fn skin_asset_handle_from_raw_round_trips() {
+        let handle = SkinAssetHandle::from_raw(5);
+        assert_eq!(handle.index(), 5);
+        assert_eq!(handle, SkinAssetHandle::from_raw(5));
+    }
+
+    #[test]
+    fn skin_weights_handle_from_raw_round_trips() {
+        let handle = SkinWeightsHandle::from_raw(5);
+        assert_eq!(handle.index(), 5);
+        assert_eq!(handle, SkinWeightsHandle::from_raw(5));
+    }
+
+    #[test]
+    fn add_skin_returns_retrievable_asset() {
+        let mut store = AssetStore::new();
+        let handle = store.add_skin(sample_skin());
+
+        let skin = store.skin(handle).unwrap();
+
+        assert_eq!(skin.joint_names.len(), 2);
+        assert_eq!(skin.inverse_bind_matrices.len(), 2);
+    }
+
+    #[test]
+    fn add_skin_weights_returns_retrievable_asset() {
+        let mut store = AssetStore::new();
+        let joints_0 = [[0, 1, 0, 0], [1, 2, 0, 0], [2, 3, 0, 0]];
+        let weights_0 = [[0.5, 0.5, 0.0, 0.0]; 3];
+        let weights = SkinWeights::from_gltf_sets(&joints_0, &weights_0, &[], &[]);
+
+        let handle = store.add_skin_weights(weights);
+
+        assert_eq!(store.skin_weights(handle).unwrap().vertex_count(), 3);
+    }
+
+    #[test]
+    fn invalid_skin_handle_returns_error() {
+        let store = AssetStore::new();
+
+        assert!(matches!(
+            store.skin(SkinAssetHandle::from_raw(99)),
+            Err(AssetError::InvalidSkin)
+        ));
+    }
+
+    #[test]
+    fn invalid_skin_weights_handle_returns_error() {
+        let store = AssetStore::new();
+
+        assert!(matches!(
+            store.skin_weights(SkinWeightsHandle::from_raw(99)),
+            Err(AssetError::InvalidSkinWeights)
+        ));
+    }
+
+    #[test]
+    fn skin_weights_from_gltf_sets_merges_correctly() {
+        let joints_0 = [[1, 2, 3, 4]];
+        let weights_0 = [[0.1, 0.2, 0.3, 0.4]];
+        let joints_1 = [[5, 6, 7, 8]];
+        let weights_1 = [[0.5, 0.6, 0.7, 0.8]];
+
+        let weights = SkinWeights::from_gltf_sets(&joints_0, &weights_0, &joints_1, &weights_1);
+
+        assert_eq!(weights.joints[0], [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(weights.weights[0], [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+    }
+
+    #[test]
+    fn skin_weights_from_gltf_sets_handles_empty_second_set() {
+        let joints_0 = [[1, 2, 3, 4]];
+        let weights_0 = [[0.1, 0.2, 0.3, 0.4]];
+
+        let weights = SkinWeights::from_gltf_sets(&joints_0, &weights_0, &[], &[]);
+
+        assert_eq!(weights.joints[0], [1, 2, 3, 4, 0, 0, 0, 0]);
+        assert_eq!(weights.weights[0], [0.1, 0.2, 0.3, 0.4, 0.0, 0.0, 0.0, 0.0]);
     }
 }

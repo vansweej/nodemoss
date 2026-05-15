@@ -25,6 +25,7 @@ use crate::{RenderError, RenderTarget, RenderTargetDescriptor, Result};
 pub struct DynamicMesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
+    pub index_format: wgpu::IndexFormat,
     pub index_count: u32,
     vertex_capacity_bytes: u64,
     index_capacity_bytes: u64,
@@ -287,6 +288,7 @@ impl Renderer {
             DynamicMesh {
                 vertex_buffer,
                 index_buffer,
+                index_format: wgpu::IndexFormat::Uint32,
                 index_count: 0,
                 vertex_capacity_bytes,
                 index_capacity_bytes,
@@ -325,6 +327,7 @@ impl Renderer {
                     usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }),
+                index_format: wgpu::IndexFormat::Uint32,
                 index_count: 0,
                 vertex_capacity_bytes: vc,
                 index_capacity_bytes: ic,
@@ -360,6 +363,10 @@ impl Renderer {
         if !data.index_data.is_empty() {
             queue.write_buffer(&entry.index_buffer, 0, &data.index_data);
         }
+        entry.index_format = match data.index_format {
+            rig_assets::IndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
+            rig_assets::IndexFormat::Uint32 => wgpu::IndexFormat::Uint32,
+        };
         entry.index_count = data.index_count;
     }
 
@@ -605,7 +612,7 @@ impl Renderer {
                         (
                             dyn_mesh.vertex_buffer.clone(),
                             dyn_mesh.index_buffer.clone(),
-                            wgpu::IndexFormat::Uint32,
+                            dyn_mesh.index_format,
                             dyn_mesh.index_count,
                             rig_assets::standard_vertex_layout(),
                         )

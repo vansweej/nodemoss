@@ -536,6 +536,7 @@ pub fn extract(
     DynamicMeshData {
         vertex_data,
         index_data,
+        index_format: crate::IndexFormat::Uint32,
         index_count,
         local_bounds,
     }

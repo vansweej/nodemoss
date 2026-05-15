@@ -125,6 +125,9 @@ graphics/                           # workspace root
     anim/                           # rig-anim
       Cargo.toml
       src/                          # AnimationPlayer, binding table, keyframe sampling
+    skin/                           # rig-skin
+      Cargo.toml
+      src/                          # CPU Linear Blend Skinning evaluator
     gpu/                            # rig-gpu
       Cargo.toml
       src/lib.rs
@@ -161,6 +164,7 @@ graphics/                           # workspace root
     offscreen_demo/                 # milestone 3+ - offscreen render target + blit
     platonic_solids/                # milestone 3+ - animated solids, fly-camera, overlay
     skeleton_demo/                  # milestone 9 - rigid skeleton animation
+    tentacle_demo/                  # milestone 10 - CPU skinning, 4-bone cylinder
     obj_load/                       # milestone 7 - geometry-only OBJ loading
     obj_textured/                   # milestone 7 - OBJ + MTL diffuse texture loading
     multi_obj/                      # milestone 7 - importer cache demonstration
@@ -181,6 +185,7 @@ graphics/                           # workspace root
 | `rig-loader` | Source abstraction and format-faithful decoders for images, OBJ/MTL, and WGSL | image, tobj, thiserror |
 | `rig-import` | Adapt decoded loader data into `rig-assets` types and register handles | rig-loader, rig-assets, rig-math |
 | `rig-anim` | Animation playback, clip binding, cached keyframe sampling | rig-math, rig-assets, rig-scene |
+| `rig-skin` | CPU Linear Blend Skinning evaluator producing dynamic mesh data | rig-math, rig-assets, rig-scene |
 | `rig-gpu` | GPU context: device, queue, surface, swapchain, `Frame` handle | wgpu, winit |
 | `rig-render` | Concrete `wgpu` renderer, GPU caches, frame resources, extraction, drawing | rig-gpu, rig-math, rig-scene, rig-assets |
 | `rig-overlay` | 2D text overlay (glyphon), retained element registry, anchor positioning | rig-gpu, glyphon |
@@ -691,6 +696,22 @@ resource model:
 
 See `docs/ANIMATION.md` for the full three-phase animation roadmap, including future
 graphynx CUDA skinning and glTF loading.
+
+### Milestone 10 — CPU Skinning ✓
+
+CPU Linear Blend Skinning validates skinned mesh deformation using the existing dynamic mesh
+renderer path:
+
+- **`rig-assets`**: immutable `SkinAsset` skeleton definitions, `SkinWeights` with up to
+  eight influences per vertex, and `AssetStore` skin/weight handles.
+- **`rig-skin`**: `SkinEvaluator` resolves joint names to scene nodes, builds per-frame joint
+  palettes from world transforms, applies 8-influence LBS to positions and normals, and outputs
+  `DynamicMeshData`.
+- **`rig-render`**: dynamic meshes preserve their uploaded index format so CPU-skinned `Uint16`
+  meshes and Marching Cubes `Uint32` meshes share the same path.
+- **`rig-app`**: re-exports `rig-skin` for examples.
+- **`examples/tentacle_demo`**: hand-authored 4-bone cylinder skeleton driven by an
+  `AnimationPlayer`, deformed on the CPU, and uploaded through `DynamicMesh` each frame.
 
 ---
 

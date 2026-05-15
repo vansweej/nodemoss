@@ -2699,6 +2699,7 @@ dependencies = [
  "rig-overlay",
  "rig-render",
  "rig-scene",
+ "rig-skin",
  "winit",
 ]
 
@@ -2781,6 +2782,16 @@ version = "0.1.0"
 dependencies = [
  "rig-assets",
  "rig-math",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rig-skin"
+version = "0.1.0"
+dependencies = [
+ "rig-assets",
+ "rig-math",
+ "rig-scene",
  "thiserror 2.0.18",
 ]
 
@@ -3136,6 +3147,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "tentacle_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
 ]
 
 [[package]]

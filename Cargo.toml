@@ -11,6 +11,7 @@ members = [
     "crates/loader",
     "crates/import",
     "crates/anim",
+    "crates/skin",
     "tools/gen_test_textures",
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
@@ -32,6 +33,7 @@ members = [
     "examples/shader_load",
     "examples/asset_showcase",
     "examples/model_gallery",
+    "examples/tentacle_demo",
 ]
 exclude = ["GeometricTools"]
 
@@ -52,6 +54,7 @@ rig-app = { path = "crates/app" }
 rig-loader = { path = "crates/loader" }
 rig-import = { path = "crates/import" }
 rig-anim = { path = "crates/anim" }
+rig-skin = { path = "crates/skin" }
 
 # External dependencies
 wgpu = "29.0.1"

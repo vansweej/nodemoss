@@ -25,6 +25,7 @@ graphics/                       # workspace root (this directory)
     loader/                     # rig-loader  — file/source abstraction + image/OBJ/PLY/WGSL decoders
     import/                     # rig-import  — decoded asset adaptation into AssetStore assets + model bounds
     anim/                       # rig-anim    — AnimationPlayer, binding table, keyframe sampling
+    skin/                       # rig-skin    — CPU linear blend skinning evaluator
     gpu/                        # rig-gpu     — GpuContext (device/queue/surface), Frame, GpuError
     render/                     # rig-render  — concrete wgpu renderer, immutable cache, frame resources
     overlay/                    # rig-overlay — 2D text overlay (glyphon), retained ElementRegistry
@@ -37,6 +38,7 @@ graphics/                       # workspace root (this directory)
     offscreen_demo/             # milestone 3 — offscreen render target + blit
     platonic_solids/            # milestone 3 — five animated solids, fly-camera, overlay
     skeleton_demo/              # milestone 9 — rigid skeleton animation via AnimationPlayer
+    tentacle_demo/              # milestone 10 — CPU skinning, 4-bone cylinder
     obj_load/                   # milestone 7 — geometry-only OBJ loading
     obj_textured/               # milestone 7 — OBJ + MTL diffuse texture loading
     multi_obj/                  # milestone 7 — importer cache demonstration
@@ -79,6 +81,8 @@ rig-loader        (leaf — depends on image, tobj, thiserror; PLY decoded witho
 rig-import        (depends on rig-loader, rig-assets, rig-math; LoadedModel carries combined BoundingSphere)
   ^
 rig-anim          (depends on rig-math, rig-assets, rig-scene; AnimationPlayer + binding table)
+  ^
+rig-skin          (depends on rig-math, rig-assets, rig-scene; CPU linear blend skinning)
   ^
 rig-gpu           (depends on wgpu, winit)
   ^
@@ -175,6 +179,9 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 9. **Rigid skeleton animation** — `rig-anim` crate, `AnimationClip` assets,
    cached keyframe sampling, bind-time channel resolution to scene nodes,
    `AnimationPlayer` evaluation into local transforms, `skeleton_demo` robot arm ✓
+10. **CPU skinning** — `rig-skin` crate, `SkinEvaluator`, `SkinAsset`/`SkinWeights`
+    asset types, 8-influence LBS with inverse-transpose normal skinning,
+    `DynamicMesh` output path, `tentacle_demo` example ✓
 
 ## Documentation
 
