@@ -122,6 +122,9 @@ graphics/                           # workspace root
     import/                         # rig-import
       Cargo.toml
       src/                          # decoded-data adaptation into AssetStore assets
+    anim/                           # rig-anim
+      Cargo.toml
+      src/                          # AnimationPlayer, binding table, keyframe sampling
     gpu/                            # rig-gpu
       Cargo.toml
       src/lib.rs
@@ -157,6 +160,7 @@ graphics/                           # workspace root
     multi_object/                   # milestone 3+ - multiple objects, camera rig
     offscreen_demo/                 # milestone 3+ - offscreen render target + blit
     platonic_solids/                # milestone 3+ - animated solids, fly-camera, overlay
+    skeleton_demo/                  # milestone 9 - rigid skeleton animation
     obj_load/                       # milestone 7 - geometry-only OBJ loading
     obj_textured/                   # milestone 7 - OBJ + MTL diffuse texture loading
     multi_obj/                      # milestone 7 - importer cache demonstration
@@ -176,10 +180,11 @@ graphics/                           # workspace root
 | `rig-assets` | Immutable meshes, materials, shader source, textures, asset handles | rig-math |
 | `rig-loader` | Source abstraction and format-faithful decoders for images, OBJ/MTL, and WGSL | image, tobj, thiserror |
 | `rig-import` | Adapt decoded loader data into `rig-assets` types and register handles | rig-loader, rig-assets, rig-math |
+| `rig-anim` | Animation playback, clip binding, cached keyframe sampling | rig-math, rig-assets, rig-scene |
 | `rig-gpu` | GPU context: device, queue, surface, swapchain, `Frame` handle | wgpu, winit |
 | `rig-render` | Concrete `wgpu` renderer, GPU caches, frame resources, extraction, drawing | rig-gpu, rig-math, rig-scene, rig-assets |
 | `rig-overlay` | 2D text overlay (glyphon), retained element registry, anchor positioning | rig-gpu, glyphon |
-| `rig-app` | Runner, input, timing, event loop integration, utility controllers | rig-gpu, rig-render, rig-overlay, rig-scene, rig-import, winit |
+| `rig-app` | Runner, input, timing, event loop integration, utility controllers | rig-gpu, rig-render, rig-overlay, rig-scene, rig-import, rig-anim, winit |
 
 ---
 
@@ -193,6 +198,7 @@ graph TD
     render["rig-render"]
     gpu["rig-gpu"]
     import["rig-import"]
+    anim["rig-anim"]
     loader["rig-loader"]
     assets["rig-assets"]
     scene["rig-scene"]
@@ -211,6 +217,7 @@ graph TD
     app --> scene
     app --> gpu
     app --> import
+    app --> anim
     app --> winit
 
     overlay --> gpu
@@ -224,6 +231,10 @@ graph TD
     import --> loader
     import --> assets
     import --> math
+
+    anim --> assets
+    anim --> scene
+    anim --> math
 
     loader --> image
     loader --> tobj
@@ -241,6 +252,7 @@ graph TD
     style render fill:#e3f2fd,stroke:#1565c0
     style gpu fill:#e3f2fd,stroke:#1565c0
     style import fill:#e3f2fd,stroke:#1565c0
+    style anim fill:#e3f2fd,stroke:#1565c0
     style loader fill:#e3f2fd,stroke:#1565c0
     style assets fill:#e3f2fd,stroke:#1565c0
     style scene fill:#e3f2fd,stroke:#1565c0
@@ -254,8 +266,10 @@ graph TD
 ```
 
 `rig-math` and `rig-loader` are leaves. `rig-gpu` owns the wgpu device/queue/surface. `rig-render` and
-`rig-overlay` both depend on `rig-gpu` but not on each other. `rig-app` is the runtime
-shell that wires all crates together and re-exports `rig-import` for examples.
+`rig-overlay` both depend on `rig-gpu` but not on each other. `rig-anim` samples immutable
+animation clips into `SceneGraph` local transforms without depending on renderer or GPU crates.
+`rig-app` is the runtime shell that wires all crates together and re-exports `rig-import` and
+`rig-anim` for examples.
 
 `rig-loader` decodes files without framework assumptions. `rig-import` adapts decoded
 data into `MeshAsset`, `MaterialAsset`, `TextureAsset`, and `ShaderAsset` values.
@@ -340,6 +354,7 @@ pub struct MeshHandle(u32);
 pub struct MaterialHandle(u32);
 pub struct ShaderHandle(u32);
 pub struct TextureHandle(u32);
+pub struct AnimationClipHandle(u32);
 ```
 
 Whether these are backed by `slotmap`, a custom store, or typed indices is an
@@ -559,6 +574,11 @@ The exact context split can evolve, but the intent is stable:
 Controllers such as `CameraRig` and `TrackBall` remain utilities, not mandatory global
 subsystems that always mutate state implicitly.
 
+`rig-app` also re-exports `rig-anim` so examples can bind and evaluate animation clips
+without adding a direct dependency. Animation remains scene-facing: `AnimationPlayer`
+samples `AnimationClip` assets into node local transforms, then the normal scene traversal
+updates world transforms and bounds.
+
 ---
 
 ## 11. Frame Lifecycle
@@ -652,6 +672,25 @@ CPU Marching Cubes isosurface extraction integrated into the scene graph:
   F4 wireframe toggle, overlay HUD.
 
 See `docs/METABALLS.md` for algorithm details and the 4-direction roadmap.
+
+### Milestone 9 — Rigid Skeleton Animation ✓
+
+Keyframe animation of scene node transforms integrated without touching the renderer or GPU
+resource model:
+
+- **`rig-math`**: interpolation utilities (`Interpolation`, cached keyframe interval lookup,
+  step/linear/cubic Hermite sampling helpers).
+- **`rig-assets`**: immutable `AnimationClip` assets, `AnimationClipHandle`, channel/property
+  types, and `AssetStore` clip registration/retrieval.
+- **`rig-scene`**: `find_node_by_name()` for bind-time channel target resolution.
+- **`rig-anim`**: `AnimationPlayer` with binding table, cached keyframe indices, playback
+  controls, and accumulator-based evaluation into `SceneGraph` local transforms.
+- **`rig-app`**: re-exports `rig-anim` for examples.
+- **`examples/skeleton_demo`**: procedural robot arm built from MeshFactory boxes, hand-authored
+  rotation keyframes, pause/speed controls, fly-camera, and overlay HUD.
+
+See `docs/ANIMATION.md` for the full three-phase animation roadmap, including future
+graphynx CUDA skinning and glTF loading.
 
 ---
 

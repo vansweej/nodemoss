@@ -16,6 +16,7 @@ pub use runner::{RunConfig, run};
 pub use timer::FrameTimer;
 pub use trackball::TrackBall;
 
+pub use rig_anim;
 pub use rig_assets;
 pub use rig_gpu;
 pub use rig_import;
@@ -128,7 +129,7 @@ mod tests {
 
     #[test]
     fn camera_rig_rotates_camera_with_arrow_keys() {
-        use rig_math::{Quat, Vec3};
+        use rig_math::Quat;
         let mut scene = SceneGraph::new();
         let camera = scene.create_node("camera");
         let assets = AssetStore::new();

@@ -2675,12 +2675,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
+name = "rig-anim"
+version = "0.1.0"
+dependencies = [
+ "rig-assets",
+ "rig-math",
+ "rig-scene",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "rig-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
  "pollster",
+ "rig-anim",
  "rig-assets",
  "rig-gpu",
  "rig-import",
@@ -2981,6 +2992,16 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "skeleton_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "rig-app",
+]
 
 [[package]]
 name = "skrifa"

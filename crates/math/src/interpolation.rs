@@ -62,7 +62,10 @@ pub fn find_keyframe_index(times: &[f32], time: f32, hint: &mut usize) -> (usize
     }
 
     // Binary search fallback.
-    let i = times.partition_point(|&t| t <= time).saturating_sub(1).min(last - 1);
+    let i = times
+        .partition_point(|&t| t <= time)
+        .saturating_sub(1)
+        .min(last - 1);
     *hint = i;
     let t = (time - times[i]) / (times[i + 1] - times[i]);
     (i, t.clamp(0.0, 1.0))
@@ -229,7 +232,10 @@ mod tests {
     #[test]
     fn sample_vec3_linear_midpoint() {
         let values = [Vec3::ZERO, Vec3::new(2.0, 4.0, 6.0)];
-        approx_eq_vec3(sample_vec3_linear(&values, 0, 0.5), Vec3::new(1.0, 2.0, 3.0));
+        approx_eq_vec3(
+            sample_vec3_linear(&values, 0, 0.5),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
     }
 
     #[test]
@@ -251,7 +257,10 @@ mod tests {
         let values = [q0, q1];
         let mid = sample_quat_linear(&values, 0, 0.5);
         let expected = Quat::from_rotation_y(FRAC_PI_2 * 0.5);
-        assert!(mid.abs_diff_eq(expected, 1e-5), "mid={mid:?} expected={expected:?}");
+        assert!(
+            mid.abs_diff_eq(expected, 1e-5),
+            "mid={mid:?} expected={expected:?}"
+        );
     }
 
     // ── Cubic Hermite ─────────────────────────────────────────────────────────

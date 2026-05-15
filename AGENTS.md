@@ -24,6 +24,7 @@ graphics/                       # workspace root (this directory)
     assets/                     # rig-assets  — immutable meshes, materials, shader source, textures
     loader/                     # rig-loader  — file/source abstraction + image/OBJ/PLY/WGSL decoders
     import/                     # rig-import  — decoded asset adaptation into AssetStore assets + model bounds
+    anim/                       # rig-anim    — AnimationPlayer, binding table, keyframe sampling
     gpu/                        # rig-gpu     — GpuContext (device/queue/surface), Frame, GpuError
     render/                     # rig-render  — concrete wgpu renderer, immutable cache, frame resources
     overlay/                    # rig-overlay — 2D text overlay (glyphon), retained ElementRegistry
@@ -35,6 +36,7 @@ graphics/                       # workspace root (this directory)
     multi_object/               # milestone 3 — multiple objects, camera rig
     offscreen_demo/             # milestone 3 — offscreen render target + blit
     platonic_solids/            # milestone 3 — five animated solids, fly-camera, overlay
+    skeleton_demo/              # milestone 9 — rigid skeleton animation via AnimationPlayer
     obj_load/                   # milestone 7 — geometry-only OBJ loading
     obj_textured/               # milestone 7 — OBJ + MTL diffuse texture loading
     multi_obj/                  # milestone 7 — importer cache demonstration
@@ -76,13 +78,15 @@ rig-loader        (leaf — depends on image, tobj, thiserror; PLY decoded witho
   ^
 rig-import        (depends on rig-loader, rig-assets, rig-math; LoadedModel carries combined BoundingSphere)
   ^
+rig-anim          (depends on rig-math, rig-assets, rig-scene; AnimationPlayer + binding table)
+  ^
 rig-gpu           (depends on wgpu, winit)
   ^
 rig-render        (depends on rig-gpu, rig-math, rig-scene, rig-assets)
   ^
 rig-overlay       (depends on rig-gpu, glyphon)
   ^
-rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, rig-import, winit)
+rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-assets, rig-import, rig-anim, winit)
   ^
 examples/         (depend on rig-app)
 ```
@@ -164,6 +168,9 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
    Keenan Crane CC0), ambientCG PBR texture scaffolding, hand-rolled ASCII PLY
    decoder in rig-loader, combined BoundingSphere on LoadedModel,
    model_gallery CLI viewer ✓
+9. **Rigid skeleton animation** — `rig-anim` crate, `AnimationClip` assets,
+   cached keyframe sampling, bind-time channel resolution to scene nodes,
+   `AnimationPlayer` evaluation into local transforms, `skeleton_demo` robot arm ✓
 
 ## Documentation
 

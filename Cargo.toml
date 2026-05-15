@@ -10,6 +10,7 @@ members = [
     "crates/app",
     "crates/loader",
     "crates/import",
+    "crates/anim",
     "tools/gen_test_textures",
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
@@ -17,6 +18,7 @@ members = [
     "examples/multi_object",
     "examples/offscreen_demo",
     "examples/platonic_solids",
+    "examples/skeleton_demo",
     "examples/trackball_demo",
     "examples/textured_mesh",
     "examples/lit_scene",
@@ -49,6 +51,7 @@ rig-overlay = { path = "crates/overlay" }
 rig-app = { path = "crates/app" }
 rig-loader = { path = "crates/loader" }
 rig-import = { path = "crates/import" }
+rig-anim = { path = "crates/anim" }
 
 # External dependencies
 wgpu = "29.0.1"

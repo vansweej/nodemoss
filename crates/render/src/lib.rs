@@ -59,7 +59,7 @@ pub struct RenderTarget {
 mod tests {
     use std::sync::Arc;
 
-    use rig_assets::{ShaderAsset, VertexAttribute, VertexLayout};
+    use rig_assets::{VertexAttribute, VertexLayout};
     use rig_math::{Quat, Transform, Vec3};
 
     use super::*;
@@ -70,8 +70,7 @@ mod tests {
     };
     use crate::pipeline::PipelineKey;
     use rig_assets::{MeshAsset, VertexFormat};
-    use rig_math::{BoundingSphere, Mat4};
-    use rig_scene::ExtractedCamera;
+    use rig_math::Mat4;
 
     fn sample_mesh() -> MeshAsset {
         MeshAsset {
@@ -634,7 +633,7 @@ mod tests {
 
     #[test]
     fn camera_projection_view_produces_finite_matrix() {
-        use rig_math::{Camera, Projection};
+        use rig_math::Projection;
         use rig_scene::ExtractedCamera;
         let cam = ExtractedCamera {
             node: rig_scene::NodeId::from_raw(0, 0),

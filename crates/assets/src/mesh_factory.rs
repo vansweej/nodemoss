@@ -156,11 +156,11 @@ pub fn create_box(width: f32, height: f32, depth: f32) -> MeshAsset {
         // tangent_u × tangent_v = normal (CCW winding).
         let (tangent_u, tangent_v) = if nx.abs() > 0.5 {
             // normal is ±X; tangents along Z and Y
-            let sign = if nx > 0.0 { 1.0_f32 } else { -1.0_f32 };
+            let sign = if nx > 0.0 { -1.0_f32 } else { 1.0_f32 };
             ([0.0_f32, 0.0, sign * hz], [0.0_f32, hy, 0.0])
         } else if ny.abs() > 0.5 {
             // normal is ±Y; tangents along X and Z
-            let sign = if ny > 0.0 { 1.0_f32 } else { -1.0_f32 };
+            let sign = if ny > 0.0 { -1.0_f32 } else { 1.0_f32 };
             ([hx, 0.0_f32, 0.0], [0.0_f32, 0.0, sign * hz])
         } else {
             // normal is ±Z; tangents along X and Y
@@ -289,18 +289,18 @@ pub fn create_sphere(radius: f32, slices: u32, stacks: u32) -> MeshAsset {
 
             if use_u32 {
                 push_u32(&mut index_data, a);
-                push_u32(&mut index_data, b);
                 push_u32(&mut index_data, a + 1);
                 push_u32(&mut index_data, b);
+                push_u32(&mut index_data, b);
+                push_u32(&mut index_data, a + 1);
                 push_u32(&mut index_data, b + 1);
-                push_u32(&mut index_data, a + 1);
             } else {
                 push_u16(&mut index_data, a as u16);
-                push_u16(&mut index_data, b as u16);
                 push_u16(&mut index_data, (a + 1) as u16);
                 push_u16(&mut index_data, b as u16);
+                push_u16(&mut index_data, b as u16);
+                push_u16(&mut index_data, (a + 1) as u16);
                 push_u16(&mut index_data, (b + 1) as u16);
-                push_u16(&mut index_data, (a + 1) as u16);
             }
         }
     }
@@ -340,11 +340,11 @@ pub fn create_plane(width: f32, depth: f32) -> MeshAsset {
     // Two CCW triangles (viewed from above, +Y direction)
     let mut index_data: Vec<u8> = Vec::with_capacity(6 * 2);
     push_u16(&mut index_data, 0);
-    push_u16(&mut index_data, 1);
     push_u16(&mut index_data, 2);
     push_u16(&mut index_data, 1);
+    push_u16(&mut index_data, 1);
+    push_u16(&mut index_data, 2);
     push_u16(&mut index_data, 3);
-    push_u16(&mut index_data, 2);
 
     let half_diagonal = Vec3::new(hx, 0.0, hz).length();
 
@@ -730,6 +730,21 @@ mod tests {
             .collect()
     }
 
+    fn decode_indices(mesh: &MeshAsset) -> Vec<u32> {
+        match mesh.index_format {
+            IndexFormat::Uint16 => mesh
+                .index_data
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes(c.try_into().unwrap()) as u32)
+                .collect(),
+            IndexFormat::Uint32 => mesh
+                .index_data
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                .collect(),
+        }
+    }
+
     fn vec3_len(v: [f32; 3]) -> f32 {
         (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
     }
@@ -851,6 +866,35 @@ mod tests {
         }
     }
 
+    fn assert_winding_matches_normals(mesh: &MeshAsset) {
+        let vertex_count = mesh.vertex_data.len() / STRIDE as usize;
+        let positions = decode_positions(&mesh.vertex_data, vertex_count);
+        let normals = decode_normals(&mesh.vertex_data, vertex_count);
+        let indices = decode_indices(mesh);
+
+        for triangle in indices.chunks_exact(3) {
+            let i0 = triangle[0] as usize;
+            let i1 = triangle[1] as usize;
+            let i2 = triangle[2] as usize;
+            let p0 = Vec3::from_array(positions[i0]);
+            let p1 = Vec3::from_array(positions[i1]);
+            let p2 = Vec3::from_array(positions[i2]);
+            let declared_normal = Vec3::from_array(normals[i0]);
+            let geometric_normal = (p1 - p0).cross(p2 - p0);
+
+            if geometric_normal.length_squared() <= 1e-12 {
+                continue;
+            }
+
+            assert!(
+                geometric_normal.dot(declared_normal) > 0.0,
+                "triangle {:?} winding is opposite declared normal {:?}",
+                triangle,
+                declared_normal
+            );
+        }
+    }
+
     fn assert_unit_sphere_bounding(mesh: &MeshAsset) {
         assert_eq!(mesh.local_bounds.center, Vec3::ZERO);
         assert!(
@@ -895,6 +939,12 @@ mod tests {
     fn create_tetrahedron_indices_in_range() {
         let mesh = create_tetrahedron();
         assert_indices_in_range(&mesh.index_data, 4);
+    }
+
+    #[test]
+    fn create_tetrahedron_winding_matches_normals() {
+        let mesh = create_tetrahedron();
+        assert_winding_matches_normals(&mesh);
     }
 
     #[test]
@@ -953,6 +1003,12 @@ mod tests {
     }
 
     #[test]
+    fn create_hexahedron_winding_matches_normals() {
+        let mesh = create_hexahedron();
+        assert_winding_matches_normals(&mesh);
+    }
+
+    #[test]
     fn create_hexahedron_bounding_sphere() {
         let mesh = create_hexahedron();
         assert_unit_sphere_bounding(&mesh);
@@ -1005,6 +1061,12 @@ mod tests {
     fn create_octahedron_indices_in_range() {
         let mesh = create_octahedron();
         assert_indices_in_range(&mesh.index_data, 6);
+    }
+
+    #[test]
+    fn create_octahedron_winding_matches_normals() {
+        let mesh = create_octahedron();
+        assert_winding_matches_normals(&mesh);
     }
 
     #[test]
@@ -1063,6 +1125,12 @@ mod tests {
     }
 
     #[test]
+    fn create_dodecahedron_winding_matches_normals() {
+        let mesh = create_dodecahedron();
+        assert_winding_matches_normals(&mesh);
+    }
+
+    #[test]
     fn create_dodecahedron_bounding_sphere() {
         let mesh = create_dodecahedron();
         assert_unit_sphere_bounding(&mesh);
@@ -1115,6 +1183,12 @@ mod tests {
     fn create_icosahedron_indices_in_range() {
         let mesh = create_icosahedron();
         assert_indices_in_range(&mesh.index_data, 12);
+    }
+
+    #[test]
+    fn create_icosahedron_winding_matches_normals() {
+        let mesh = create_icosahedron();
+        assert_winding_matches_normals(&mesh);
     }
 
     #[test]
@@ -1192,6 +1266,12 @@ mod tests {
     }
 
     #[test]
+    fn create_sphere_winding_matches_normals() {
+        let mesh = create_sphere(1.0, 16, 8);
+        assert_winding_matches_normals(&mesh);
+    }
+
+    #[test]
     fn create_plane_is_a_quad() {
         let mesh = create_plane(4.0, 6.0);
         let vertex_count = mesh.vertex_data.len() / STRIDE as usize;
@@ -1211,6 +1291,12 @@ mod tests {
             assert!((n[1] - 1.0).abs() < 1e-5);
             assert!((n[2]).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn create_plane_winding_matches_up_normal() {
+        let mesh = create_plane(2.0, 3.0);
+        assert_winding_matches_normals(&mesh);
     }
 
     #[test]
@@ -1242,6 +1328,12 @@ mod tests {
     fn create_box_uses_uint16_index_format() {
         let mesh = create_box(1.0, 2.0, 3.0);
         assert_eq!(mesh.index_format, IndexFormat::Uint16);
+    }
+
+    #[test]
+    fn create_box_winding_matches_face_normals() {
+        let mesh = create_box(1.0, 2.0, 3.0);
+        assert_winding_matches_normals(&mesh);
     }
 
     #[test]
