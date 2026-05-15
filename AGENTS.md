@@ -105,6 +105,10 @@ nix develop --impure
 This is normal and expected for GPU / CUDA / Vulkan development under Nix. Do not remove
 `--impure` or attempt to remove nixGL to work around the flag requirement.
 
+Git LFS is provided by the Nix development shell in this repository. Run Git LFS
+operations and Git commands that trigger LFS hooks from inside the dev shell, for example
+`nix develop --impure --command git push`.
+
 Inside the dev shell:
 
 ```bash
