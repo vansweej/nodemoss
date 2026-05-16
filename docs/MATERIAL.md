@@ -1,7 +1,7 @@
 # Material Pipeline, Terrain Generation & glTF Roadmap
 
 **Project**: Personal 3D & Physics Research Framework in Rust
-**Status**: Phase A in progress — implementation plan finalised 2026-05-16
+**Status**: Phase A complete, Phase B implemented — 2026-05-16
 **Covers**: PBR material expansion, normal maps, procedural terrain, glTF loader
 
 ---
@@ -214,9 +214,9 @@ negligible cost.
 | Slot | Binding | Name | Fallback (RGBA bytes) | Encodes |
 |------|---------|------|-----------------------|---------|
 | 0 | group 1, binding 1+2 | base color | `[255, 255, 255, 255]` white | albedo × vertex color |
-| 1 | group 1, binding 3+4 | metallic-roughness | `[255, 255, 255, 255]` white | B = metallic, G = roughness |
-| 2 | group 1, binding 5+6 | normal map | `[128, 128, 255, 255]` flat | tangent-space XYZ |
-| 3 | group 1, binding 7+8 | occlusion | `[255, 255, 255, 255]` white | R = occlusion factor |
+| 1 | group 1, binding 3+4 | normal map | `[128, 128, 255, 255]` flat | tangent-space XYZ |
+| 2 | group 1, binding 5+6 | metallic-roughness | bound fallback, skipped when absent | B = metallic, G = roughness |
+| 3 | group 1, binding 7+8 | occlusion | bound fallback, skipped when absent | R = occlusion factor |
 | 4 | group 1, binding 9+10 | emissive | `[0, 0, 0, 255]` black | RGB emissive radiance |
 
 The flat normal fallback `[128, 128, 255, 255]` decodes to `[0, 0, 1]` in
@@ -224,13 +224,13 @@ tangent space — a normal pointing straight out of the surface, producing no
 perturbation when no normal map is bound.
 
 The `flags: u32` field in `MaterialUniforms` encodes which slots carry real
-data. The shader reads all five slots unconditionally but uses `flags` to
-decide whether to apply the result:
+data. The renderer binds all five slots for every material, and the shader uses
+`flags` to decide which slots to sample/apply:
 
 ```wgsl
 const HAS_BASE_COLOR_MAP:       u32 = 1u;
-const HAS_METALLIC_ROUGHNESS:   u32 = 2u;
-const HAS_NORMAL_MAP:           u32 = 4u;
+const HAS_NORMAL_MAP:           u32 = 2u;
+const HAS_METALLIC_ROUGHNESS:   u32 = 4u;
 const HAS_OCCLUSION_MAP:        u32 = 8u;
 const HAS_EMISSIVE_MAP:         u32 = 16u;
 ```
@@ -251,10 +251,10 @@ flowchart LR
         N0["binding 0\nMaterialUniforms + flags\nuniform buffer"]
         N1["binding 1  t_base_color"]
         N2["binding 2  s_base_color"]
-        N3["binding 3  t_metallic_roughness"]
-        N4["binding 4  s_metallic_roughness"]
-        N5["binding 5  t_normal"]
-        N6["binding 6  s_normal"]
+        N3["binding 3  t_normal"]
+        N4["binding 4  s_normal"]
+        N5["binding 5  t_metallic_roughness"]
+        N6["binding 6  s_metallic_roughness"]
         N7["binding 7  t_occlusion"]
         N8["binding 8  s_occlusion"]
         N9["binding 9  t_emissive"]
@@ -277,7 +277,7 @@ require this update before they compile against the new renderer.
 **`MaterialAsset` type change:** the `textures` field changes from
 `Vec<(TextureHandle, SamplerHandle)>` to
 `Vec<Option<(TextureHandle, SamplerHandle)>>`. Each entry corresponds to one
-of the five PBR slots in order: base color, metallic-roughness, normal,
+of the five PBR slots in order: base color, normal, metallic-roughness,
 occlusion, emissive. A `None` entry causes the renderer to substitute the
 appropriate fallback texture at draw time. All existing code that constructs a
 `MaterialAsset` must be updated — wrap existing entries in `Some(...)` and
@@ -552,7 +552,7 @@ fn startup(ctx: &mut StartupContext) -> Self {
     )?;
     let normal_sampler = ctx.assets.add_sampler(SamplerDescriptor::default());
 
-    // Build a material with the normal map in slot 2, fallbacks elsewhere
+    // Build a material with the normal map in slot 1, fallbacks elsewhere
     let material = ctx.assets.add_material(MaterialAsset {
         shader,
         parameters: MaterialParams {
@@ -565,7 +565,7 @@ fn startup(ctx: &mut StartupContext) -> Self {
         textures: vec![
             None,                                    // slot 0: use fallback white
             None,                                    // slot 1: use fallback white
-            Some((normal_tex, normal_sampler)),      // slot 2: real normal map
+            Some((normal_tex, normal_sampler)),      // slot 1: real normal map
             None,                                    // slot 3: use fallback white
             None,                                    // slot 4: use fallback black
         ],
@@ -667,10 +667,10 @@ demo each.
 
 ### 5.1 Noise dependency and composition
 
-Add `noise = "0.9"` as a dependency of the **example crates** that need it
-(`terrain_mc`, `terrain_heightmap`). No changes to library crates are needed
-— `marching_cubes::extract()` already accepts any `Fn(Vec3) -> f32` closure,
-and `create_terrain_mesh` (§5.3) will accept any `Fn(f32, f32) -> f32`.
+`noise = "0.9"` is a workspace dependency used by the **example crates** that
+need it (`terrain_mc`, `terrain_heightmap`). No library crate depends on
+`noise`: `marching_cubes::extract()` accepts any `Fn(Vec3) -> f32` closure, and
+`create_terrain_mesh` (§5.4) accepts any `Fn(f32, f32) -> f32`.
 
 **Note on f64:** `noise::NoiseFn::get()` takes `[f64; N]` and returns `f64`.
 The engine uses `f32` throughout. The cast (`as f32`, `as f64`) is explicit
@@ -762,10 +762,13 @@ flowchart LR
     style Renderer fill:#e3f2fd,stroke:#1565c0
 ```
 
-### 5.3 First demo — marching cubes terrain
+### 5.3 Marching cubes terrain demo
 
-**Estimated effort: ~20 minutes.** Swap the metaballs scalar field for a
-noise-based terrain field. The entire existing pipeline is reused unchanged.
+`examples/terrain_mc/` reuses the marching-cubes pipeline with a noise-based
+terrain field. The mesh is generated once at startup as `DynamicMeshData`,
+uploaded through the existing `DynamicMesh` path, and rendered with the PBR
+shader. The demo includes both `CameraRig` fly controls and `TrackBall`
+orbit/dolly controls.
 
 #### Understanding the field function
 
@@ -780,7 +783,7 @@ The field `f(p) = -p.y + noise(p) * scale` works as follows:
 - The iso-value of `0.0` is the surface. Points where `f > 0` are solid.
 
 ```rust
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin, Seedable};
+use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 let fbm = Fbm::<Perlin>::new(42)
     .set_octaves(6)
@@ -804,7 +807,7 @@ produces at the isosurface boundary.
 
 ### 5.4 Heightmap terrain
 
-Add `create_terrain_mesh` to `mesh_factory`. A regular N×M grid in XZ with Y
+`mesh_factory::create_terrain_mesh` creates a regular N×M grid in XZ with Y
 displaced by a `Fn(f32, f32) -> f32` height function:
 
 ```rust
@@ -817,9 +820,9 @@ pub fn create_terrain_mesh(
 ) -> MeshAsset
 ```
 
-Normals are computed from the cross product of the partial derivatives of the
-height function (central differences). UVs are `(x/width, z/depth)` —
-natural for tiling textures. Tangents are computed via
+Normals are computed from the partial derivatives of the height function
+(central differences). UVs span `[0, 1]` across the grid — natural for tiling
+textures. Tangents are computed via
 `rig-assets::tangent_utils` (valid UVs → mikktspace) and written into the
 48-byte layout so the mesh is immediately compatible with the normal map shader
 from Phase A.
@@ -829,7 +832,7 @@ for open landscapes. The example is `examples/terrain_heightmap/`.
 
 ### 5.5 Noise-generated normal map
 
-Generate a `TextureAsset` from noise gradients at startup — no geometry
+`examples/terrain_heightmap/` generates a `TextureAsset` from noise gradients at startup — no geometry
 displacement needed. For each texel `(u, v)`, sample the noise field at four
 neighbouring points and compute a finite-difference normal in tangent space.
 
@@ -869,7 +872,7 @@ pixel = [
 ];
 ```
 
-Upload as a `TextureAsset` and bind to the normal map slot (Phase A). This
+Upload as a `TextureAsset` and bind to the normal map slot (slot 1). This
 is the bridge between the noise work and the material system — a procedural
 normal map applied to a heightmap terrain gives rock-grain surface detail at
 zero extra triangle cost.
@@ -880,7 +883,7 @@ flowchart LR
     FD["Finite differences\n∂h/∂u · ∂h/∂v"]
     Encode["Encode to\nRgba8Unorm\n512×512"]
     Upload["TextureAsset\n→ GPU"]
-    Slot["Normal map slot\n(group 1, binding 5+6)"]
+    Slot["Normal map slot\n(group 1, binding 3+4)"]
     Shader["PBR shader\nTBN × n_tangent"]
 
     Noise --> FD --> Encode --> Upload --> Slot --> Shader
@@ -891,13 +894,13 @@ flowchart LR
 
 ### 5.6 Worked example — heightmap terrain with procedural normal map
 
-> **Note:** the code below is illustrative pseudocode showing the planned
-> post-Phase-A and Phase-B API. `create_terrain_mesh` does not exist yet
-> and `MaterialAsset.textures` uses the planned `Vec&lt;Option&lt;...&gt;&gt;` type.
+The implemented `examples/terrain_heightmap/` follows this shape: generate a
+heightmap mesh, bake a procedural normal map texture, bind that texture to PBR
+slot 1, and render the terrain with the standard app controls.
 
 ```rust
 fn startup(ctx: &mut StartupContext) -> Self {
-    use noise::{Fbm, MultiFractal, NoiseFn, Perlin, Seedable};
+    use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
     let fbm = Fbm::<Perlin>::new(42)
         .set_octaves(6)
@@ -953,8 +956,8 @@ fn startup(ctx: &mut StartupContext) -> Self {
         parameters: MaterialParams { roughness: 0.9, metallic: 0.0, ..Default::default() },
         textures: vec![
             None,
+            Some((normal_tex, sampler)),  // slot 1: procedural normal map
             None,
-            Some((normal_tex, sampler)),  // slot 2: procedural normal map
             None,
             None,
         ],
@@ -1309,16 +1312,16 @@ flowchart LR
 
     subgraph Engine["MaterialAsset (5-slot)"]
         E0["slot 0\nt_base_color"]
-        E1["slot 1\nt_metallic_roughness"]
-        E2["slot 2\nt_normal"]
+        E1["slot 1\nt_normal"]
+        E2["slot 2\nt_metallic_roughness"]
         E3["slot 3\nt_occlusion"]
         E4["slot 4\nt_emissive"]
         EP["MaterialParams\nbase_color · metallic\nroughness · emissive"]
     end
 
     G0 --> E0
-    G1 --> E1
-    G2 --> E2
+    G1 --> E2
+    G2 --> E1
     G3 --> E3
     G4 --> E4
     G0 & G1 & G4 --> EP

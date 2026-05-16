@@ -1,0 +1,17 @@
+[package]
+name = "terrain_mc"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "terrain_mc"
+path = "src/main.rs"
+
+[dependencies]
+rig-app = { path = "../../crates/app" }
+rig-assets = { path = "../../crates/assets" }
+rig-math = { path = "../../crates/math" }
+noise = { workspace = true }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"

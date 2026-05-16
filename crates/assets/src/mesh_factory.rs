@@ -5,6 +5,7 @@
 //! - [`create_box`] — axis-aligned box with flat per-face normals
 //! - [`create_sphere`] — UV sphere with configurable subdivision
 //! - [`create_plane`] — flat quad in the XZ plane
+//! - [`create_terrain_mesh`] — heightmap grid in the XZ plane
 //!
 //! # Platonic solids
 //!
@@ -36,7 +37,7 @@ use std::sync::Arc;
 
 use rig_math::{BoundingSphere, Vec3};
 
-use crate::tangent_utils::normal_derived_tangent;
+use crate::tangent_utils::{generate_tangents, normal_derived_tangent};
 use crate::{IndexFormat, MeshAsset, VertexAttribute, VertexFormat, VertexLayout};
 
 // ---------------------------------------------------------------------------
@@ -398,6 +399,133 @@ pub fn create_plane(width: f32, depth: f32) -> MeshAsset {
             center: Vec3::ZERO,
             radius: half_diagonal,
         },
+    }
+}
+
+/// Create a heightmap terrain mesh — a regular grid in XZ with Y displaced by
+/// a height function.
+///
+/// - `width` / `depth`: total size in world units along X and Z
+/// - `cols` / `rows`: number of cells along X and Z (vertices = cells + 1)
+/// - `height_fn`: called with world-space `(x, z)` coordinates and returns Y height
+///
+/// The mesh is centred at the origin in XZ, with Y determined by `height_fn`.
+/// UVs span `[0, 1]` linearly across the grid. Normals are computed via central
+/// differences of `height_fn`. Tangents are generated with MikkTSpace because
+/// heightmap UVs are valid and non-degenerate.
+///
+/// Index format is `Uint16` when vertex count ≤ 65 535, otherwise `Uint32`.
+pub fn create_terrain_mesh(
+    width: f32,
+    depth: f32,
+    cols: u32,
+    rows: u32,
+    height_fn: &dyn Fn(f32, f32) -> f32,
+) -> MeshAsset {
+    let cols = cols.max(1);
+    let rows = rows.max(1);
+    let vertex_cols = cols + 1;
+    let vertex_rows = rows + 1;
+    let vertex_count = vertex_cols * vertex_rows;
+    let cell_width = width / cols as f32;
+    let cell_depth = depth / rows as f32;
+    let hx = width * 0.5;
+    let hz = depth * 0.5;
+
+    let mut positions = Vec::with_capacity(vertex_count as usize * 3);
+    let mut normals = Vec::with_capacity(vertex_count as usize * 3);
+    let mut uvs = Vec::with_capacity(vertex_count as usize * 2);
+    let mut bb_min = Vec3::splat(f32::MAX);
+    let mut bb_max = Vec3::splat(f32::MIN);
+    let normal_epsilon = cell_width.min(cell_depth).max(1.0e-4) * 0.5;
+
+    for row in 0..vertex_rows {
+        let z = -hz + row as f32 * cell_depth;
+        let v = row as f32 / rows as f32;
+        for col in 0..vertex_cols {
+            let x = -hx + col as f32 * cell_width;
+            let u = col as f32 / cols as f32;
+            let y = height_fn(x, z);
+            let pos = Vec3::new(x, y, z);
+
+            let h_right = height_fn(x + normal_epsilon, z);
+            let h_left = height_fn(x - normal_epsilon, z);
+            let h_front = height_fn(x, z + normal_epsilon);
+            let h_back = height_fn(x, z - normal_epsilon);
+            let dx = (h_right - h_left) / (2.0 * normal_epsilon);
+            let dz = (h_front - h_back) / (2.0 * normal_epsilon);
+            let normal = Vec3::new(-dx, 1.0, -dz).normalize_or_zero();
+            let normal = if normal.length_squared() > 0.0 {
+                normal
+            } else {
+                Vec3::Y
+            };
+
+            bb_min = bb_min.min(pos);
+            bb_max = bb_max.max(pos);
+            positions.extend_from_slice(&[pos.x, pos.y, pos.z]);
+            normals.extend_from_slice(&[normal.x, normal.y, normal.z]);
+            uvs.extend_from_slice(&[u, v]);
+        }
+    }
+
+    let index_count = cols * rows * 6;
+    let use_u32 = vertex_count > u16::MAX as u32;
+    let mut index_data = Vec::with_capacity(index_count as usize * if use_u32 { 4 } else { 2 });
+    let mut tangent_indices = Vec::with_capacity(index_count as usize);
+
+    for row in 0..rows {
+        for col in 0..cols {
+            let v00 = row * vertex_cols + col;
+            let v10 = v00 + 1;
+            let v01 = (row + 1) * vertex_cols + col;
+            let v11 = v01 + 1;
+            let triangles = [v00, v01, v10, v10, v01, v11];
+
+            for index in triangles {
+                tangent_indices.push(index);
+                if use_u32 {
+                    push_u32(&mut index_data, index);
+                } else {
+                    push_u16(&mut index_data, index as u16);
+                }
+            }
+        }
+    }
+
+    let tangents = generate_tangents(&positions, &normals, &uvs, &tangent_indices);
+    let mut vertex_data = Vec::with_capacity(vertex_count as usize * STRIDE as usize);
+    for (((position, normal), uv), tangent) in positions
+        .chunks_exact(3)
+        .zip(normals.chunks_exact(3))
+        .zip(uvs.chunks_exact(2))
+        .zip(tangents.iter())
+    {
+        push_vertex(
+            &mut vertex_data,
+            [position[0], position[1], position[2]],
+            [normal[0], normal[1], normal[2]],
+            [uv[0], uv[1]],
+            *tangent,
+        );
+    }
+
+    let center = (bb_min + bb_max) * 0.5;
+    let mut radius = 0.0_f32;
+    for pos in positions.chunks_exact(3) {
+        radius = radius.max((Vec3::new(pos[0], pos[1], pos[2]) - center).length());
+    }
+
+    MeshAsset {
+        vertex_layout: standard_layout(),
+        vertex_data: Arc::from(vertex_data.as_slice()),
+        index_data: Arc::from(index_data.as_slice()),
+        index_format: if use_u32 {
+            IndexFormat::Uint32
+        } else {
+            IndexFormat::Uint16
+        },
+        local_bounds: BoundingSphere { center, radius },
     }
 }
 
@@ -1421,5 +1549,68 @@ mod tests {
         assert!((min_x + 2.0).abs() < 1e-5);
         assert!((max_z - 3.0).abs() < 1e-5);
         assert!((min_z + 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn create_terrain_mesh_flat_grid_has_expected_counts() {
+        let mesh = create_terrain_mesh(10.0, 12.0, 4, 3, &|_x, _z| 0.0);
+        let vertex_count = mesh.vertex_data.len() / STRIDE as usize;
+        let index_count = mesh.index_data.len() / 2;
+
+        assert_eq!(vertex_count, 20);
+        assert_eq!(index_count, 72);
+        assert_eq!(mesh.index_format, IndexFormat::Uint16);
+        assert_eq!(mesh.vertex_layout, standard_layout());
+    }
+
+    #[test]
+    fn create_terrain_mesh_flat_grid_has_up_normals() {
+        let mesh = create_terrain_mesh(10.0, 10.0, 4, 4, &|_x, _z| 0.0);
+        let vertex_count = mesh.vertex_data.len() / STRIDE as usize;
+        let normals = decode_normals(&mesh.vertex_data, vertex_count);
+
+        for normal in normals {
+            assert!(normal[0].abs() < 1.0e-5, "normal.x = {}", normal[0]);
+            assert!((normal[1] - 1.0).abs() < 1.0e-5, "normal.y = {}", normal[1]);
+            assert!(normal[2].abs() < 1.0e-5, "normal.z = {}", normal[2]);
+        }
+    }
+
+    #[test]
+    fn create_terrain_mesh_positions_span_width_depth_and_height() {
+        let mesh = create_terrain_mesh(4.0, 6.0, 2, 2, &|x, z| x + z);
+        let positions = decode_positions(&mesh.vertex_data, 9);
+
+        let min_x = positions.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+        let max_x = positions
+            .iter()
+            .map(|p| p[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let min_y = positions.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+        let max_y = positions
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let min_z = positions.iter().map(|p| p[2]).fold(f32::INFINITY, f32::min);
+        let max_z = positions
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        assert!((min_x + 2.0).abs() < 1.0e-5);
+        assert!((max_x - 2.0).abs() < 1.0e-5);
+        assert!((min_z + 3.0).abs() < 1.0e-5);
+        assert!((max_z - 3.0).abs() < 1.0e-5);
+        assert!((min_y + 5.0).abs() < 1.0e-5);
+        assert!((max_y - 5.0).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn create_terrain_mesh_uses_uint32_when_vertex_count_exceeds_u16_max() {
+        let mesh = create_terrain_mesh(100.0, 100.0, 256, 256, &|_x, _z| 0.0);
+
+        assert_eq!(mesh.index_format, IndexFormat::Uint32);
+        assert_eq!(mesh.vertex_data.len() / STRIDE as usize, 257 * 257);
+        assert_eq!(mesh.index_data.len(), 6 * 256 * 256 * 4);
     }
 }
