@@ -649,8 +649,8 @@ impl Renderer {
                     base_color: params.diffuse,
                     metallic: params.metallic,
                     roughness: params.roughness,
-                    flags,
-                    _pad: 0,
+                    flags: flags | params.custom_flags,
+                    triplanar_scale: params.triplanar_scale,
                 };
                 let mat_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("material uniform buffer"),

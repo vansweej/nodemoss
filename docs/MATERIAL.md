@@ -1,7 +1,7 @@
 # Material Pipeline, Terrain Generation & glTF Roadmap
 
 **Project**: Personal 3D & Physics Research Framework in Rust
-**Status**: Phase A complete, Phase B implemented — 2026-05-16
+**Status**: Phase A–C complete, Phase D pending
 **Covers**: PBR material expansion, normal maps, procedural terrain, glTF loader
 
 ---
@@ -1381,6 +1381,7 @@ materials. Future additions that fit within the existing architecture:
 
 | Question | Impact |
 |----------|--------|
+| Parallelizing chunk/LOD mesh generation with `rayon` | Add `rayon` as a workspace dep when chunk count or LOD regen becomes a startup bottleneck; not needed at current scale |
 | Triplanar vs. world-space UVs for marching cubes terrain | Phase C texturing approach |
 | Should noise-generated normal maps be baked at startup or regenerated per-frame? | Performance vs. flexibility |
 | Chunk granularity — how large before GPU upload cost dominates? | Phase C chunking design |

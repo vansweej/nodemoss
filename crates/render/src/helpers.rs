@@ -29,7 +29,8 @@ pub struct FrameUniforms {
 /// - `metallic`:    4 bytes — 0.0 = dielectric, 1.0 = full metal (PBR)
 /// - `roughness`:   4 bytes — 0.0 = mirror-smooth, 1.0 = fully diffuse (PBR)
 /// - `flags`:       4 bytes — shader-defined bit flags (e.g. bit 0 = has texture)
-/// - `_pad`:        4 bytes — alignment padding
+/// - `triplanar_scale`: 4 bytes — world-space texture repeat scale for triplanar shaders;
+///   0.0 when unused. Also replaces the former `_pad` field — binary layout is unchanged.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialUniforms {
@@ -37,7 +38,7 @@ pub struct MaterialUniforms {
     pub metallic: f32,
     pub roughness: f32,
     pub flags: u32,
-    pub _pad: u32,
+    pub triplanar_scale: f32,
 }
 
 /// Maximum number of simultaneous lights supported by the Phong shader.
@@ -84,7 +85,7 @@ struct MaterialUniforms {
     metallic:  f32,
     roughness: f32,
     flags: u32,
-    _pad: u32,
+    triplanar_scale: f32,
 }
 
 struct ObjectUniforms {
@@ -160,7 +161,7 @@ struct MaterialUniforms {
     metallic:  f32,
     roughness: f32,
     flags: u32,
-    _pad: u32,
+    triplanar_scale: f32,
 }
 
 struct ObjectUniforms {
@@ -236,7 +237,7 @@ struct MaterialUniforms {
     metallic:  f32,
     roughness: f32,
     flags: u32,
-    _pad: u32,
+    triplanar_scale: f32,
 }
 
 struct ObjectUniforms {
@@ -324,7 +325,7 @@ struct MaterialUniforms {
     metallic:  f32,
     roughness: f32,
     flags: u32,
-    _pad: u32,
+    triplanar_scale: f32,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -459,7 +460,7 @@ struct MaterialUniforms {
     metallic:  f32,
     roughness: f32,
     flags: u32,
-    _pad: u32,
+    triplanar_scale: f32,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -718,6 +719,268 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Specular highlights can safely exceed 1.0 before this point.
     let ldr_color = aces_tonemap(hdr_color);
 
+    return vec4<f32>(ldr_color, material.base_color.a);
+}
+"#;
+
+/// Cook-Torrance PBR shader with optional world-space triplanar texture sampling.
+///
+/// Set material flag bit 5 (`32u32`) and bind one or more PBR texture slots to
+/// sample those textures from world-space projections instead of mesh UVs.
+pub const TRIPLANAR_PBR_SHADER: &str = r#"
+const PI: f32 = 3.14159265358979323846;
+const MAX_LIGHTS: u32 = 16u;
+const USE_TRIPLANAR: u32 = 32u;
+
+struct FrameUniforms {
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+}
+struct LightUniform {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range_pad: vec4<f32>,
+}
+struct LightsBuffer {
+    lights: array<LightUniform, 16>,
+    count: vec4<u32>,
+}
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    metallic:  f32,
+    roughness: f32,
+    flags: u32,
+    triplanar_scale: f32,
+}
+struct ObjectUniforms {
+    world: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> lights_data: LightsBuffer;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var t_base_color: texture_2d<f32>;
+@group(1) @binding(2) var s_base_color: sampler;
+@group(1) @binding(3) var t_normal: texture_2d<f32>;
+@group(1) @binding(4) var s_normal: sampler;
+@group(1) @binding(5) var t_metallic_roughness: texture_2d<f32>;
+@group(1) @binding(6) var s_metallic_roughness: sampler;
+@group(1) @binding(7) var t_occlusion: texture_2d<f32>;
+@group(1) @binding(8) var s_occlusion: sampler;
+@group(1) @binding(9) var t_emissive: texture_2d<f32>;
+@group(1) @binding(10) var s_emissive: sampler;
+@group(2) @binding(0) var<uniform> object: ObjectUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal:   vec3<f32>,
+    @location(2) uv:       vec2<f32>,
+    @location(3) tangent:  vec4<f32>,
+}
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) world_normal:   vec3<f32>,
+    @location(2) uv:             vec2<f32>,
+    @location(3) world_tangent:  vec4<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let world_pos = object.world * vec4<f32>(in.position, 1.0);
+    let normal_mat = mat3x3<f32>(
+        object.world[0].xyz,
+        object.world[1].xyz,
+        object.world[2].xyz,
+    );
+    out.world_position = world_pos.xyz;
+    out.world_normal   = normalize(normal_mat * in.normal);
+    out.world_tangent  = vec4<f32>(normalize(normal_mat * in.tangent.xyz), in.tangent.w);
+    out.clip_position  = frame.proj * frame.view * world_pos;
+    out.uv             = in.uv;
+    return out;
+}
+
+fn distribution_ggx(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+    let a  = roughness * roughness;
+    let a2 = a * a;
+    let NdH  = max(dot(N, H), 0.0);
+    let NdH2 = NdH * NdH;
+    let denom = NdH2 * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom);
+}
+
+fn geometry_schlick_ggx(NdotV: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+fn geometry_smith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+    let NdV = max(dot(N, V), 0.0);
+    let NdL = max(dot(N, L), 0.0);
+    return geometry_schlick_ggx(NdV, roughness) * geometry_schlick_ggx(NdL, roughness);
+}
+
+fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+fn fresnel_schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let one_minus_r = vec3<f32>(1.0 - roughness);
+    return F0 + (max(one_minus_r, F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+fn point_light_attenuation(dist: f32, range: f32) -> f32 {
+    let d_over_r = dist / range;
+    let window   = clamp(1.0 - d_over_r * d_over_r * d_over_r * d_over_r, 0.0, 1.0);
+    return (window * window) / (dist * dist + 1.0);
+}
+
+fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn sample_environment(R: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let sky_col     = vec3<f32>(0.55, 0.60, 0.78);
+    let horizon_col = vec3<f32>(0.08, 0.09, 0.13);
+    let ground_col  = vec3<f32>(0.04, 0.03, 0.02);
+    let t_up   = clamp(R.y,  0.0, 1.0);
+    let t_down = clamp(-R.y, 0.0, 1.0);
+    let upper    = mix(horizon_col, sky_col, t_up * t_up * t_up);
+    let env_full = mix(upper, ground_col, t_down);
+    let env_mip_bias = roughness * roughness;
+    return mix(env_full, vec3<f32>(0.5), env_mip_bias);
+}
+
+fn material_flag(slot: u32) -> bool {
+    return (material.flags & (1u << slot)) != 0u;
+}
+
+fn triplanar_enabled() -> bool {
+    return (material.flags & USE_TRIPLANAR) != 0u;
+}
+
+fn triplanar_sample(
+    tex: texture_2d<f32>,
+    samp: sampler,
+    world_pos: vec3<f32>,
+    N: vec3<f32>,
+    scale: f32,
+) -> vec4<f32> {
+    let p = world_pos / max(scale, 0.0001);
+    let blend = pow(abs(N), vec3<f32>(2.0));
+    let b = blend / max(blend.x + blend.y + blend.z, 0.0001);
+    return textureSample(tex, samp, p.yz) * b.x
+         + textureSample(tex, samp, p.xz) * b.y
+         + textureSample(tex, samp, p.xy) * b.z;
+}
+
+fn surface_normal(in: VertexOutput) -> vec3<f32> {
+    let N = normalize(in.world_normal);
+    let T = normalize(in.world_tangent.xyz - N * dot(N, in.world_tangent.xyz));
+    let B = normalize(cross(N, T) * in.world_tangent.w);
+    if (material_flag(1u)) {
+        var normal_texel = textureSample(t_normal, s_normal, in.uv);
+        if (triplanar_enabled()) {
+            normal_texel = triplanar_sample(t_normal, s_normal, in.world_position, N, material.triplanar_scale);
+        }
+        let sampled = normal_texel.xyz * 2.0 - vec3<f32>(1.0);
+        return normalize(mat3x3<f32>(T, B, N) * sampled);
+    }
+    return N;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let N   = surface_normal(in);
+    let V   = normalize(frame.camera_pos.xyz - in.world_position);
+    let NdV = max(dot(N, V), 0.0);
+
+    var albedo = material.base_color.rgb;
+    if (material_flag(0u)) {
+        var sample = textureSample(t_base_color, s_base_color, in.uv);
+        if (triplanar_enabled()) {
+            sample = triplanar_sample(t_base_color, s_base_color, in.world_position, N, material.triplanar_scale);
+        }
+        albedo = albedo * sample.rgb;
+    }
+
+    var metallic = material.metallic;
+    var roughness_value = material.roughness;
+    if (material_flag(2u)) {
+        var mr = textureSample(t_metallic_roughness, s_metallic_roughness, in.uv);
+        if (triplanar_enabled()) {
+            mr = triplanar_sample(t_metallic_roughness, s_metallic_roughness, in.world_position, N, material.triplanar_scale);
+        }
+        roughness_value = roughness_value * mr.g;
+        metallic = metallic * mr.b;
+    }
+
+    var occlusion = 1.0;
+    if (material_flag(3u)) {
+        var ao = textureSample(t_occlusion, s_occlusion, in.uv);
+        if (triplanar_enabled()) {
+            ao = triplanar_sample(t_occlusion, s_occlusion, in.world_position, N, material.triplanar_scale);
+        }
+        occlusion = ao.r;
+    }
+
+    var emissive = vec3<f32>(0.0);
+    if (material_flag(4u)) {
+        var em = textureSample(t_emissive, s_emissive, in.uv);
+        if (triplanar_enabled()) {
+            em = triplanar_sample(t_emissive, s_emissive, in.world_position, N, material.triplanar_scale);
+        }
+        emissive = emissive + em.rgb;
+    }
+
+    let roughness = clamp(roughness_value, 0.02, 1.0);
+    let F0 = mix(vec3<f32>(0.04), albedo, metallic);
+
+    var Lo = vec3<f32>(0.0);
+    let n_lights = min(lights_data.count.x, MAX_LIGHTS);
+    for (var i = 0u; i < n_lights; i++) {
+        let light = lights_data.lights[i];
+        var L: vec3<f32>;
+        var attenuation = 1.0;
+        if light.position.w < 0.5 {
+            L = normalize(-light.direction.xyz);
+        } else {
+            let to_light = light.position.xyz - in.world_position;
+            let dist     = length(to_light);
+            L            = normalize(to_light);
+            let range    = light.range_pad.x;
+            attenuation  = point_light_attenuation(dist, range);
+        }
+        let H           = normalize(V + L);
+        let NdL         = max(dot(N, L), 0.0);
+        let light_color = light.color_intensity.rgb * light.color_intensity.a * attenuation;
+        let D = distribution_ggx(N, H, roughness);
+        let G = geometry_smith(N, V, L, roughness);
+        let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
+        let kD       = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+        let specular = D * G * F / (4.0 * NdV * NdL + 0.0001);
+        let diffuse  = kD * albedo / PI;
+        Lo += (diffuse + specular) * light_color * NdL;
+    }
+
+    let R          = reflect(-V, N);
+    let F_env      = fresnel_schlick_roughness(NdV, F0, roughness);
+    let kD_env     = (vec3<f32>(1.0) - F_env) * (1.0 - metallic);
+    let irradiance = mix(vec3<f32>(0.25), albedo, 0.5);
+    let env_spec   = sample_environment(R, roughness);
+    let ambient    = (kD_env * irradiance * albedo + F_env * env_spec) * occlusion;
+    let hdr_color  = ambient + Lo + emissive;
+    let ldr_color  = aces_tonemap(hdr_color);
     return vec4<f32>(ldr_color, material.base_color.a);
 }
 "#;

@@ -37,6 +37,11 @@ members = [
     "examples/normal_map_demo",
     "examples/terrain_mc",
     "examples/terrain_heightmap",
+    "examples/terrain_warp",
+    "examples/terrain_erosion",
+    "examples/terrain_triplanar",
+    "examples/terrain_chunks",
+    "examples/terrain_lod",
 ]
 exclude = ["GeometricTools"]
 

@@ -1,6 +1,9 @@
 //! Immutable shared asset store for the rig framework.
 
 pub mod animation;
+pub mod chunk_manager;
+pub mod erosion;
+pub mod lod;
 pub mod marching_cubes;
 pub mod mesh_factory;
 pub mod tangent_utils;
@@ -8,6 +11,9 @@ pub mod tangent_utils;
 pub use animation::{
     AnimationChannel, AnimationClip, ChannelProperty, KeyframeSampler, KeyframeValues,
 };
+pub use chunk_manager::{ChunkCoord, ChunkManager, ChunkUpdate};
+pub use erosion::{ErosionParams, erode};
+pub use lod::{LodLevel, needs_lod_update, select_lod};
 
 use std::sync::Arc;
 
@@ -228,6 +234,15 @@ pub struct MaterialParams {
     /// PBR roughness factor. `0.0` = mirror-smooth, `1.0` = fully diffuse.
     /// Ignored by non-PBR shaders.
     pub roughness: f32,
+    /// Additional shader-defined bit flags OR'd into the GPU MaterialUniforms.flags
+    /// field at draw time. Default: 0.
+    ///
+    /// Example: set bit 5 (`32u32`) to enable triplanar sampling in TRIPLANAR_PBR_SHADER.
+    pub custom_flags: u32,
+    /// World-space texture repeat scale for triplanar sampling.
+    /// Passed to the GPU as MaterialUniforms.triplanar_scale.
+    /// Only meaningful when custom_flags includes bit 5 (USE_TRIPLANAR). Default: 4.0.
+    pub triplanar_scale: f32,
 }
 
 impl Default for MaterialParams {
@@ -239,6 +254,8 @@ impl Default for MaterialParams {
             emissive: [0.0, 0.0, 0.0, 1.0],
             metallic: 0.0,
             roughness: 0.5,
+            custom_flags: 0,
+            triplanar_scale: 4.0,
         }
     }
 }

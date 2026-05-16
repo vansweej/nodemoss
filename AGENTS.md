@@ -47,6 +47,11 @@ graphics/                       # workspace root (this directory)
     shader_load/                # milestone 7 — runtime WGSL loading
     asset_showcase/             # milestone 7 — combined loading showcase
     model_gallery/              # milestone 8 — CLI model viewer over curated assets
+    terrain_warp/               # milestone 13 — domain-warped heightmap
+    terrain_erosion/            # milestone 13 — hydraulic erosion
+    terrain_triplanar/          # milestone 13 — triplanar UV-free MC texturing
+    terrain_chunks/             # milestone 13 — camera-driven chunked terrain
+    terrain_lod/                # milestone 13 — distance-based level of detail
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
@@ -66,6 +71,7 @@ for language-specific coding standards, error handling, and tooling rules.
 | Project layout   | **Cargo workspace** | Core crates plus loader/import pipeline.          |
 | GPU resources    | **Immutable cache + frame resources** | Share immutable GPU state, allocate mutable frame data explicitly. |
 | 2D overlay       | **glyphon** | GPU text rendering; retained element registry in rig-overlay. |
+| Parallelism      | **rayon** (planned) | Thread-pool for terrain chunk generation; not yet a dep — add when chunk count becomes a bottleneck. |
 
 ## Crate dependency order
 
@@ -185,6 +191,13 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 10. **CPU skinning** — `rig-skin` crate, `SkinEvaluator`, `SkinAsset`/`SkinWeights`
     asset types, 8-influence LBS with inverse-transpose normal skinning,
     `DynamicMesh` output path, `tentacle_demo` example ✓
+11. **Material system + normal maps** — `rig-assets::tangent_utils` (mikktspace),
+    48-byte vertex layout, 5-slot PBR bind group, `normal_map_demo` example ✓
+12. **Procedural terrain** — `noise` crate in examples, marching cubes terrain,
+    heightmap terrain, procedural normal maps, two terrain examples ✓
+13. **Terrain sub-problems** — domain warping, hydraulic erosion,
+    triplanar texturing, chunked infinite terrain, distance-based LOD,
+    five progressive terrain examples ✓
 
 ## Documentation
 

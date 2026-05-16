@@ -8,7 +8,8 @@ mod renderer;
 
 pub use helpers::{
     DEPTH_FORMAT, NORMAL_COLOR_SHADER, PBR_SHADER, PHONG_SHADER, TEXTURED_SHADER, TRIANGLE_SHADER,
-    create_depth_texture, validate_vertex_layout, vertex_format_size, wgpu_vertex_format,
+    TRIPLANAR_PBR_SHADER, create_depth_texture, validate_vertex_layout, vertex_format_size,
+    wgpu_vertex_format,
 };
 pub use helpers::{FrameUniforms, LightUniform, LightsBuffer, MAX_LIGHTS, MaterialUniforms};
 pub use renderer::{DynamicMesh, Renderer, pack_lights_buffer};

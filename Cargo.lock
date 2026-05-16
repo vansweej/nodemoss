@@ -3295,6 +3295,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrain_chunks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "noise",
+ "rig-app",
+]
+
+[[package]]
+name = "terrain_erosion"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "noise",
+ "rig-app",
+]
+
+[[package]]
 name = "terrain_heightmap"
 version = "0.1.0"
 dependencies = [
@@ -3308,6 +3328,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrain_lod"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "noise",
+ "rig-app",
+]
+
+[[package]]
 name = "terrain_mc"
 version = "0.1.0"
 dependencies = [
@@ -3318,6 +3348,26 @@ dependencies = [
  "rig-app",
  "rig-assets",
  "rig-math",
+]
+
+[[package]]
+name = "terrain_triplanar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "noise",
+ "rig-app",
+]
+
+[[package]]
+name = "terrain_warp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "noise",
+ "rig-app",
 ]
 
 [[package]]
