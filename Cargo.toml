@@ -44,6 +44,7 @@ members = [
     "examples/terrain_chunks",
     "examples/terrain_lod",
     "examples/gltf_demo",
+    "examples/gltf_skinned_demo",
 ]
 exclude = ["GeometricTools"]
 

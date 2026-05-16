@@ -32,8 +32,7 @@ pub(crate) fn adapt_animations(
                 gltf::animation::Property::Rotation => ChannelProperty::Rotation,
                 gltf::animation::Property::Scale => ChannelProperty::Scale,
                 gltf::animation::Property::MorphTargetWeights => {
-                    log::warn!("glTF morph target animation is not supported, skipping channel");
-                    continue;
+                    ChannelProperty::MorphTargetWeights
                 }
             };
 
@@ -96,6 +95,11 @@ fn read_values(
         (ChannelProperty::Scale, Interpolation::CubicSpline) => {
             KeyframeValues::CubicScales(buffers::read_anim_cubic_scales(channel, buffers))
         }
+        (ChannelProperty::MorphTargetWeights, Interpolation::CubicSpline) => {
+            KeyframeValues::CubicMorphWeights(buffers::read_anim_cubic_morph_weight_frames(
+                channel, buffers,
+            ))
+        }
         (ChannelProperty::Translation, _) => {
             KeyframeValues::Translations(buffers::read_anim_translations(channel, buffers))
         }
@@ -104,6 +108,9 @@ fn read_values(
         }
         (ChannelProperty::Scale, _) => {
             KeyframeValues::Scales(buffers::read_anim_scales(channel, buffers))
+        }
+        (ChannelProperty::MorphTargetWeights, _) => {
+            KeyframeValues::MorphWeights(buffers::read_anim_morph_weight_frames(channel, buffers))
         }
     }
 }

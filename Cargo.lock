@@ -1161,6 +1161,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf_skinned_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "rig-app",
+]
+
+[[package]]
 name = "glutin_wgl_sys"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

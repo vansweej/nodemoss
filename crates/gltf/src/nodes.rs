@@ -3,18 +3,13 @@
 use rig_math::{Quat, Transform, Vec3};
 use rig_scene::{NodeId, SceneGraph};
 
-/// Adapt the default glTF scene's node tree into `scene`.
+/// Adapt a glTF scene's node tree into `scene`.
 pub(crate) fn adapt_nodes(
     document: &gltf::Document,
+    gltf_scene: gltf::Scene<'_>,
     scene: &mut SceneGraph,
 ) -> (Vec<Option<NodeId>>, Vec<NodeId>) {
     let mut node_map = vec![None; document.nodes().count()];
-    let Some(gltf_scene) = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-    else {
-        return (node_map, Vec::new());
-    };
 
     let roots = gltf_scene
         .nodes()

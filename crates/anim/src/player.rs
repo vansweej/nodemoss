@@ -32,6 +32,8 @@ pub struct AnimationPlayer {
     binding: Vec<Option<NodeId>>,
     /// Per-channel cached keyframe index hint.
     last_indices: Vec<usize>,
+    /// Last evaluated morph weights per target node.
+    morph_weights: HashMap<NodeId, Vec<f32>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -45,6 +47,7 @@ enum SampledValue {
     Translation(Vec3),
     Rotation(Quat),
     Scale(Vec3),
+    MorphWeights(Vec<f32>),
 }
 
 impl AnimationPlayer {
@@ -58,6 +61,7 @@ impl AnimationPlayer {
             playing: true,
             binding: Vec::new(),
             last_indices: Vec::new(),
+            morph_weights: HashMap::new(),
         }
     }
 
@@ -114,6 +118,7 @@ impl AnimationPlayer {
     ) -> Result<(), AnimError> {
         let clip = self.clip_asset(assets)?;
         let mut accumulated: HashMap<NodeId, SampledTransform> = HashMap::new();
+        let mut morph_weights = HashMap::new();
 
         for (channel_index, channel) in clip.channels.iter().enumerate() {
             let Some(node) = self.binding.get(channel_index).copied().flatten() else {
@@ -136,8 +141,13 @@ impl AnimationPlayer {
                 SampledValue::Translation(value) => entry.translation = Some(value),
                 SampledValue::Rotation(value) => entry.rotation = Some(value),
                 SampledValue::Scale(value) => entry.scale = Some(value),
+                SampledValue::MorphWeights(value) => {
+                    morph_weights.insert(node, value);
+                }
             }
         }
+
+        self.morph_weights = morph_weights;
 
         for (node, sampled) in accumulated {
             let mut transform = scene.local_transform(node)?;
@@ -197,6 +207,11 @@ impl AnimationPlayer {
         self.clip
     }
 
+    /// Return the last evaluated morph weights for `node`, if the current clip drives them.
+    pub fn morph_weights(&self, node: NodeId) -> Option<&[f32]> {
+        self.morph_weights.get(&node).map(Vec::as_slice)
+    }
+
     fn clip_asset<'a>(&self, assets: &'a AssetStore) -> Result<&'a AnimationClip, AnimError> {
         assets
             .animation_clip(self.clip)
@@ -221,6 +236,10 @@ fn sample_channel(
         }
         ChannelProperty::Scale => {
             sample_scale(sampler, time, last_index, channel_index).map(SampledValue::Scale)
+        }
+        ChannelProperty::MorphTargetWeights => {
+            sample_morph_weights(sampler, time, last_index, channel_index)
+                .map(SampledValue::MorphWeights)
         }
     }
 }
@@ -318,6 +337,37 @@ fn sample_scale(
     }
 }
 
+fn sample_morph_weights(
+    sampler: &KeyframeSampler,
+    time: f32,
+    last_index: &mut usize,
+    channel_index: usize,
+) -> Result<Vec<f32>, AnimError> {
+    match (&sampler.values, sampler.interpolation) {
+        (KeyframeValues::MorphWeights(values), _) if sampler.times.len() <= 1 => {
+            first_morph_weights(values, channel_index)
+        }
+        (KeyframeValues::CubicMorphWeights(values), Interpolation::CubicSpline)
+            if sampler.times.len() <= 1 =>
+        {
+            first_cubic_morph_weights(values, channel_index)
+        }
+        (KeyframeValues::MorphWeights(values), Interpolation::Step) => {
+            let (index, _) = find_keyframe_index(&sampler.times, time, last_index);
+            checked_morph_weights_step(values, index, channel_index)
+        }
+        (KeyframeValues::MorphWeights(values), Interpolation::Linear) => {
+            let (index, t) = find_keyframe_index(&sampler.times, time, last_index);
+            checked_morph_weights_linear(values, index, t, channel_index)
+        }
+        (KeyframeValues::CubicMorphWeights(values), Interpolation::CubicSpline) => {
+            let (index, t) = find_keyframe_index(&sampler.times, time, last_index);
+            checked_cubic_morph_weights(values, &sampler.times, index, t, channel_index)
+        }
+        _ => Err(AnimError::InvalidSampler { channel_index }),
+    }
+}
+
 fn first_vec3(values: &[Vec3], channel_index: usize) -> Result<Vec3, AnimError> {
     values
         .first()
@@ -343,6 +393,23 @@ fn first_cubic_quat(values: &[[Quat; 3]], channel_index: usize) -> Result<Quat, 
     values
         .first()
         .map(|key| key[1])
+        .ok_or(AnimError::InvalidSampler { channel_index })
+}
+
+fn first_morph_weights(values: &[Vec<f32>], channel_index: usize) -> Result<Vec<f32>, AnimError> {
+    values
+        .first()
+        .cloned()
+        .ok_or(AnimError::InvalidSampler { channel_index })
+}
+
+fn first_cubic_morph_weights(
+    values: &[[Vec<f32>; 3]],
+    channel_index: usize,
+) -> Result<Vec<f32>, AnimError> {
+    values
+        .first()
+        .map(|key| key[1].clone())
         .ok_or(AnimError::InvalidSampler { channel_index })
 }
 
@@ -444,6 +511,84 @@ fn checked_cubic_quat(
         next[0] * delta,
         t,
     ))
+}
+
+fn checked_morph_weights_step(
+    values: &[Vec<f32>],
+    index: usize,
+    channel_index: usize,
+) -> Result<Vec<f32>, AnimError> {
+    values
+        .get(index)
+        .cloned()
+        .ok_or(AnimError::InvalidSampler { channel_index })
+}
+
+fn checked_morph_weights_linear(
+    values: &[Vec<f32>],
+    index: usize,
+    t: f32,
+    channel_index: usize,
+) -> Result<Vec<f32>, AnimError> {
+    let left = values
+        .get(index)
+        .ok_or(AnimError::InvalidSampler { channel_index })?;
+    let right = values
+        .get(index + 1)
+        .ok_or(AnimError::InvalidSampler { channel_index })?;
+    if left.len() != right.len() {
+        return Err(AnimError::InvalidSampler { channel_index });
+    }
+    Ok(left
+        .iter()
+        .zip(right)
+        .map(|(left, right)| *left + (*right - *left) * t)
+        .collect())
+}
+
+fn checked_cubic_morph_weights(
+    values: &[[Vec<f32>; 3]],
+    times: &[f32],
+    index: usize,
+    t: f32,
+    channel_index: usize,
+) -> Result<Vec<f32>, AnimError> {
+    let current = values
+        .get(index)
+        .ok_or(AnimError::InvalidSampler { channel_index })?;
+    let next = values
+        .get(index + 1)
+        .ok_or(AnimError::InvalidSampler { channel_index })?;
+    let delta = times
+        .get(index + 1)
+        .zip(times.get(index))
+        .map(|(next, current)| next - current)
+        .ok_or(AnimError::InvalidSampler { channel_index })?;
+    let [in_tangent, value, out_tangent] = current;
+    let [next_in_tangent, next_value, _] = next;
+    if value.len() != out_tangent.len()
+        || value.len() != next_value.len()
+        || value.len() != next_in_tangent.len()
+        || value.len() != in_tangent.len()
+    {
+        return Err(AnimError::InvalidSampler { channel_index });
+    }
+    Ok(value
+        .iter()
+        .zip(out_tangent)
+        .zip(next_value)
+        .zip(next_in_tangent)
+        .map(|(((p0, m0), p1), m1)| cubic_hermite_scalar(*p0, *m0 * delta, *p1, *m1 * delta, t))
+        .collect())
+}
+
+fn cubic_hermite_scalar(p0: f32, m0: f32, p1: f32, m1: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    (2.0 * t3 - 3.0 * t2 + 1.0) * p0
+        + (t3 - 2.0 * t2 + t) * m0
+        + (-2.0 * t3 + 3.0 * t2) * p1
+        + (t3 - t2) * m1
 }
 
 #[cfg(test)]
@@ -709,6 +854,29 @@ mod tests {
         player.evaluate(&assets, &mut scene).unwrap();
 
         approx_eq_vec3(scene.local_transform(node).unwrap().scale, Vec3::splat(2.0));
+    }
+
+    #[test]
+    fn evaluate_stores_morph_weights() {
+        let clip = sample_clip(
+            "node",
+            ChannelProperty::MorphTargetWeights,
+            KeyframeValues::MorphWeights(vec![vec![0.0, 0.0], vec![1.0, 0.5]]),
+            2.0,
+            true,
+        );
+        let (assets, handle) = store_with_clip(clip);
+        let (mut scene, node) = scene_with_node("node");
+        let mut player = AnimationPlayer::new(handle);
+        player.bind(&assets, &scene).unwrap();
+        player.set_time(1.0);
+
+        player.evaluate(&assets, &mut scene).unwrap();
+
+        let weights = player.morph_weights(node).unwrap();
+        assert_eq!(weights.len(), 2);
+        assert!((weights[0] - 0.5).abs() <= 1.0e-5);
+        assert!((weights[1] - 0.25).abs() <= 1.0e-5);
     }
 
     #[test]

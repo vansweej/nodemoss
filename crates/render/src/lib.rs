@@ -559,6 +559,32 @@ mod tests {
     }
 
     #[test]
+    fn lights_buffer_packing_spot() {
+        use rig_math::Vec3;
+        use rig_scene::{ExtractedLight, LightKind};
+
+        let light = ExtractedLight {
+            kind: LightKind::Spot {
+                color: Vec3::new(0.25, 0.5, 1.0),
+                intensity: 4.0,
+                range: 15.0,
+                inner_cone_angle: 0.2,
+                outer_cone_angle: 0.6,
+            },
+            world_position: Vec3::new(1.0, 2.0, 3.0),
+            world_direction: Vec3::new(0.0, -1.0, 0.0),
+        };
+        let buf = pack_lights_buffer(&[light]);
+
+        assert_eq!(buf.count[0], 1);
+        assert_eq!(buf.lights[0].position, [1.0, 2.0, 3.0, 2.0]);
+        assert_eq!(buf.lights[0].direction, [0.0, -1.0, 0.0, 0.0]);
+        assert_eq!(buf.lights[0].range_pad[0], 15.0);
+        assert!((buf.lights[0].range_pad[1] - 0.2_f32.cos()).abs() < 1.0e-6);
+        assert!((buf.lights[0].range_pad[2] - 0.6_f32.cos()).abs() < 1.0e-6);
+    }
+
+    #[test]
     fn lights_buffer_capped_at_max_lights() {
         use rig_math::Vec3;
         use rig_scene::{ExtractedLight, LightKind};
@@ -747,6 +773,10 @@ mod tests {
             "missing Smith geometry"
         );
         assert!(PBR_SHADER.contains("fn fresnel_schlick"), "missing Fresnel");
+        assert!(
+            PBR_SHADER.contains("spot_cone_attenuation"),
+            "missing spot light attenuation"
+        );
     }
 
     #[test]

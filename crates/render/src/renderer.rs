@@ -347,10 +347,10 @@ impl Renderer {
         }
 
         if !data.vertex_data.is_empty() {
-            queue.write_buffer(&entry.vertex_buffer, 0, &data.vertex_data);
+            write_aligned_buffer(queue, &entry.vertex_buffer, &data.vertex_data);
         }
         if !data.index_data.is_empty() {
-            queue.write_buffer(&entry.index_buffer, 0, &data.index_data);
+            write_aligned_buffer(queue, &entry.index_buffer, &data.index_data);
         }
         entry.index_format = match data.index_format {
             rig_assets::IndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
@@ -953,6 +953,21 @@ impl Renderer {
 }
 
 #[cfg(not(tarpaulin_include))]
+fn write_aligned_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
+    const ALIGNMENT: usize = wgpu::COPY_BUFFER_ALIGNMENT as usize;
+    if data.len() % ALIGNMENT == 0 {
+        queue.write_buffer(buffer, 0, data);
+        return;
+    }
+
+    let padded_len = data.len().div_ceil(ALIGNMENT) * ALIGNMENT;
+    let mut padded = Vec::with_capacity(padded_len);
+    padded.extend_from_slice(data);
+    padded.resize(padded_len, 0);
+    queue.write_buffer(buffer, 0, &padded);
+}
+
+#[cfg(not(tarpaulin_include))]
 fn create_fallback_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1022,6 +1037,23 @@ pub fn pack_lights_buffer(lights: &[ExtractedLight]) -> LightsBuffer {
                     light.world_position.y,
                     light.world_position.z,
                     1.0,
+                ];
+            }
+            LightKind::Spot {
+                color,
+                intensity,
+                range,
+                inner_cone_angle,
+                outer_cone_angle,
+            } => {
+                buf.lights[i].color_intensity = [color.x, color.y, color.z, intensity];
+                buf.lights[i].range_pad =
+                    [range, inner_cone_angle.cos(), outer_cone_angle.cos(), 0.0];
+                buf.lights[i].position = [
+                    light.world_position.x,
+                    light.world_position.y,
+                    light.world_position.z,
+                    2.0,
                 ];
             }
         }

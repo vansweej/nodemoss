@@ -685,6 +685,42 @@ mod tests {
     }
 
     #[test]
+    fn extract_lights_includes_world_position_and_direction_for_spot_light() {
+        let mut scene = SceneGraph::new();
+        let light_node = scene.create_node("spot");
+        scene
+            .set_local_transform(
+                light_node,
+                rig_math::Transform {
+                    translation: Vec3::new(3.0, 5.0, -2.0),
+                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    scale: Vec3::ONE,
+                },
+            )
+            .unwrap();
+        scene
+            .set_light(
+                light_node,
+                LightComponent {
+                    kind: LightKind::Spot {
+                        color: Vec3::ONE,
+                        intensity: 2.0,
+                        range: 10.0,
+                        inner_cone_angle: 0.2,
+                        outer_cone_angle: 0.6,
+                    },
+                },
+            )
+            .unwrap();
+        scene.update_world_transforms(light_node).unwrap();
+        let lights = scene.extract_lights();
+
+        assert_eq!(lights.len(), 1);
+        approx_eq_vec3(lights[0].world_position, Vec3::new(3.0, 5.0, -2.0));
+        approx_eq_vec3(lights[0].world_direction, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
     fn extract_lights_returns_all_lights_in_scene() {
         let mut scene = SceneGraph::new();
         for i in 0..3 {

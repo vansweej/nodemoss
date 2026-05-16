@@ -29,6 +29,13 @@ pub enum LightKind {
         intensity: f32,
         range: f32,
     },
+    Spot {
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        inner_cone_angle: f32,
+        outer_cone_angle: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

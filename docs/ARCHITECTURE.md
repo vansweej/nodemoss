@@ -122,6 +122,9 @@ graphics/                           # workspace root
     import/                         # rig-import
       Cargo.toml
       src/                          # decoded-data adaptation into AssetStore assets
+    gltf/                           # rig-gltf
+      Cargo.toml
+      src/                          # glTF scene/material/animation/skinning adaptation
     anim/                           # rig-anim
       Cargo.toml
       src/                          # AnimationPlayer, binding table, keyframe sampling
@@ -172,6 +175,8 @@ graphics/                           # workspace root
     texture_formats/                # milestone 7 - PNG/JPEG/TGA loading
     shader_load/                    # milestone 7 - runtime WGSL loading
     asset_showcase/                 # milestone 7 - combined loading showcase
+    gltf_demo/                      # glTF static/PBR model loading
+    gltf_skinned_demo/              # glTF CPU skinning runtime validation
   GeometricTools/                   # reference only, not part of the workspace
 ```
 
@@ -184,6 +189,7 @@ graphics/                           # workspace root
 | `rig-assets` | Immutable meshes, materials, shader source, textures, asset handles | rig-math |
 | `rig-loader` | Source abstraction and format-faithful decoders for images, OBJ/MTL, and WGSL | image, tobj, thiserror |
 | `rig-import` | Adapt decoded loader data into `rig-assets` types and register handles | rig-loader, rig-assets, rig-math |
+| `rig-gltf` | Adapt glTF documents into scene nodes, assets, animations, skins, and morph targets | gltf, rig-assets, rig-scene, rig-math |
 | `rig-anim` | Animation playback, clip binding, cached keyframe sampling | rig-math, rig-assets, rig-scene |
 | `rig-skin` | CPU Linear Blend Skinning evaluator producing dynamic mesh data | rig-math, rig-assets, rig-scene |
 | `rig-gpu` | GPU context: device, queue, surface, swapchain, `Frame` handle | wgpu, winit |
@@ -203,6 +209,7 @@ graph TD
     render["rig-render"]
     gpu["rig-gpu"]
     import["rig-import"]
+    gltf["rig-gltf"]
     anim["rig-anim"]
     loader["rig-loader"]
     assets["rig-assets"]
@@ -222,6 +229,7 @@ graph TD
     app --> scene
     app --> gpu
     app --> import
+    app --> gltf
     app --> anim
     app --> winit
 
@@ -236,6 +244,10 @@ graph TD
     import --> loader
     import --> assets
     import --> math
+
+    gltf --> assets
+    gltf --> scene
+    gltf --> math
 
     anim --> assets
     anim --> scene
@@ -257,6 +269,7 @@ graph TD
     style render fill:#e3f2fd,stroke:#1565c0
     style gpu fill:#e3f2fd,stroke:#1565c0
     style import fill:#e3f2fd,stroke:#1565c0
+    style gltf fill:#e3f2fd,stroke:#1565c0
     style anim fill:#e3f2fd,stroke:#1565c0
     style loader fill:#e3f2fd,stroke:#1565c0
     style assets fill:#e3f2fd,stroke:#1565c0
@@ -712,6 +725,28 @@ renderer path:
 - **`rig-app`**: re-exports `rig-skin` for examples.
 - **`examples/tentacle_demo`**: hand-authored 4-bone cylinder skeleton driven by an
   `AnimationPlayer`, deformed on the CPU, and uploaded through `DynamicMesh` each frame.
+
+### Milestone 14 — glTF Loading and Runtime Validation ✓
+
+The glTF path adapts authored assets into the same scene, asset, animation, material, and
+dynamic mesh systems used by the rest of the framework:
+
+- **`rig-gltf`**: loads `.gltf`/`.glb` files, selects scenes, adapts nodes, cameras,
+  `KHR_lights_punctual` lights, PBR materials, images/samplers, mesh primitives,
+  animation clips, skins, skin weights, and morph targets.
+- **`rig-assets`**: stores glTF-created materials, textures, animation clips, skin assets,
+  skin weights, and morph target displacement data behind existing typed handles.
+- **`rig-anim`**: samples glTF transform channels and morph target weight channels through
+  `AnimationPlayer`.
+- **`rig-skin`**: evaluates loaded `SkinAsset` + `SkinWeights` descriptors on the CPU and
+  produces `DynamicMeshData` for skinned glTF primitives.
+- **`rig-render`**: renders static glTF primitives through immutable mesh caches and skinned
+  primitives through dynamic mesh buffers; dynamic uploads are padded to `wgpu` copy alignment.
+- **`examples/gltf_demo`**: static/PBR model viewer over `DamagedHelmet.glb`.
+- **`examples/gltf_skinned_demo`**: CPU skinning runtime validation over `BrainStem.glb`.
+
+See `docs/GLTF.md` for the detailed loading flow, adaptation map, material slot mapping,
+runtime skinning handoff, and current limitations.
 
 ---
 

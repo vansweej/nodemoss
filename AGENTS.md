@@ -17,6 +17,7 @@ graphics/                       # workspace root (this directory)
     RESOURCES.md                # assets, GPU resources, frame resources
     APPLICATION.md              # runtime, event loop, contexts, interaction
     LOADING.md                  # file loading pipeline, importer adaptation, examples
+    GLTF.md                     # glTF loader architecture, adaptation map, runtime handoff
     MODELS.md                   # curated model/texture library, provenance, viewer usage
   crates/
     math/                       # rig-math    — glam re-exports + Transform, BoundingSphere, Projection, Camera
@@ -52,6 +53,8 @@ graphics/                       # workspace root (this directory)
     terrain_triplanar/          # milestone 13 — triplanar UV-free MC texturing
     terrain_chunks/             # milestone 13 — camera-driven chunked terrain
     terrain_lod/                # milestone 13 — distance-based level of detail
+    gltf_demo/                  # glTF static/PBR model loading
+    gltf_skinned_demo/          # glTF CPU skinning runtime path
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
@@ -206,6 +209,9 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 13. **Terrain sub-problems** — domain warping, hydraulic erosion,
     triplanar texturing, chunked infinite terrain, distance-based LOD,
     five progressive terrain examples ✓
+14. **glTF loading and runtime validation** — `rig-gltf`, PBR material mapping,
+    cameras/lights, multi-scene selection, morph target loading, CPU skinning
+    descriptors, `gltf_demo`, and `gltf_skinned_demo` ✓
 
 ## Documentation
 
@@ -216,4 +222,5 @@ All architecture docs live in `docs/` and use Mermaid diagrams extensively. Read
 - `RESOURCES.md` — immutable assets, GPU cache, frame resources, pipeline specialization
 - `APPLICATION.md` — Application trait, redraw-driven runner, contexts, camera utilities
 - `LOADING.md` — AssetSource, Loader, Importer, cache behavior, loading examples
+- `GLTF.md` — glTF loader architecture, adaptation map, runtime handoff, examples
 - `MODELS.md` — model library provenance, texture conventions, auto-scaling patterns

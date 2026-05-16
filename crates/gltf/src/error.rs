@@ -5,11 +5,17 @@ use thiserror::Error;
 /// Errors produced while loading and adapting glTF assets.
 #[derive(Debug, Error)]
 pub enum GltfError {
+    #[error("failed to load glTF file '{path}': {source}")]
+    LoadFile { path: String, source: gltf::Error },
+
     #[error("glTF import error: {0}")]
     Import(#[from] gltf::Error),
 
     #[error("unsupported primitive topology: {0:?}")]
     UnsupportedTopology(gltf::mesh::Mode),
+
+    #[error("glTF scene not found: {description}")]
+    SceneNotFound { description: String },
 
     #[error("primitive missing required POSITION attribute")]
     MissingPositions,

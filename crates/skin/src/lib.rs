@@ -6,8 +6,10 @@
 //! existing `DynamicMesh` renderer path.
 
 mod evaluator;
+mod morph;
 
 pub use evaluator::SkinEvaluator;
+pub use morph::MorphEvaluator;
 
 use thiserror::Error;
 
@@ -20,8 +22,14 @@ pub enum SkinError {
     InvalidWeights,
     #[error("invalid rest mesh handle")]
     InvalidMesh,
+    #[error("invalid morph target handle")]
+    InvalidMorphTargets,
     #[error("vertex count mismatch: mesh has {mesh} vertices, weights has {weights}")]
     VertexCountMismatch { mesh: usize, weights: usize },
+    #[error(
+        "morph target vertex count mismatch: mesh has {mesh} vertices, targets have {morph_targets}"
+    )]
+    MorphVertexCountMismatch { mesh: usize, morph_targets: usize },
     #[error("evaluator not bound — call bind() before evaluate()")]
     NotBound,
     #[error("scene error: {0}")]

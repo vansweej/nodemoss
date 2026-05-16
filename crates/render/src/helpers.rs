@@ -47,7 +47,7 @@ pub const MAX_LIGHTS: usize = 16;
 
 /// GPU-side representation of a single light.
 ///
-/// `position.w` encodes light type: `0.0` = directional, `1.0` = point.
+/// `position.w` encodes light type: `0.0` = directional, `1.0` = point, `2.0` = spot.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Default)]
 pub struct LightUniform {
@@ -57,7 +57,8 @@ pub struct LightUniform {
     pub direction: [f32; 4],
     /// rgb = color. a = intensity.
     pub color_intensity: [f32; 4],
-    /// x = range (point lights). yzw = padding.
+    /// x = range (point/spot lights). y = spot inner cone cosine.
+    /// z = spot outer cone cosine. w = padding.
     pub range_pad: [f32; 4],
 }
 
@@ -137,6 +138,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = pv * object.world * vec4<f32>(in.position, 1.0);
     out.color = in.color;
     return out;
+}
+
+fn spot_cone_attenuation(L: vec3<f32>, spot_direction: vec3<f32>, inner_cos: f32, outer_cos: f32) -> f32 {
+    let spot_cos = dot(normalize(-L), normalize(spot_direction));
+    return smoothstep(outer_cos, inner_cos, spot_cos);
 }
 
 @fragment
@@ -396,12 +402,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // Directional
             L = normalize(-light.direction.xyz);
         } else {
-            // Point
+            // Point or spot
             let to_light = light.position.xyz - in.world_position;
             let dist = length(to_light);
             L = normalize(to_light);
             let range = light.range_pad.x;
             attenuation = clamp(1.0 - dist / range, 0.0, 1.0);
+            if light.position.w > 1.5 {
+                attenuation = attenuation * spot_cone_attenuation(L, light.direction.xyz, light.range_pad.y, light.range_pad.z);
+            }
         }
 
         let light_color = light.color_intensity.rgb * light.color_intensity.a * attenuation;
@@ -559,6 +568,11 @@ fn point_light_attenuation(dist: f32, range: f32) -> f32 {
     return (window * window) / (dist * dist + 1.0);
 }
 
+fn spot_cone_attenuation(L: vec3<f32>, spot_direction: vec3<f32>, inner_cos: f32, outer_cos: f32) -> f32 {
+    let spot_cos = dot(normalize(-L), normalize(spot_direction));
+    return smoothstep(outer_cos, inner_cos, spot_cos);
+}
+
 /// ACES filmic tone mapping (Narkowicz 2015 approximation).
 /// Maps HDR radiance to [0,1] with a natural highlight roll-off.
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
@@ -674,12 +688,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // Directional light — no falloff.
             L = normalize(-light.direction.xyz);
         } else {
-            // Point light — UE4 windowed inverse-square falloff.
+            // Point or spot light — UE4 windowed inverse-square falloff.
             let to_light = light.position.xyz - in.world_position;
             let dist     = length(to_light);
             L            = normalize(to_light);
             let range    = light.range_pad.x;
             attenuation  = point_light_attenuation(dist, range);
+            if light.position.w > 1.5 {
+                attenuation = attenuation * spot_cone_attenuation(L, light.direction.xyz, light.range_pad.y, light.range_pad.z);
+            }
         }
 
         let H           = normalize(V + L);
@@ -840,6 +857,11 @@ fn point_light_attenuation(dist: f32, range: f32) -> f32 {
     return (window * window) / (dist * dist + 1.0);
 }
 
+fn spot_cone_attenuation(L: vec3<f32>, spot_direction: vec3<f32>, inner_cos: f32, outer_cos: f32) -> f32 {
+    let spot_cos = dot(normalize(-L), normalize(spot_direction));
+    return smoothstep(outer_cos, inner_cos, spot_cos);
+}
+
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
     let b = 0.03;
@@ -960,6 +982,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             L            = normalize(to_light);
             let range    = light.range_pad.x;
             attenuation  = point_light_attenuation(dist, range);
+            if light.position.w > 1.5 {
+                attenuation = attenuation * spot_cone_attenuation(L, light.direction.xyz, light.range_pad.y, light.range_pad.z);
+            }
         }
         let H           = normalize(V + L);
         let NdL         = max(dot(N, L), 0.0);

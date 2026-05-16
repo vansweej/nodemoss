@@ -8,6 +8,7 @@ pub enum ChannelProperty {
     Translation,
     Rotation,
     Scale,
+    MorphTargetWeights,
 }
 
 /// Keyframe values — the variant must match the channel's [`ChannelProperty`].
@@ -20,6 +21,9 @@ pub enum KeyframeValues {
     CubicTranslations(Vec<[Vec3; 3]>),
     CubicRotations(Vec<[Quat; 3]>),
     CubicScales(Vec<[Vec3; 3]>),
+    MorphWeights(Vec<Vec<f32>>),
+    /// Cubic spline: `[in_tangent, value, out_tangent]` per keyframe.
+    CubicMorphWeights(Vec<[Vec<f32>; 3]>),
 }
 
 /// Keyframe times and values for one animated property.

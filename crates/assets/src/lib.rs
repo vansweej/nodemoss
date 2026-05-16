@@ -44,6 +44,9 @@ pub struct SkinAssetHandle(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SkinWeightsHandle(u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MorphTargetHandle(u32);
+
 impl MeshHandle {
     pub fn from_raw(v: u32) -> Self {
         Self(v)
@@ -115,6 +118,16 @@ impl SkinAssetHandle {
 }
 
 impl SkinWeightsHandle {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl MorphTargetHandle {
     pub fn from_raw(v: u32) -> Self {
         Self(v)
     }
@@ -212,6 +225,19 @@ pub struct MeshAsset {
     /// Index element format. Defaults to `Uint16` for backward compatibility.
     pub index_format: IndexFormat,
     pub local_bounds: BoundingSphere,
+}
+
+/// Morph target displacement data paired with a base [`MeshAsset`].
+#[derive(Clone, Debug)]
+pub struct MorphTargets {
+    /// Number of vertices in the base mesh.
+    pub vertex_count: usize,
+    /// Number of morph targets.
+    pub target_count: usize,
+    /// Flattened position deltas: target-major, then vertex-major XYZ floats.
+    pub position_deltas: Vec<f32>,
+    /// Flattened normal deltas: target-major, then vertex-major XYZ floats.
+    pub normal_deltas: Vec<f32>,
 }
 
 /// Blinn-Phong material color properties for GPU upload.
@@ -425,6 +451,8 @@ pub enum AssetError {
     InvalidSkin,
     #[error("invalid skin weights handle")]
     InvalidSkinWeights,
+    #[error("invalid morph target handle")]
+    InvalidMorphTargets,
 }
 
 #[derive(Default)]
@@ -437,6 +465,7 @@ pub struct AssetStore {
     animation_clips: Vec<AnimationClip>,
     skins: Vec<SkinAsset>,
     skin_weights: Vec<SkinWeights>,
+    morph_targets: Vec<MorphTargets>,
 }
 
 impl AssetStore {
@@ -492,6 +521,12 @@ impl AssetStore {
         handle
     }
 
+    pub fn add_morph_targets(&mut self, targets: MorphTargets) -> MorphTargetHandle {
+        let handle = MorphTargetHandle(self.morph_targets.len() as u32);
+        self.morph_targets.push(targets);
+        handle
+    }
+
     pub fn mesh(&self, handle: MeshHandle) -> Result<&MeshAsset, AssetError> {
         self.meshes
             .get(handle.index())
@@ -541,6 +576,12 @@ impl AssetStore {
         self.skin_weights
             .get(handle.index())
             .ok_or(AssetError::InvalidSkinWeights)
+    }
+
+    pub fn morph_targets(&self, handle: MorphTargetHandle) -> Result<&MorphTargets, AssetError> {
+        self.morph_targets
+            .get(handle.index())
+            .ok_or(AssetError::InvalidMorphTargets)
     }
 }
 
@@ -871,6 +912,13 @@ mod tests {
     }
 
     #[test]
+    fn morph_target_handle_from_raw_round_trips() {
+        let handle = MorphTargetHandle::from_raw(5);
+        assert_eq!(handle.index(), 5);
+        assert_eq!(handle, MorphTargetHandle::from_raw(5));
+    }
+
+    #[test]
     fn add_skin_returns_retrievable_asset() {
         let mut store = AssetStore::new();
         let handle = store.add_skin(sample_skin());
@@ -894,6 +942,24 @@ mod tests {
     }
 
     #[test]
+    fn add_morph_targets_returns_retrievable_asset() {
+        let mut store = AssetStore::new();
+        let targets = MorphTargets {
+            vertex_count: 1,
+            target_count: 2,
+            position_deltas: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            normal_deltas: vec![0.0; 6],
+        };
+
+        let handle = store.add_morph_targets(targets);
+
+        let stored = store.morph_targets(handle).unwrap();
+        assert_eq!(stored.vertex_count, 1);
+        assert_eq!(stored.target_count, 2);
+        assert_eq!(stored.position_deltas[0], 1.0);
+    }
+
+    #[test]
     fn invalid_skin_handle_returns_error() {
         let store = AssetStore::new();
 
@@ -910,6 +976,16 @@ mod tests {
         assert!(matches!(
             store.skin_weights(SkinWeightsHandle::from_raw(99)),
             Err(AssetError::InvalidSkinWeights)
+        ));
+    }
+
+    #[test]
+    fn invalid_morph_target_handle_returns_error() {
+        let store = AssetStore::new();
+
+        assert!(matches!(
+            store.morph_targets(MorphTargetHandle::from_raw(99)),
+            Err(AssetError::InvalidMorphTargets)
         ));
     }
 

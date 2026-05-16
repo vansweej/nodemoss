@@ -118,6 +118,14 @@ pub enum Projection {
         near: f32,
         far: f32,
     },
+    Orthographic {
+        left: f32,
+        right: f32,
+        bottom: f32,
+        top: f32,
+        near: f32,
+        far: f32,
+    },
 }
 
 impl Projection {
@@ -128,6 +136,14 @@ impl Projection {
                 near,
                 far,
             } => Mat4::perspective_rh(fov_y_radians, aspect, near, far),
+            Projection::Orthographic {
+                left,
+                right,
+                bottom,
+                top,
+                near,
+                far,
+            } => Mat4::orthographic_rh(left, right, bottom, top, near, far),
         }
     }
 }
@@ -298,6 +314,23 @@ mod tests {
 
         let actual = projection.matrix(16.0 / 9.0);
         let expected = Mat4::perspective_rh(60.0_f32.to_radians(), 16.0 / 9.0, 0.1, 10.0);
+
+        approx_eq_mat4(actual, expected);
+    }
+
+    #[test]
+    fn projection_matrix_matches_glam_orthographic() {
+        let projection = Projection::Orthographic {
+            left: -2.0,
+            right: 2.0,
+            bottom: -1.0,
+            top: 1.0,
+            near: 0.1,
+            far: 10.0,
+        };
+
+        let actual = projection.matrix(16.0 / 9.0);
+        let expected = Mat4::orthographic_rh(-2.0, 2.0, -1.0, 1.0, 0.1, 10.0);
 
         approx_eq_mat4(actual, expected);
     }

@@ -3,12 +3,18 @@
 use std::sync::Arc;
 
 use rig_assets::{
-    AssetStore, IndexFormat, MeshAsset, MeshHandle, standard_vertex_layout, tangent_utils,
+    AssetStore, IndexFormat, MeshAsset, MeshHandle, MorphTargetHandle, MorphTargets,
+    standard_vertex_layout, tangent_utils,
 };
 use rig_math::{BoundingSphere, Vec3};
 
 use crate::buffers;
 use crate::error::{GltfError, Result};
+
+pub(crate) struct AdaptedPrimitive {
+    pub mesh: MeshHandle,
+    pub morph_targets: Option<MorphTargetHandle>,
+}
 
 /// Adapt a single glTF primitive into a `MeshAsset` with the standard 48-byte layout.
 pub(crate) fn adapt_primitive(
@@ -50,12 +56,25 @@ pub(crate) fn adapt_mesh(
     mesh: &gltf::Mesh<'_>,
     buffers: &[gltf::buffer::Data],
     store: &mut AssetStore,
-) -> Result<Vec<(MeshHandle, Option<usize>)>> {
+) -> Result<Vec<AdaptedPrimitive>> {
     mesh.primitives()
         .map(|primitive| {
-            let material_index = primitive.material().index();
+            let positions = buffers::read_positions(&primitive, buffers)?;
+            let vertex_count = positions.len() / 3;
+            let morph_targets =
+                buffers::read_morph_targets(&primitive, buffers, vertex_count).map(|data| {
+                    store.add_morph_targets(MorphTargets {
+                        vertex_count,
+                        target_count: data.target_count,
+                        position_deltas: data.position_deltas,
+                        normal_deltas: data.normal_deltas,
+                    })
+                });
             let mesh = adapt_primitive(&primitive, buffers)?;
-            Ok((store.add_mesh(mesh), material_index))
+            Ok(AdaptedPrimitive {
+                mesh: store.add_mesh(mesh),
+                morph_targets,
+            })
         })
         .collect()
 }
