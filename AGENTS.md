@@ -103,6 +103,14 @@ rig-app           (depends on rig-gpu, rig-render, rig-overlay, rig-scene, rig-a
 examples/         (depend on rig-app)
 ```
 
+## Git workflow
+
+- Always create a feature branch before making code or documentation changes.
+  Do not commit implementation work directly on `main`/`master` unless the user
+  explicitly requests it.
+- Name branches descriptively, for example `feat/gltf-loader-demo` or
+  `fix/loader-error-handling`.
+
 ## Build & run
 
 This project uses a Nix flake for the development environment. nixGL is included to
