@@ -18,6 +18,7 @@ pub use trackball::TrackBall;
 
 pub use rig_anim;
 pub use rig_assets;
+pub use rig_gltf;
 pub use rig_gpu;
 pub use rig_import;
 pub use rig_math;

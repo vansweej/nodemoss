@@ -12,6 +12,7 @@ members = [
     "crates/import",
     "crates/anim",
     "crates/skin",
+    "crates/gltf",
     "tools/gen_test_textures",
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
@@ -42,6 +43,7 @@ members = [
     "examples/terrain_triplanar",
     "examples/terrain_chunks",
     "examples/terrain_lod",
+    "examples/gltf_demo",
 ]
 exclude = ["GeometricTools"]
 
@@ -63,6 +65,7 @@ rig-loader = { path = "crates/loader" }
 rig-import = { path = "crates/import" }
 rig-anim = { path = "crates/anim" }
 rig-skin = { path = "crates/skin" }
+rig-gltf = { path = "crates/gltf" }
 
 # External dependencies
 wgpu = "29.0.1"
@@ -78,3 +81,4 @@ image = "0.25"
 tobj = "4"
 mikktspace = "0.3"
 noise = "0.9"
+gltf = { version = "1.4", features = ["KHR_lights_punctual"] }

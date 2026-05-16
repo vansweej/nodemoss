@@ -19,6 +19,7 @@ rig-scene.workspace = true
 rig-import.workspace = true
 rig-anim.workspace = true
 rig-skin.workspace = true
+rig-gltf.workspace = true
 winit.workspace = true
 log.workspace = true
 anyhow.workspace = true
