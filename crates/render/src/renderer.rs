@@ -661,14 +661,9 @@ impl Renderer {
                 gpu.queue
                     .write_buffer(&mat_buf, 0, bytemuck::bytes_of(&mat_uniforms));
 
-                let mut resolved_slots = Vec::with_capacity(MaterialAsset::SLOT_COUNT);
+                let mut resolved_slots: Vec<(wgpu::TextureView, wgpu::Sampler)> =
+                    Vec::with_capacity(MaterialAsset::SLOT_COUNT);
                 for slot in 0..MaterialAsset::SLOT_COUNT {
-                    let fallback_view = match slot {
-                        0 => &self.fallback_texture_view,
-                        1 => &self.fallback_normal_texture_view,
-                        _ => &self.fallback_black_texture_view,
-                    };
-
                     if let Some((tex_handle, samp_handle)) =
                         material.textures.get(slot).and_then(|texture| *texture)
                     {
@@ -678,21 +673,22 @@ impl Renderer {
                         let samp_desc = assets
                             .sampler(samp_handle)
                             .map_err(|e| RenderError::Asset(e.to_string()))?;
-                        // Obtain raw pointers to break the two-borrow problem on self.cache.
-                        // SAFETY: Both borrows are non-overlapping (different HashMaps) and the
-                        // returned references remain valid for the duration of this block.
-                        let tex_view =
-                            self.cache
-                                .texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
-                                as *const wgpu::TextureView;
-                        let sampler = self.cache.sampler(&gpu.device, samp_handle, samp_desc)
-                            as *const wgpu::Sampler;
-                        // SAFETY: pointers dereference into stable HashMap values; no removal occurs.
-                        let tex_view = unsafe { &*tex_view };
-                        let sampler = unsafe { &*sampler };
+                        let tex_view = self
+                            .cache
+                            .texture_view(&gpu.device, &gpu.queue, tex_handle, tex_asset)
+                            .clone();
+                        let sampler = self
+                            .cache
+                            .sampler(&gpu.device, samp_handle, samp_desc)
+                            .clone();
                         resolved_slots.push((tex_view, sampler));
                     } else {
-                        resolved_slots.push((fallback_view, &self.fallback_sampler));
+                        let fallback_view = match slot {
+                            0 => self.fallback_texture_view.clone(),
+                            1 => self.fallback_normal_texture_view.clone(),
+                            _ => self.fallback_black_texture_view.clone(),
+                        };
+                        resolved_slots.push((fallback_view, self.fallback_sampler.clone()));
                     }
                 }
 
