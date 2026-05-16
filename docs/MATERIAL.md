@@ -1,7 +1,7 @@
 # Material Pipeline, Terrain Generation & glTF Roadmap
 
 **Project**: Personal 3D & Physics Research Framework in Rust
-**Status**: Phase A–C complete, Phase D pending
+**Status**: Phase A–D complete, Phase E planned — see [`docs/plans/PLAN_PHASE_E.md`](plans/PLAN_PHASE_E.md)
 **Covers**: PBR material expansion, normal maps, procedural terrain, glTF loader
 
 ---
@@ -1386,7 +1386,10 @@ materials. Future additions that fit within the existing architecture:
 | Should noise-generated normal maps be baked at startup or regenerated per-frame? | Performance vs. flexibility |
 | Chunk granularity — how large before GPU upload cost dominates? | Phase C chunking design |
 | Erosion simulation — CPU post-process or something more integrated? | Phase C research scope |
-| glTF sparse accessors — support or skip for now? | Phase D scope |
+| glTF sparse accessors — support or skip for now? | Skipped in Phase D; not needed for current sample models |
+| Alpha modes (opaque / mask / blend) | Phase E — see [`docs/plans/PLAN_PHASE_E.md`](plans/PLAN_PHASE_E.md) |
+| Double-sided material rendering | Phase E — see [`docs/plans/PLAN_PHASE_E.md`](plans/PLAN_PHASE_E.md) |
+| Transparent pass ordering and OIT | Phase E open question — see [`docs/plans/PLAN_PHASE_E.md`](plans/PLAN_PHASE_E.md) |
 
 ---
 
