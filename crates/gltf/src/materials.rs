@@ -1,8 +1,8 @@
 //! glTF material adaptation — PBR metallic-roughness → 5-slot MaterialAsset.
 
 use rig_assets::{
-    AssetStore, MaterialAsset, MaterialHandle, MaterialParams, SamplerHandle, ShaderHandle,
-    TextureHandle,
+    AlphaMode, AssetStore, MaterialAsset, MaterialHandle, MaterialParams, SamplerHandle,
+    ShaderHandle, TextureHandle,
 };
 
 /// Adapt all glTF materials, returning handles indexed by glTF material index.
@@ -85,10 +85,21 @@ pub(crate) fn adapt_material(
         ),
     ];
 
+    let alpha_mode = match material.alpha_mode() {
+        gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+        gltf::material::AlphaMode::Mask => AlphaMode::Mask {
+            cutoff: material.alpha_cutoff().unwrap_or(0.5),
+        },
+        gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+    };
+    let double_sided = material.double_sided();
+
     store.add_material(MaterialAsset {
         shader,
         parameters: params,
         textures,
+        alpha_mode,
+        double_sided,
     })
 }
 

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     UpdateContext,
-    rig_assets::{MaterialAsset, MaterialParams, ShaderAsset, mesh_factory},
+    rig_assets::{AlphaMode, MaterialAsset, MaterialParams, ShaderAsset, mesh_factory},
     rig_import::{AssetPath, FilesystemSource, Importer, MeshConfig, TextureConfig},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_overlay::ElementId,
@@ -175,11 +175,13 @@ impl Application for LoadingExampleApp {
             }
             ExampleKind::ShaderLoad => {
                 let shader = importer.import_shader(&AssetPath::new("assets/shaders/phong.wgsl"), ctx.assets)?;
-                let material = ctx.assets.add_material(MaterialAsset {
-                    shader,
-                    parameters: MaterialParams::default(),
-                    textures: vec![],
-                });
+                 let material = ctx.assets.add_material(MaterialAsset {
+                     shader,
+                     parameters: MaterialParams::default(),
+                     textures: vec![],
+                     alpha_mode: AlphaMode::Opaque,
+                     double_sided: false,
+                 });
                 let mesh = ctx.assets.add_mesh(mesh_factory::create_box(1.8, 1.8, 1.8));
                 let node = add_renderable(ctx, "runtime_shader_cube", mesh, material, Vec3::ZERO)?;
                 animated_nodes.push(node);
@@ -208,6 +210,8 @@ impl Application for LoadingExampleApp {
                         ..Default::default()
                     },
                     textures: vec![],
+                    alpha_mode: AlphaMode::Opaque,
+                    double_sided: false,
                 });
                 let mesh = ctx.assets.add_mesh(mesh_factory::create_icosahedron());
                 let node = add_renderable(ctx, "shader_loaded_ico", mesh, material, Vec3::new(2.2, 0.0, 0.0))?;
@@ -315,6 +319,8 @@ fn add_loaded_texture_material(
         shader,
         parameters: MaterialParams::default(),
         textures: vec![Some((texture, sampler))],
+        alpha_mode: AlphaMode::Opaque,
+        double_sided: false,
     }))
 }
 

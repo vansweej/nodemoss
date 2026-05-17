@@ -18,7 +18,8 @@ mod tests {
     use std::sync::Arc;
 
     use rig_assets::{
-        MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat, VertexLayout,
+        AlphaMode, MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat,
+        VertexLayout,
     };
     use rig_math::{BoundingSphere, Quat, Transform, Vec3};
 
@@ -33,6 +34,8 @@ mod tests {
             shader,
             parameters: rig_assets::MaterialParams::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let mesh = assets.add_mesh(MeshAsset {
             vertex_layout: VertexLayout {

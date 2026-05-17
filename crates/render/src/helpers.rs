@@ -24,13 +24,17 @@ pub struct FrameUniforms {
 
 /// Per-material uniform data.
 ///
-/// Layout (32 bytes, `repr(C)`):
-/// - `base_color`: 16 bytes — albedo / tint (RGBA)
-/// - `metallic`:    4 bytes — 0.0 = dielectric, 1.0 = full metal (PBR)
-/// - `roughness`:   4 bytes — 0.0 = mirror-smooth, 1.0 = fully diffuse (PBR)
-/// - `flags`:       4 bytes — shader-defined bit flags (e.g. bit 0 = has texture)
-/// - `triplanar_scale`: 4 bytes — world-space texture repeat scale for triplanar shaders;
-///   0.0 when unused. Also replaces the former `_pad` field — binary layout is unchanged.
+/// Layout (48 bytes, `repr(C)`):
+/// - `base_color`:      16 bytes — albedo / tint (RGBA)
+/// - `metallic`:         4 bytes — 0.0 = dielectric, 1.0 = full metal (PBR)
+/// - `roughness`:        4 bytes — 0.0 = mirror-smooth, 1.0 = fully diffuse (PBR)
+/// - `flags`:            4 bytes — shader-defined bit flags (e.g. bit 0 = has
+///   texture, bit 6 = HAS_ALPHA_MASK)
+/// - `triplanar_scale`:  4 bytes — world-space texture repeat scale for triplanar shaders;
+///   0.0 when unused.
+/// - `alpha_cutoff`:     4 bytes — alpha discard threshold for `AlphaMode::Mask`.
+///   Ignored when `HAS_ALPHA_MASK` flag is not set.
+/// - `_pad`:            12 bytes — alignment padding to 48 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialUniforms {
@@ -39,6 +43,8 @@ pub struct MaterialUniforms {
     pub roughness: f32,
     pub flags: u32,
     pub triplanar_scale: f32,
+    pub alpha_cutoff: f32,
+    pub _pad: [f32; 3],
 }
 
 /// Maximum number of simultaneous lights supported by the Phong shader.
@@ -87,6 +93,8 @@ struct MaterialUniforms {
     roughness: f32,
     flags: u32,
     triplanar_scale: f32,
+    alpha_cutoff: f32,
+    _pad: vec3<f32>,
 }
 
 struct ObjectUniforms {
@@ -168,6 +176,8 @@ struct MaterialUniforms {
     roughness: f32,
     flags: u32,
     triplanar_scale: f32,
+    alpha_cutoff: f32,
+    _pad: vec3<f32>,
 }
 
 struct ObjectUniforms {
@@ -244,6 +254,8 @@ struct MaterialUniforms {
     roughness: f32,
     flags: u32,
     triplanar_scale: f32,
+    alpha_cutoff: f32,
+    _pad: vec3<f32>,
 }
 
 struct ObjectUniforms {
@@ -332,6 +344,8 @@ struct MaterialUniforms {
     roughness: f32,
     flags: u32,
     triplanar_scale: f32,
+    alpha_cutoff: f32,
+    _pad: vec3<f32>,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -448,6 +462,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 pub const PBR_SHADER: &str = r#"
 const PI: f32 = 3.14159265358979323846;
 const MAX_LIGHTS: u32 = 16u;
+/// Bit 6 in MaterialUniforms.flags — discard fragments with alpha < alpha_cutoff.
+const HAS_ALPHA_MASK: u32 = 64u;
 
 struct FrameUniforms {
     view: mat4x4<f32>,
@@ -470,6 +486,8 @@ struct MaterialUniforms {
     roughness: f32,
     flags: u32,
     triplanar_scale: f32,
+    alpha_cutoff: f32,
+    _pad: vec3<f32>,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -642,8 +660,16 @@ fn surface_normal(in: VertexOutput) -> vec3<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var albedo = material.base_color.rgb;
+    var base_alpha = material.base_color.a;
     if (material_flag(0u)) {
-        albedo = albedo * textureSample(t_base_color, s_base_color, in.uv).rgb;
+        let base_sample = textureSample(t_base_color, s_base_color, in.uv);
+        albedo = albedo * base_sample.rgb;
+        base_alpha = base_alpha * base_sample.a;
+    }
+
+    // Alpha mask: discard fragments below the cutoff threshold.
+    if ((material.flags & HAS_ALPHA_MASK) != 0u) && (base_alpha < material.alpha_cutoff) {
+        discard;
     }
 
     var metallic = material.metallic;
@@ -736,7 +762,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Specular highlights can safely exceed 1.0 before this point.
     let ldr_color = aces_tonemap(hdr_color);
 
-    return vec4<f32>(ldr_color, material.base_color.a);
+    return vec4<f32>(ldr_color, base_alpha);
 }
 "#;
 
@@ -770,6 +796,8 @@ struct MaterialUniforms {
     roughness: f32,
     flags: u32,
     triplanar_scale: f32,
+    alpha_cutoff: f32,
+    _pad: vec3<f32>,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -1148,6 +1176,7 @@ pub fn create_depth_texture(
 }
 
 #[cfg(not(tarpaulin_include))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn create_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -1156,16 +1185,32 @@ pub(crate) fn create_pipeline(
     depth_format: Option<wgpu::TextureFormat>,
     vertex_layout: &VertexLayout,
     polygon_mode: wgpu::PolygonMode,
+    alpha_mode: crate::pipeline::PipelineAlphaMode,
+    double_sided: bool,
 ) -> Result<wgpu::RenderPipeline> {
+    use crate::pipeline::PipelineAlphaMode;
+
     let attributes = mesh_vertex_attributes(vertex_layout).map_err(RenderError::Asset)?;
     let buffer_layout = wgpu::VertexBufferLayout {
         array_stride: vertex_layout.array_stride,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &attributes,
     };
+
+    let (blend, depth_write_enabled) = match alpha_mode {
+        PipelineAlphaMode::Blend => (Some(wgpu::BlendState::ALPHA_BLENDING), Some(false)),
+        _ => (Some(wgpu::BlendState::REPLACE), Some(true)),
+    };
+
+    let cull_mode = if double_sided {
+        None
+    } else {
+        Some(wgpu::Face::Back)
+    };
+
     let depth_stencil = depth_format.map(|format| wgpu::DepthStencilState {
         format,
-        depth_write_enabled: Some(true),
+        depth_write_enabled,
         depth_compare: Some(wgpu::CompareFunction::Less),
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
@@ -1186,7 +1231,7 @@ pub(crate) fn create_pipeline(
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -1194,7 +1239,7 @@ pub(crate) fn create_pipeline(
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode,
                 polygon_mode,
                 unclipped_depth: false,
                 conservative: false,

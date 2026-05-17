@@ -19,7 +19,7 @@ use anyhow::Result;
 use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
     UpdateContext,
-    rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
+    rig_assets::{AlphaMode, MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PHONG_SHADER,
     rig_scene::{CameraComponent, LightComponent, LightKind, MeshSource, NodeId, Renderable},
@@ -50,6 +50,8 @@ impl Application for LitSceneApp {
             shader,
             parameters: Default::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         // --- Five solids arranged in a circle --------------------------------

@@ -158,6 +158,8 @@ impl Importer {
                 shader,
                 parameters: material_params(material),
                 textures,
+                alpha_mode: rig_assets::AlphaMode::Opaque,
+                double_sided: false,
             },
             material.name.clone(),
         ))

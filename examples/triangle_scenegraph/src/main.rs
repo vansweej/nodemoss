@@ -6,8 +6,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
     UpdateContext,
     rig_assets::{
-        IndexFormat, MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute, VertexFormat,
-        VertexLayout,
+        AlphaMode, IndexFormat, MaterialAsset, MeshAsset, ShaderAsset, VertexAttribute,
+        VertexFormat, VertexLayout,
     },
     rig_math::{BoundingSphere, Projection, Quat, Transform, Vec3},
     rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
@@ -62,6 +62,8 @@ impl Application for TriangleSceneApp {
             shader,
             parameters: Default::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let mesh = ctx.assets.add_mesh(MeshAsset {
             vertex_layout: VertexLayout {

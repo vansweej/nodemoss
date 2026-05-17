@@ -30,8 +30,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        ChunkCoord, ChunkManager, LodLevel, MaterialAsset, MaterialHandle, MaterialParams,
-        ShaderAsset, mesh_factory, select_lod,
+        AlphaMode, ChunkCoord, ChunkManager, LodLevel, MaterialAsset, MaterialHandle,
+        MaterialParams, ShaderAsset, mesh_factory, select_lod,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PBR_SHADER,
@@ -319,6 +319,8 @@ fn create_lod_materials(ctx: &mut StartupContext<'_>) -> [MaterialHandle; 3] {
                 ..Default::default()
             },
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         }),
         ctx.assets.add_material(MaterialAsset {
             shader,
@@ -329,6 +331,8 @@ fn create_lod_materials(ctx: &mut StartupContext<'_>) -> [MaterialHandle; 3] {
                 ..Default::default()
             },
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         }),
         ctx.assets.add_material(MaterialAsset {
             shader,
@@ -339,6 +343,8 @@ fn create_lod_materials(ctx: &mut StartupContext<'_>) -> [MaterialHandle; 3] {
                 ..Default::default()
             },
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         }),
     ]
 }

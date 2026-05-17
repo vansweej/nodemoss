@@ -23,8 +23,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        AddressMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor, ShaderAsset,
-        TextureAsset, TextureFormat, mesh_factory,
+        AddressMode, AlphaMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor,
+        ShaderAsset, TextureAsset, TextureFormat, mesh_factory,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PBR_SHADER,
@@ -96,6 +96,8 @@ impl Application for TerrainHeightmapApp {
             // Implementation slot order: 0=base color, 1=normal,
             // 2=metallic-roughness, 3=occlusion, 4=emissive.
             textures: vec![None, Some((normal_map, sampler)), None, None, None],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let terrain_node = ctx.scene.create_node("heightmap_terrain");

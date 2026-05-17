@@ -29,7 +29,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        ChunkCoord, ChunkManager, MaterialAsset, MaterialParams, ShaderAsset, mesh_factory,
+        AlphaMode, ChunkCoord, ChunkManager, MaterialAsset, MaterialParams, ShaderAsset,
+        mesh_factory,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PBR_SHADER,
@@ -100,6 +101,8 @@ impl Application for TerrainChunksApp {
                 ..Default::default()
             },
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let warped_height = make_warped_height_fn();

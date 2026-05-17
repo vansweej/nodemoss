@@ -20,8 +20,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        AddressMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor, ShaderAsset,
-        TextureAsset, TextureFormat, mesh_factory,
+        AddressMode, AlphaMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor,
+        ShaderAsset, TextureAsset, TextureFormat, mesh_factory,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PBR_SHADER,
@@ -83,11 +83,15 @@ impl Application for NormalMapDemo {
             shader,
             parameters: material_params,
             textures: vec![Some((base_color, sampler))],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let normal_mapped_material = ctx.assets.add_material(MaterialAsset {
             shader,
             parameters: material_params,
             textures: vec![Some((base_color, sampler)), Some((normal_map, sampler))],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let plane_mesh = ctx

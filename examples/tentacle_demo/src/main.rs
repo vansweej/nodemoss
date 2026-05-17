@@ -26,9 +26,10 @@ use rig_app::{
     TrackBall, UpdateContext,
     rig_anim::AnimationPlayer,
     rig_assets::{
-        AnimationChannel, AnimationClip, ChannelProperty, DynamicMeshData, DynamicMeshId,
-        IndexFormat, KeyframeSampler, KeyframeValues, MaterialAsset, MeshAsset, MeshSource,
-        ShaderAsset, SkinAsset, SkinWeights, VertexAttribute, VertexFormat, VertexLayout,
+        AlphaMode, AnimationChannel, AnimationClip, ChannelProperty, DynamicMeshData,
+        DynamicMeshId, IndexFormat, KeyframeSampler, KeyframeValues, MaterialAsset, MeshAsset,
+        MeshSource, ShaderAsset, SkinAsset, SkinWeights, VertexAttribute, VertexFormat,
+        VertexLayout,
     },
     rig_math::{BoundingSphere, Interpolation, Mat4, Projection, Quat, Transform, Vec3},
     rig_render::NORMAL_COLOR_SHADER,
@@ -70,6 +71,8 @@ impl Application for TentacleDemo {
             shader,
             parameters: Default::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let mesh_handle = ctx.assets.add_mesh(create_cylinder_mesh());

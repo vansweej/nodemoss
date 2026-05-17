@@ -31,7 +31,7 @@ use anyhow::{Context, Result, bail};
 use rig_app::{
     Application, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext, TrackBall,
     UpdateContext,
-    rig_assets::{MaterialAsset, MaterialParams, ShaderAsset},
+    rig_assets::{AlphaMode, MaterialAsset, MaterialParams, ShaderAsset},
     rig_import::{AssetPath, FilesystemSource, Importer, MeshConfig},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_overlay::ElementId,
@@ -247,6 +247,8 @@ impl Application for ModelGalleryApp {
             shader,
             parameters: fallback_params(spec.textured),
             textures: Vec::new(),
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let loaded = importer.import_mesh(

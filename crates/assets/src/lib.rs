@@ -286,6 +286,23 @@ impl Default for MaterialParams {
     }
 }
 
+/// Alpha blending mode for a material, matching the glTF 2.0 `alphaMode` field.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum AlphaMode {
+    /// Alpha channel is ignored; the surface is fully opaque. Default.
+    #[default]
+    Opaque,
+    /// Fragments with `alpha < cutoff` are discarded; no blending. Useful for
+    /// foliage, fences, and other cutout surfaces.
+    Mask {
+        /// Alpha threshold in `[0, 1]`. Fragments below this value are discarded.
+        cutoff: f32,
+    },
+    /// Standard alpha blending. Requires back-to-front draw order to avoid
+    /// transparency artefacts. Depth writes are disabled for blend materials.
+    Blend,
+}
+
 #[derive(Clone, Debug)]
 pub struct MaterialAsset {
     pub shader: ShaderHandle,
@@ -293,6 +310,11 @@ pub struct MaterialAsset {
     /// PBR texture slots: 0=base color, 1=normal, 2=metallic-roughness,
     /// 3=occlusion, 4=emissive. Missing slots use renderer fallback textures.
     pub textures: Vec<Option<(TextureHandle, SamplerHandle)>>,
+    /// Alpha blending mode. Default: `AlphaMode::Opaque`.
+    pub alpha_mode: AlphaMode,
+    /// When `true`, back-face culling is disabled for this material.
+    /// Matches the glTF `material.doubleSided` field. Default: `false`.
+    pub double_sided: bool,
 }
 
 impl MaterialAsset {
@@ -305,6 +327,8 @@ impl MaterialAsset {
             shader,
             parameters,
             textures: Vec::new(),
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         }
     }
 }
@@ -685,11 +709,15 @@ mod tests {
             shader,
             parameters: MaterialParams::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let second = store.add_material(MaterialAsset {
             shader,
             parameters: MaterialParams::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         assert_eq!(first.index(), 0);
@@ -890,6 +918,8 @@ mod tests {
             shader,
             parameters: MaterialParams::default(),
             textures: vec![Some((tex, samp))],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let retrieved = store.material(mat).unwrap();

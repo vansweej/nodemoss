@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use rig_assets::{AssetStore, DynamicMeshId, MaterialAsset, MeshSource, ShaderHandle};
+use rig_assets::{AlphaMode, AssetStore, DynamicMeshId, MaterialAsset, MeshSource, ShaderHandle};
 use rig_gpu::{Frame, GpuContext};
 use rig_math::Mat4;
 use rig_scene::{
@@ -16,7 +16,7 @@ use crate::helpers::{
     DEPTH_FORMAT, FrameUniforms, LightsBuffer, MAX_LIGHTS, MaterialUniforms,
     camera_projection_view, create_depth_texture, create_pipeline, decompose_pose,
 };
-use crate::pipeline::PipelineKey;
+use crate::pipeline::{PipelineAlphaMode, PipelineKey};
 use crate::{RenderError, RenderTarget, RenderTargetDescriptor, Result};
 
 /// GPU vertex + index buffers for a single dynamic mesh.
@@ -453,7 +453,7 @@ impl Renderer {
         gpu.queue
             .write_buffer(&self.lights_buffer, 0, bytemuck::bytes_of(&lights_buf));
 
-        let sorted_indices = self.prepare_draw_order(gpu, assets, draw_list, pv);
+        let (sorted_indices, blend_start) = self.prepare_draw_order(gpu, assets, draw_list, pv);
 
         // Create frame bind group (group 0) — references the frame uniform buffer and lights
         let frame_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -471,31 +471,76 @@ impl Renderer {
             ],
         });
 
+        let depth_view = self.depth_view.clone();
+        let color_format = gpu.surface_format();
+
+        // Opaque + mask pass — clear colour and depth, depth writes on.
         self.record_scene_pass(
             gpu,
             &mut frame.encoder,
             &frame.view,
-            Some(&self.depth_view.clone()),
-            wgpu::Color::BLACK,
+            Some(&depth_view),
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            wgpu::LoadOp::Clear(1.0),
             assets,
             draw_list,
-            &sorted_indices,
+            &sorted_indices[..blend_start],
+            0,
             &frame_bind_group,
-            gpu.surface_format(),
+            color_format,
             Some(DEPTH_FORMAT),
-        )
+        )?;
+
+        // Blend pass — load existing colour and depth, depth writes off (handled by pipeline).
+        if blend_start < sorted_indices.len() {
+            self.record_scene_pass(
+                gpu,
+                &mut frame.encoder,
+                &frame.view,
+                Some(&depth_view),
+                wgpu::LoadOp::Load,
+                wgpu::LoadOp::Load,
+                assets,
+                draw_list,
+                &sorted_indices[blend_start..],
+                blend_start,
+                &frame_bind_group,
+                color_format,
+                Some(DEPTH_FORMAT),
+            )?;
+        }
+
+        Ok(())
     }
 
     #[cfg(not(tarpaulin_include))]
+    /// Sort the draw list and upload per-object uniforms.
+    ///
+    /// Returns `(sorted_indices, blend_start)` where `blend_start` is the
+    /// index into `sorted_indices` at which `AlphaMode::Blend` objects begin.
+    /// Opaque and mask objects come first (sorted by shader+mesh for state
+    /// minimisation); blend objects follow sorted back-to-front by world-Z so
+    /// that transparency composites correctly.
     fn prepare_draw_order(
         &mut self,
         gpu: &GpuContext,
         assets: &AssetStore,
         draw_list: &[ExtractedRenderable],
-        _pv: Mat4,
-    ) -> Vec<usize> {
-        let mut sorted_indices: Vec<usize> = (0..draw_list.len()).collect();
-        sorted_indices.sort_by_key(|&i| {
+        pv: Mat4,
+    ) -> (Vec<usize>, usize) {
+        let is_blend = |i: usize| -> bool {
+            assets
+                .material(draw_list[i].material)
+                .map(|m| matches!(m.alpha_mode, AlphaMode::Blend))
+                .unwrap_or(false)
+        };
+
+        // Split into opaque/mask and blend.
+        let mut opaque: Vec<usize> = (0..draw_list.len()).filter(|&i| !is_blend(i)).collect();
+        let mut blend: Vec<usize> = (0..draw_list.len()).filter(|&i| is_blend(i)).collect();
+
+        // Opaque: sort by shader+mesh to minimise pipeline/buffer switches.
+        opaque.sort_by_key(|&i| {
             let object = &draw_list[i];
             let shader_key = assets
                 .material(object.material)
@@ -503,7 +548,19 @@ impl Renderer {
                 .unwrap_or_else(|_| ShaderHandle::from_raw(u32::MAX));
             (shader_key, object.mesh)
         });
-        // Upload only world matrices (PV is now in FrameUniforms)
+
+        // Blend: sort back-to-front by projected bound centre.
+        blend.sort_by(|&a, &b| {
+            let z_a = (pv * draw_list[a].world_bound.center.extend(1.0)).z;
+            let z_b = (pv * draw_list[b].world_bound.center.extend(1.0)).z;
+            z_b.partial_cmp(&z_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let blend_start = opaque.len();
+        let mut sorted_indices = opaque;
+        sorted_indices.extend(blend);
+
+        // Upload per-object world matrices in draw order.
         let object_uniforms: Vec<_> = sorted_indices
             .iter()
             .map(|&i| ObjectUniforms {
@@ -516,7 +573,7 @@ impl Renderer {
             &self.object_bind_group_layout,
             &object_uniforms,
         );
-        sorted_indices
+        (sorted_indices, blend_start)
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -527,10 +584,15 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         color_view: &wgpu::TextureView,
         depth_view: Option<&wgpu::TextureView>,
-        clear_color: wgpu::Color,
+        color_load_op: wgpu::LoadOp<wgpu::Color>,
+        depth_load_op: wgpu::LoadOp<f32>,
         assets: &AssetStore,
         draw_list: &[ExtractedRenderable],
         sorted_indices: &[usize],
+        // Offset into the per-object uniform ring buffer — must match the
+        // position of the first element of `sorted_indices` in the full
+        // sorted list that was passed to `prepare_draw_order`.
+        uniform_base: usize,
         frame_bind_group: &wgpu::BindGroup,
         color_format: wgpu::TextureFormat,
         depth_format: Option<wgpu::TextureFormat>,
@@ -538,7 +600,7 @@ impl Renderer {
         let depth_attachment = depth_view.map(|view| wgpu::RenderPassDepthStencilAttachment {
             view,
             depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
+                load: depth_load_op,
                 store: wgpu::StoreOp::Store,
             }),
             stencil_ops: None,
@@ -550,7 +612,7 @@ impl Renderer {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
+                    load: color_load_op,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -568,7 +630,8 @@ impl Renderer {
             wgpu::PolygonMode::Fill
         };
 
-        for (uniform_index, &draw_index) in sorted_indices.iter().enumerate() {
+        for (local_index, &draw_index) in sorted_indices.iter().enumerate() {
+            let uniform_index = uniform_base + local_index;
             let object = &draw_list[draw_index];
             let material = assets
                 .material(object.material)
@@ -614,6 +677,8 @@ impl Renderer {
                 color_format,
                 depth_format,
                 polygon_mode,
+                alpha_mode: PipelineAlphaMode::from(material.alpha_mode),
+                double_sided: material.double_sided,
             };
             let pipeline = self.pipeline_for_key(gpu, &pipeline_key, shader)?;
             if current_pipeline.as_ref() != Some(&pipeline_key) {
@@ -633,6 +698,16 @@ impl Renderer {
             // safely without branching).
             let material_bind_group = {
                 let params = &material.parameters;
+                // Bit 6 (0x40) = HAS_ALPHA_MASK — signals the shader to discard
+                // fragments below alpha_cutoff.
+                let alpha_flag = match material.alpha_mode {
+                    AlphaMode::Mask { .. } => 0x40_u32,
+                    _ => 0,
+                };
+                let alpha_cutoff = match material.alpha_mode {
+                    AlphaMode::Mask { cutoff } => cutoff,
+                    _ => 1.0,
+                };
                 let flags = material
                     .textures
                     .iter()
@@ -649,8 +724,10 @@ impl Renderer {
                     base_color: params.diffuse,
                     metallic: params.metallic,
                     roughness: params.roughness,
-                    flags: flags | params.custom_flags,
+                    flags: flags | params.custom_flags | alpha_flag,
                     triplanar_scale: params.triplanar_scale,
+                    alpha_cutoff,
+                    _pad: [0.0; 3],
                 };
                 let mat_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("material uniform buffer"),
@@ -756,6 +833,8 @@ impl Renderer {
             key.depth_format,
             &key.vertex_layout,
             key.polygon_mode,
+            key.alpha_mode,
+            key.double_sided,
         )?;
         self.pipelines.insert(key.clone(), pipeline.clone());
         Ok(pipeline)
@@ -871,7 +950,7 @@ impl Renderer {
         let planes = rig_scene::frustum_planes_from_projection_view(pv);
         let draw_list = scene.extract_renderables_culled(&planes);
         let lights = scene.extract_lights();
-        let sorted_indices = self.prepare_draw_order(gpu, assets, &draw_list, pv);
+        let (sorted_indices, blend_start) = self.prepare_draw_order(gpu, assets, &draw_list, pv);
 
         // Pack and upload lights
         let lights_buf = pack_lights_buffer(&lights);
@@ -898,24 +977,44 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("rig offscreen encoder"),
             });
+        let clear = wgpu::Color {
+            r: 0.05,
+            g: 0.05,
+            b: 0.05,
+            a: 1.0,
+        };
         self.record_scene_pass(
             gpu,
             &mut encoder,
             &target.color_view,
             target.depth_view.as_ref(),
-            wgpu::Color {
-                r: 0.05,
-                g: 0.05,
-                b: 0.05,
-                a: 1.0,
-            },
+            wgpu::LoadOp::Clear(clear),
+            wgpu::LoadOp::Clear(1.0),
             assets,
             &draw_list,
-            &sorted_indices,
+            &sorted_indices[..blend_start],
+            0,
             &frame_bind_group,
             target.color_format,
             target.depth_format,
         )?;
+        if blend_start < sorted_indices.len() {
+            self.record_scene_pass(
+                gpu,
+                &mut encoder,
+                &target.color_view,
+                target.depth_view.as_ref(),
+                wgpu::LoadOp::Load,
+                wgpu::LoadOp::Load,
+                assets,
+                &draw_list,
+                &sorted_indices[blend_start..],
+                blend_start,
+                &frame_bind_group,
+                target.color_format,
+                target.depth_format,
+            )?;
+        }
         gpu.queue.submit(std::iter::once(encoder.finish()));
         Ok(())
     }

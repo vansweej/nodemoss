@@ -35,7 +35,7 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        DynamicMeshData, DynamicMeshId, MaterialAsset, MaterialParams, ShaderAsset,
+        AlphaMode, DynamicMeshData, DynamicMeshId, MaterialAsset, MaterialParams, ShaderAsset,
         marching_cubes::{GridParams, extract},
     },
     rig_math::{Projection, Quat, Transform, Vec3},
@@ -134,6 +134,8 @@ impl Application for TerrainMcApp {
                 ..Default::default()
             },
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         // ── Scene node ────────────────────────────────────────────────────────

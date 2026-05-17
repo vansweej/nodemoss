@@ -20,8 +20,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
     UpdateContext,
     rig_assets::{
-        AddressMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor, ShaderAsset,
-        TextureAsset, TextureFormat, mesh_factory,
+        AddressMode, AlphaMode, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor,
+        ShaderAsset, TextureAsset, TextureFormat, mesh_factory,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::TEXTURED_SHADER,
@@ -76,6 +76,8 @@ impl Application for TexturedMeshApp {
             shader,
             parameters: MaterialParams::default(),
             textures: vec![Some((tex_handle, samp_handle))],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         // ── Sphere mesh ───────────────────────────────────────────────────────

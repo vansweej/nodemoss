@@ -31,8 +31,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        AddressMode, ErosionParams, FilterMode, MaterialAsset, MaterialParams, SamplerDescriptor,
-        ShaderAsset, TextureAsset, TextureFormat, erode, mesh_factory,
+        AddressMode, AlphaMode, ErosionParams, FilterMode, MaterialAsset, MaterialParams,
+        SamplerDescriptor, ShaderAsset, TextureAsset, TextureFormat, erode, mesh_factory,
     },
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::PBR_SHADER,
@@ -143,6 +143,8 @@ impl Application for TerrainErosionApp {
                 ..Default::default()
             },
             textures: vec![None, Some((normal_map, sampler)), None, None, None],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let terrain_node = ctx.scene.create_node("eroded_terrain");

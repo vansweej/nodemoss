@@ -16,7 +16,7 @@ use anyhow::Result;
 use rig_app::{
     Application, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext, TrackBall,
     UpdateContext,
-    rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
+    rig_assets::{AlphaMode, MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_render::NORMAL_COLOR_SHADER,
     rig_scene::{CameraComponent, MeshSource, NodeId, Renderable},
@@ -41,6 +41,8 @@ impl Application for TrackballApp {
             shader,
             parameters: Default::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         // Icosahedron mesh at origin

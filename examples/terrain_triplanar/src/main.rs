@@ -29,8 +29,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     TrackBall, UpdateContext,
     rig_assets::{
-        AddressMode, DynamicMeshData, DynamicMeshId, FilterMode, MaterialAsset, MaterialParams,
-        SamplerDescriptor, ShaderAsset, TextureAsset, TextureFormat,
+        AddressMode, AlphaMode, DynamicMeshData, DynamicMeshId, FilterMode, MaterialAsset,
+        MaterialParams, SamplerDescriptor, ShaderAsset, TextureAsset, TextureFormat,
         marching_cubes::{GridParams, extract},
     },
     rig_math::{Projection, Quat, Transform, Vec3},
@@ -133,6 +133,8 @@ impl Application for TerrainTriplanarApp {
                 ..Default::default()
             },
             textures: vec![Some((rock_tex, sampler)), None, None, None, None],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let terrain_node = ctx.scene.create_node("terrain_triplanar");

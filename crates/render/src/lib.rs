@@ -69,7 +69,7 @@ mod tests {
         aligned_uniform_size, camera_projection_view, decompose_pose, encode_object_uniforms,
         mesh_vertex_attributes, object_uniform_offset,
     };
-    use crate::pipeline::PipelineKey;
+    use crate::pipeline::{PipelineAlphaMode, PipelineKey};
     use rig_assets::{MeshAsset, VertexFormat};
     use rig_math::Mat4;
 
@@ -245,6 +245,8 @@ mod tests {
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: None,
             polygon_mode: wgpu::PolygonMode::Fill,
+            alpha_mode: PipelineAlphaMode::Opaque,
+            double_sided: false,
         };
         let key_with_depth = PipelineKey {
             shader,
@@ -252,6 +254,8 @@ mod tests {
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: Some(wgpu::TextureFormat::Depth32Float),
             polygon_mode: wgpu::PolygonMode::Fill,
+            alpha_mode: PipelineAlphaMode::Opaque,
+            double_sided: false,
         };
         let key_diff_depth = PipelineKey {
             shader,
@@ -259,6 +263,8 @@ mod tests {
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: Some(wgpu::TextureFormat::Depth24Plus),
             polygon_mode: wgpu::PolygonMode::Fill,
+            alpha_mode: PipelineAlphaMode::Opaque,
+            double_sided: false,
         };
         assert_ne!(key_no_depth, key_with_depth);
         assert_ne!(key_with_depth, key_diff_depth);
@@ -279,6 +285,8 @@ mod tests {
             color_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: None,
             polygon_mode: wgpu::PolygonMode::Fill,
+            alpha_mode: PipelineAlphaMode::Opaque,
+            double_sided: false,
         };
         let key_rgba16 = PipelineKey {
             shader,
@@ -286,6 +294,8 @@ mod tests {
             color_format: wgpu::TextureFormat::Rgba16Float,
             depth_format: None,
             polygon_mode: wgpu::PolygonMode::Fill,
+            alpha_mode: PipelineAlphaMode::Opaque,
+            double_sided: false,
         };
         assert_ne!(key_bgra, key_rgba16);
     }
@@ -379,7 +389,7 @@ mod tests {
 
     #[test]
     fn draw_list_sorted_by_shader_then_mesh() {
-        use rig_assets::{AssetStore, MaterialAsset, MaterialParams, ShaderAsset};
+        use rig_assets::{AlphaMode, AssetStore, MaterialAsset, MaterialParams, ShaderAsset};
         use rig_math::BoundingSphere;
         use rig_scene::ExtractedRenderable;
 
@@ -394,16 +404,22 @@ mod tests {
             shader: shader_a,
             parameters: MaterialParams::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let material_b1 = assets.add_material(MaterialAsset {
             shader: shader_b,
             parameters: MaterialParams::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let material_a2 = assets.add_material(MaterialAsset {
             shader: shader_a,
             parameters: MaterialParams::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
         let mesh_x = assets.add_mesh(sample_mesh());
         let mesh_y = {
@@ -693,8 +709,9 @@ mod tests {
     #[test]
     fn material_uniforms_size_is_correct() {
         use std::mem::size_of;
-        // MaterialUniforms: base_color(16) + metallic(4) + roughness(4) + flags(4) + pad(4) = 32 bytes
-        assert_eq!(size_of::<MaterialUniforms>(), 32);
+        // MaterialUniforms: base_color(16) + metallic(4) + roughness(4) +
+        // flags(4) + triplanar_scale(4) + alpha_cutoff(4) + pad(12) = 48 bytes
+        assert_eq!(size_of::<MaterialUniforms>(), 48);
     }
 
     #[test]

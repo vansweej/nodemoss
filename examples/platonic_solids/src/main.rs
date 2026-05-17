@@ -32,7 +32,7 @@ use anyhow::Result;
 use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, Side, StartupContext,
     UpdateContext,
-    rig_assets::{MaterialAsset, ShaderAsset, mesh_factory},
+    rig_assets::{AlphaMode, MaterialAsset, ShaderAsset, mesh_factory},
     rig_math::{Projection, Quat, Transform, Vec3},
     rig_overlay::ElementId,
     rig_render::NORMAL_COLOR_SHADER,
@@ -88,6 +88,8 @@ impl Application for PlatonicApp {
             shader,
             parameters: Default::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         // --- Mesh assets — one per solid -------------------------------------

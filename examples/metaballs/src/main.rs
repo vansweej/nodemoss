@@ -26,7 +26,8 @@ use rig_app::{
     Application, CameraRig, DebugHud, OverlayUpdateContext, RenderContext, StartupContext,
     UpdateContext,
     rig_assets::{
-        DynamicMeshData, DynamicMeshId, MaterialAsset, MaterialParams, MeshSource, ShaderAsset,
+        AlphaMode, DynamicMeshData, DynamicMeshId, MaterialAsset, MaterialParams, MeshSource,
+        ShaderAsset,
         marching_cubes::{GridParams, extract},
     },
     rig_math::{Projection, Quat, Transform, Vec3},
@@ -133,6 +134,8 @@ impl Application for MetaballsApp {
                 ..Default::default()
             },
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         // --- Dynamic mesh slot -----------------------------------------------

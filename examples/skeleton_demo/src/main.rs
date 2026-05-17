@@ -24,8 +24,8 @@ use rig_app::{
     UpdateContext,
     rig_anim::AnimationPlayer,
     rig_assets::{
-        AnimationChannel, AnimationClip, ChannelProperty, KeyframeSampler, KeyframeValues,
-        MaterialAsset, ShaderAsset, mesh_factory,
+        AlphaMode, AnimationChannel, AnimationClip, ChannelProperty, KeyframeSampler,
+        KeyframeValues, MaterialAsset, ShaderAsset, mesh_factory,
     },
     rig_math::{Interpolation, Projection, Quat, Transform, Vec3},
     rig_overlay::ElementId,
@@ -58,6 +58,8 @@ impl Application for SkeletonDemo {
             shader,
             parameters: Default::default(),
             textures: vec![],
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
         });
 
         let base = add_arm_segment(ctx, "base", None, Vec3::ZERO, (0.7, 0.25, 0.7), material)?;
