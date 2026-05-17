@@ -94,7 +94,6 @@ struct MaterialUniforms {
     flags: u32,
     triplanar_scale: f32,
     alpha_cutoff: f32,
-    _pad: vec3<f32>,
 }
 
 struct ObjectUniforms {
@@ -177,7 +176,6 @@ struct MaterialUniforms {
     flags: u32,
     triplanar_scale: f32,
     alpha_cutoff: f32,
-    _pad: vec3<f32>,
 }
 
 struct ObjectUniforms {
@@ -255,7 +253,6 @@ struct MaterialUniforms {
     flags: u32,
     triplanar_scale: f32,
     alpha_cutoff: f32,
-    _pad: vec3<f32>,
 }
 
 struct ObjectUniforms {
@@ -345,7 +342,6 @@ struct MaterialUniforms {
     flags: u32,
     triplanar_scale: f32,
     alpha_cutoff: f32,
-    _pad: vec3<f32>,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -487,7 +483,6 @@ struct MaterialUniforms {
     flags: u32,
     triplanar_scale: f32,
     alpha_cutoff: f32,
-    _pad: vec3<f32>,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
@@ -797,7 +792,6 @@ struct MaterialUniforms {
     flags: u32,
     triplanar_scale: f32,
     alpha_cutoff: f32,
-    _pad: vec3<f32>,
 }
 struct ObjectUniforms {
     world: mat4x4<f32>,
