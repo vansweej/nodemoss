@@ -14,6 +14,7 @@ members = [
     "crates/skin",
     "crates/gltf",
     "tools/gen_test_textures",
+    "examples/shared",
     "examples/hello_triangle",
     "examples/triangle_scenegraph",
     "examples/mesh_showcase",
@@ -67,6 +68,7 @@ rig-import = { path = "crates/import" }
 rig-anim = { path = "crates/anim" }
 rig-skin = { path = "crates/skin" }
 rig-gltf = { path = "crates/gltf" }
+example-shared = { path = "examples/shared" }
 
 # External dependencies
 wgpu = "29.0.1"
