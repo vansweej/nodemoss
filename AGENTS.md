@@ -32,29 +32,16 @@ graphics/                       # workspace root (this directory)
     overlay/                    # rig-overlay — 2D text overlay (glyphon), retained ElementRegistry
     app/                        # rig-app     — Application trait, runner, startup/update/render/overlay contexts
   examples/
-    hello_triangle/             # milestone 1 — colored triangle (raw wgpu + winit, no framework)
-    triangle_scenegraph/        # milestone 2 — triangle via scene graph + Application trait
-    mesh_showcase/              # milestone 3 — MeshFactory primitives
-    multi_object/               # milestone 3 — multiple objects, camera rig
-    offscreen_demo/             # milestone 3 — offscreen render target + blit
-    platonic_solids/            # milestone 3 — five animated solids, fly-camera, overlay
-    skeleton_demo/              # milestone 9 — rigid skeleton animation via AnimationPlayer
-    tentacle_demo/              # milestone 10 — CPU skinning, 4-bone cylinder
-    obj_load/                   # milestone 7 — geometry-only OBJ loading
-    obj_textured/               # milestone 7 — OBJ + MTL diffuse texture loading
-    multi_obj/                  # milestone 7 — importer cache demonstration
-    texture_load/               # milestone 7 — texture file on procedural mesh
-    texture_formats/            # milestone 7 — PNG/JPEG/TGA loading
-    shader_load/                # milestone 7 — runtime WGSL loading
-    asset_showcase/             # milestone 7 — combined loading showcase
-    model_gallery/              # milestone 8 — CLI model viewer over curated assets
-    terrain_warp/               # milestone 13 — domain-warped heightmap
-    terrain_erosion/            # milestone 13 — hydraulic erosion
-    terrain_triplanar/          # milestone 13 — triplanar UV-free MC texturing
-    terrain_chunks/             # milestone 13 — camera-driven chunked terrain
-    terrain_lod/                # milestone 13 — distance-based level of detail
-    gltf_demo/                  # glTF static/PBR model loading
-    gltf_skinned_demo/          # glTF CPU skinning runtime path
+    shared/                         # example-shared — shared loading utilities lib crate
+    basics/                         # hello_triangle, triangle_scenegraph, trackball_demo
+    geometry/                       # mesh_showcase, multi_object, platonic_solids
+    techniques/                     # offscreen_demo
+    materials/                      # textured_mesh, lit_scene, normal_map_demo
+    loading/                        # obj_load, obj_textured, multi_obj, texture_load, texture_formats, shader_load, asset_showcase, model_gallery
+    animation/                      # skeleton_demo, tentacle_demo
+    terrain/                        # marching_cubes (terrain_mc), heightmap, warp, erosion, triplanar, chunks, lod
+    gltf/                           # demo (gltf_demo), skinned (gltf_skinned_demo)
+    procedural/                     # metaballs, voice_metaballs
   GeometricTools/               # reference C++ codebase (NOT compiled by Rust)
 ```
 
@@ -186,24 +173,24 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 2. **Triangle via scene graph** — all core crates wired up, same triangle rendered through SceneGraph + AssetStore + Renderer + Application ✓
 3. **Incremental features** — camera controls, frustum culling, lights, materials, MeshFactory, textures, multiple objects ✓
    - MeshFactory: box, sphere, plane, platonic solids (tetrahedron, hexahedron, octahedron, dodecahedron, icosahedron) ✓
-   - `platonic_solids` example: five solids orbiting with spin animation and fly-camera ✓
+    - `examples/geometry/platonic_solids` example: five solids orbiting with spin animation and fly-camera ✓
    - Frustum culling: `extract_renderables_culled` wired as default render path ✓
 4. **Overlay system** — `rig-gpu` crate, `rig-overlay` crate (glyphon), FPS counters in all examples, F3 toggle ✓
-5. **Texture support** — 3-group bind layout (frame/material/object), GPU texture/sampler cache, `TEXTURED_SHADER`, `textured_mesh` example ✓
-6. **Lights + Phong shading** — `LightUniform`/`LightsBuffer` types, group 0 binding 1 (lights buffer), `pack_lights_buffer()`, `PHONG_SHADER` (Blinn-Phong), `lit_scene` example ✓
+5. **Texture support** — 3-group bind layout (frame/material/object), GPU texture/sampler cache, `TEXTURED_SHADER`, `examples/materials/textured_mesh` example ✓
+6. **Lights + Phong shading** — `LightUniform`/`LightsBuffer` types, group 0 binding 1 (lights buffer), `pack_lights_buffer()`, `PHONG_SHADER` (Blinn-Phong), `examples/materials/lit_scene` example ✓
 7. **Asset loading** — `rig-loader`, `rig-import`, OBJ/MTL, PNG/JPEG/TGA, runtime WGSL, seven progressive examples ✓
 8. **Asset library + PLY loader** — Git LFS, curated OBJ model library (Stanford,
    Keenan Crane CC0), ambientCG PBR texture scaffolding, hand-rolled ASCII PLY
-   decoder in rig-loader, combined BoundingSphere on LoadedModel,
-   model_gallery CLI viewer ✓
+    decoder in rig-loader, combined BoundingSphere on LoadedModel,
+    examples/loading/model_gallery CLI viewer ✓
 9. **Rigid skeleton animation** — `rig-anim` crate, `AnimationClip` assets,
    cached keyframe sampling, bind-time channel resolution to scene nodes,
-   `AnimationPlayer` evaluation into local transforms, `skeleton_demo` robot arm ✓
+    `AnimationPlayer` evaluation into local transforms, `examples/animation/skeleton_demo` robot arm ✓
 10. **CPU skinning** — `rig-skin` crate, `SkinEvaluator`, `SkinAsset`/`SkinWeights`
     asset types, 8-influence LBS with inverse-transpose normal skinning,
-    `DynamicMesh` output path, `tentacle_demo` example ✓
+     `DynamicMesh` output path, `examples/animation/tentacle_demo` example ✓
 11. **Material system + normal maps** — `rig-assets::tangent_utils` (mikktspace),
-    48-byte vertex layout, 5-slot PBR bind group, `normal_map_demo` example ✓
+     48-byte vertex layout, 5-slot PBR bind group, `examples/materials/normal_map_demo` example ✓
 12. **Procedural terrain** — `noise` crate in examples, marching cubes terrain,
     heightmap terrain, procedural normal maps, two terrain examples ✓
 13. **Terrain sub-problems** — domain warping, hydraulic erosion,
@@ -211,7 +198,7 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
     five progressive terrain examples ✓
 14. **glTF loading and runtime validation** — `rig-gltf`, PBR material mapping,
     cameras/lights, multi-scene selection, morph target loading, CPU skinning
-    descriptors, `gltf_demo`, and `gltf_skinned_demo` ✓
+     descriptors, `examples/gltf/demo`, and `examples/gltf/skinned` ✓
 
 ## Documentation
 

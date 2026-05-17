@@ -156,27 +156,16 @@ graphics/                           # workspace root
         runner.rs                   # run(), Runner, RunnerState, winit event loop
         timer.rs                    # FrameTimer, delta time, FPS tracking
   examples/
-    hello_triangle/                 # milestone 1 (raw wgpu+winit)
-      Cargo.toml
-      src/main.rs
-    triangle_scenegraph/            # milestone 2
-      Cargo.toml
-      src/main.rs
-    mesh_showcase/                  # milestone 3+ - procedural mesh primitives
-    multi_object/                   # milestone 3+ - multiple objects, camera rig
-    offscreen_demo/                 # milestone 3+ - offscreen render target + blit
-    platonic_solids/                # milestone 3+ - animated solids, fly-camera, overlay
-    skeleton_demo/                  # milestone 9 - rigid skeleton animation
-    tentacle_demo/                  # milestone 10 - CPU skinning, 4-bone cylinder
-    obj_load/                       # milestone 7 - geometry-only OBJ loading
-    obj_textured/                   # milestone 7 - OBJ + MTL diffuse texture loading
-    multi_obj/                      # milestone 7 - importer cache demonstration
-    texture_load/                   # milestone 7 - texture file on procedural mesh
-    texture_formats/                # milestone 7 - PNG/JPEG/TGA loading
-    shader_load/                    # milestone 7 - runtime WGSL loading
-    asset_showcase/                 # milestone 7 - combined loading showcase
-    gltf_demo/                      # glTF static/PBR model loading
-    gltf_skinned_demo/              # glTF CPU skinning runtime validation
+    shared/                         # example-shared — shared loading utilities lib crate
+    basics/                         # hello_triangle, triangle_scenegraph, trackball_demo
+    geometry/                       # mesh_showcase, multi_object, platonic_solids
+    techniques/                     # offscreen_demo
+    materials/                      # textured_mesh, lit_scene, normal_map_demo
+    loading/                        # obj_load, obj_textured, multi_obj, texture_load, texture_formats, shader_load, asset_showcase, model_gallery
+    animation/                      # skeleton_demo, tentacle_demo
+    terrain/                        # marching_cubes (terrain_mc), heightmap, warp, erosion, triplanar, chunks, lod
+    gltf/                           # demo (gltf_demo), skinned (gltf_skinned_demo)
+    procedural/                     # metaballs, voice_metaballs
   GeometricTools/                   # reference only, not part of the workspace
 ```
 
@@ -686,7 +675,7 @@ CPU Marching Cubes isosurface extraction integrated into the scene graph:
   field on `PipelineKey`; `wireframe: bool` + `toggle_wireframe()` on `Renderer`; draw dispatch
   branches on `MeshSource::Static` vs `Dynamic`.
 - **`rig-app`**: F4 key → `renderer.toggle_wireframe(gpu.supports_wireframe)` in runner.
-- **`examples/metaballs`**: 4 bouncing metaballs, 48³ grid, Blinn-Phong shading, fly-camera,
+- **`examples/procedural/metaballs`**: 4 bouncing metaballs, 48³ grid, Blinn-Phong shading, fly-camera,
   F4 wireframe toggle, overlay HUD.
 
 See `docs/METABALLS.md` for algorithm details and the 4-direction roadmap.
@@ -704,7 +693,7 @@ resource model:
 - **`rig-anim`**: `AnimationPlayer` with binding table, cached keyframe indices, playback
   controls, and accumulator-based evaluation into `SceneGraph` local transforms.
 - **`rig-app`**: re-exports `rig-anim` for examples.
-- **`examples/skeleton_demo`**: procedural robot arm built from MeshFactory boxes, hand-authored
+- **`examples/animation/skeleton_demo`**: procedural robot arm built from MeshFactory boxes, hand-authored
   rotation keyframes, pause/speed controls, fly-camera, and overlay HUD.
 
 See `docs/ANIMATION.md` for the full three-phase animation roadmap, including future
@@ -723,7 +712,7 @@ renderer path:
 - **`rig-render`**: dynamic meshes preserve their uploaded index format so CPU-skinned `Uint16`
   meshes and Marching Cubes `Uint32` meshes share the same path.
 - **`rig-app`**: re-exports `rig-skin` for examples.
-- **`examples/tentacle_demo`**: hand-authored 4-bone cylinder skeleton driven by an
+- **`examples/animation/tentacle_demo`**: hand-authored 4-bone cylinder skeleton driven by an
   `AnimationPlayer`, deformed on the CPU, and uploaded through `DynamicMesh` each frame.
 
 ### Milestone 14 — glTF Loading and Runtime Validation ✓
@@ -742,8 +731,8 @@ dynamic mesh systems used by the rest of the framework:
   produces `DynamicMeshData` for skinned glTF primitives.
 - **`rig-render`**: renders static glTF primitives through immutable mesh caches and skinned
   primitives through dynamic mesh buffers; dynamic uploads are padded to `wgpu` copy alignment.
-- **`examples/gltf_demo`**: static/PBR model viewer over `DamagedHelmet.glb`.
-- **`examples/gltf_skinned_demo`**: CPU skinning runtime validation over `BrainStem.glb`.
+- **`examples/gltf/demo`**: static/PBR model viewer over `DamagedHelmet.glb`.
+- **`examples/gltf/skinned`**: CPU skinning runtime validation over `BrainStem.glb`.
 
 See `docs/GLTF.md` for the detailed loading flow, adaptation map, material slot mapping,
 runtime skinning handoff, and current limitations.

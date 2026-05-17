@@ -13,8 +13,8 @@ Directions 2–4 are planned — see the [Roadmap](#roadmap) section.
 4. [Gradient Normals](#4-gradient-normals)
 5. [DynamicMesh Architecture](#5-dynamicmesh-architecture)
 6. [Scene Graph Integration](#6-scene-graph-integration)
-7. [Demo: `examples/metaballs`](#7-demo-examplesmetaballs)
-8. [Voice-Reactive Variant: `examples/voice_metaballs`](#8-voice-reactive-variant-examplesvoice_metaballs)
+7. [Demo: `examples/procedural/metaballs`](#7-demo-examplesmetaballs)
+8. [Voice-Reactive Variant: `examples/procedural/voice_metaballs`](#8-voice-reactive-variant-examplesvoice_metaballs)
 9. [Roadmap — Four Directions](#9-roadmap--four-directions)
 
 ---
@@ -299,7 +299,7 @@ index format, vertex layout) and feed into the same pipeline + draw call.
 
 ---
 
-## 7. Demo: `examples/metaballs`
+## 7. Demo: `examples/procedural/metaballs`
 
 ### Scene
 
@@ -342,9 +342,9 @@ index format, vertex layout) and feed into the same pipeline + draw call.
 
 ---
 
-## 8. Voice-Reactive Variant: `examples/voice_metaballs`
+## 8. Voice-Reactive Variant: `examples/procedural/voice_metaballs`
 
-`examples/voice_metaballs` is a voice-reactive extension of the base metaballs
+`examples/procedural/voice_metaballs` is a voice-reactive extension of the base metaballs
 demo. It integrates the [graphynx](https://github.com/vansweej/graphynx) signal
 processing engine as a path dependency to drive metaball animation parameters
 from real-time spectral analysis.
@@ -630,7 +630,7 @@ graph TD
 the resulting triangle mesh to a `DynamicMesh` GPU buffer each frame.
 
 **What's built**: `rig-assets::marching_cubes` module, `DynamicMesh` in `rig-render`,
-`MeshSource` enum in `rig-assets` + `rig-scene`, `examples/metaballs`.
+`MeshSource` enum in `rig-assets` + `rig-scene`, `examples/procedural/metaballs`.
 
 **Performance**: ~2ms total at 48³ on a modern CPU. Bottleneck is field evaluation.
 
@@ -638,7 +638,7 @@ the resulting triangle mesh to a `DynamicMesh` GPU buffer each frame.
 cells), the CPU cost rises to ~16ms — too slow for 60 fps.
 
 **What can be reused by D2–D4**: `DynamicMesh` type and registry, `MeshSource` enum,
-scene graph integration, `examples/metaballs` field function and ball animation.
+scene graph integration, `examples/procedural/metaballs` field function and ball animation.
 
 ---
 

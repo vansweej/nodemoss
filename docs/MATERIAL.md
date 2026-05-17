@@ -654,7 +654,7 @@ leaves the workspace in a compilable, testable state.
 
 `feat(examples): add normal_map_demo showcasing PBR normal mapping`
 
-1. Create `examples/normal_map_demo/`; add to workspace `members`.
+1. Create `examples/materials/normal_map_demo/`; add to workspace `members`.
 2. `startup()`: plane mesh; procedural 64×64 sine-wave normal map; `MaterialAsset` with `PBR_SHADER`, slot 0 = white, slot 1 = normal map; directional light; camera.
 3. `update()`: rotate light to show normal map effect.
 
@@ -764,7 +764,7 @@ flowchart LR
 
 ### 5.3 Marching cubes terrain demo
 
-`examples/terrain_mc/` reuses the marching-cubes pipeline with a noise-based
+`examples/terrain/marching_cubes/` reuses the marching-cubes pipeline with a noise-based
 terrain field. The mesh is generated once at startup as `DynamicMeshData`,
 uploaded through the existing `DynamicMesh` path, and rendered with the PBR
 shader. The demo includes both `CameraRig` fly controls and `TrackBall`
@@ -800,7 +800,7 @@ let mesh = marching_cubes::extract(&field, &grid_params, 0.0, None);
 ```
 
 This reuses the entire existing pipeline: `GridParams`, `DynamicMeshData`,
-`DynamicMesh` GPU upload, PBR shader. The example is `examples/terrain_mc/`.
+`DynamicMesh` GPU upload, PBR shader. The example is `examples/terrain/marching_cubes/`.
 
 **What you get:** caves, overhangs, floating islands — anything 3D noise
 produces at the isosurface boundary.
@@ -828,11 +828,11 @@ textures. Tangents are computed via
 from Phase A.
 
 **What you get:** large, cheap, texturable terrain. No overhangs. Suitable
-for open landscapes. The example is `examples/terrain_heightmap/`.
+for open landscapes. The example is `examples/terrain/heightmap/`.
 
 ### 5.5 Noise-generated normal map
 
-`examples/terrain_heightmap/` generates a `TextureAsset` from noise gradients at startup — no geometry
+`examples/terrain/heightmap/` generates a `TextureAsset` from noise gradients at startup — no geometry
 displacement needed. For each texel `(u, v)`, sample the noise field at four
 neighbouring points and compute a finite-difference normal in tangent space.
 
@@ -894,7 +894,7 @@ flowchart LR
 
 ### 5.6 Worked example — heightmap terrain with procedural normal map
 
-The implemented `examples/terrain_heightmap/` follows this shape: generate a
+The implemented `examples/terrain/heightmap/` follows this shape: generate a
 heightmap mesh, bake a procedural normal map texture, bind that texture to PBR
 slot 1, and render the terrain with the standard app controls.
 

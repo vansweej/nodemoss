@@ -579,22 +579,22 @@ to `assets/models/animated/`.
 ```mermaid
 flowchart LR
     subgraph "Phase 1"
-        SD["skeleton_demo\nRobot arm\nMeshFactory primitives\nhand-coded keyframes"]
-        AS["animation_showcase\nPendulum · turret · camera path\nmulti-clip playback"]
+        SD["animation/skeleton_demo\nRobot arm\nMeshFactory primitives\nhand-coded keyframes"]
+        AS["animation/animation_showcase\nPendulum · turret · camera path\nmulti-clip playback"]
     end
 
     subgraph "Phase 2"
-        SM["skinned_mesh\n2-bone tube\ngraphynx CUDA skinning\nminimal deformation test"]
+        SM["animation/skinned_mesh\n2-bone tube\ngraphynx CUDA skinning\nminimal deformation test"]
     end
 
     subgraph "Phase 3 (future)"
-        GA["gltf_anim\nFox or RiggedFigure\nfull glTF load + playback"]
+        GA["gltf/anim\nFox or RiggedFigure\nfull glTF load + playback"]
     end
 
     SD --> AS --> SM --> GA
 ```
 
-### `examples/skeleton_demo` (Phase 1)
+### `examples/animation/skeleton_demo` (Phase 1)
 
 A 5-segment articulated robot arm built from `mesh_factory::create_box()` segments. Each
 segment is a scene node parented to the previous. Hand-coded rotation keyframes drive each
@@ -610,7 +610,7 @@ Controls:
 - `Escape` — close the window
 - `F3` — toggle overlay
 
-### `examples/animation_showcase` (Phase 1)
+### `examples/animation/animation_showcase` (Phase 1)
 
 Three independent animated objects in one scene:
 - **Pendulum** — single rotation channel, sinusoidal keyframes
@@ -619,14 +619,14 @@ Three independent animated objects in one scene:
 
 Demonstrates multi-player playback, looping, and camera animation.
 
-### `examples/skinned_mesh` (Phase 2)
+### `examples/animation/skinned_mesh` (Phase 2)
 
 A programmatic tube mesh (cylinder subdivided into 8 rings along its length) with 2
 joints. The lower joint rotates over time, bending the tube. graphynx dispatches the
 skinning to the CUDA backend. The overlay shows vertex count, joint count, and frame
 time for the CUDA kernel.
 
-### `examples/gltf_anim` (Phase 3, future)
+### `examples/gltf/anim` (Phase 3, future)
 
 Loads a glTF model (Fox or RiggedFigure) via `rig-gltf`, constructs the scene graph,
 binds the first animation clip, and plays it in a loop. The overlay shows model name,

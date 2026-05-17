@@ -37,7 +37,7 @@ rig-import        (depends on rig-loader, rig-assets, rig-math, thiserror)
   ↑
 rig-app           (adds rig-import to existing deps)
   ↑
-examples/         (depend on rig-app)
+examples/         (grouped by domain — see examples/README.md)
 Error model
 - LoadError (rig-loader): NotFound, Io, UnsupportedFormat, Decode, MissingPositions, IndexOverflow, UnresolvedDependency
 - ImportError (rig-import): wraps LoadError + import-specific variants (conversion failures, missing handles)
