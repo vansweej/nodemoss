@@ -1,14 +1,11 @@
 [package]
 name = "texture_load"
 version = "0.1.0"
-edition = "2024"
-
-[[bin]]
-name = "texture_load"
-path = "src/main.rs"
+edition.workspace = true
+publish = false
 
 [dependencies]
-rig-app = { path = "../../crates/app" }
-anyhow = "1"
-env_logger = "0.11"
-log = "0.4"
+rig-app.workspace = true
+anyhow.workspace = true
+env_logger.workspace = true
+log.workspace = true
