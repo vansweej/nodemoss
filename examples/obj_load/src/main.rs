@@ -13,7 +13,7 @@
 //! | Arrow keys | Rotate camera               |
 //! | Escape     | Close window                |
 
-include!("../../shared_loading_example.rs");
+use example_shared::{ExampleKind, run_loading_example};
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();

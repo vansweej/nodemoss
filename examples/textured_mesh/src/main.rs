@@ -155,14 +155,14 @@ impl Application for TexturedMeshApp {
     }
 
     fn on_window_event(&mut self, ctx: &mut UpdateContext<'_>, event: &WindowEvent) -> Result<()> {
-        if let WindowEvent::KeyboardInput { event, .. } = event {
-            if matches!(
+        if let WindowEvent::KeyboardInput { event, .. } = event
+            && matches!(
                 event.physical_key,
                 rig_app::winit::keyboard::PhysicalKey::Code(KeyCode::Escape)
-            ) && event.state == rig_app::winit::event::ElementState::Pressed
-            {
-                ctx.request_exit();
-            }
+            )
+            && event.state == rig_app::winit::event::ElementState::Pressed
+        {
+            ctx.request_exit();
         }
         Ok(())
     }
