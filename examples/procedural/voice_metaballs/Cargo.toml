@@ -14,7 +14,7 @@ env_logger.workspace = true
 bytemuck.workspace = true
 
 # graphynx — signal processing pipeline (external; path adjusted when example moves)
-graph-core   = { path = "../../../rustycuda/core" }
-backends     = { path = "../../../rustycuda/backends" }
-backends-cpu = { path = "../../../rustycuda/backends-cpu" }
-runtime      = { path = "../../../rustycuda/runtime", features = ["live-audio"] }
+graph-core   = { path = "../../../../rustycuda/core" }
+backends     = { path = "../../../../rustycuda/backends" }
+backends-cpu = { path = "../../../../rustycuda/backends-cpu" }
+runtime      = { path = "../../../../rustycuda/runtime", features = ["live-audio"] }
