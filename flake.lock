@@ -38,6 +38,22 @@
         "type": "github"
       }
     },
+    "graphynx": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778724041,
+        "narHash": "sha256-rR3nAxqBdZpAeW3v6wv3PQd7uMmF5qgekMHs1WdzQVs=",
+        "owner": "vansweej",
+        "repo": "graphynx",
+        "rev": "311cc8acd35829bc9679d1a2122efec74314afa6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "vansweej",
+        "repo": "graphynx",
+        "type": "github"
+      }
+    },
     "nixgl": {
       "inputs": {
         "flake-utils": "flake-utils",
@@ -78,6 +94,7 @@
     "root": {
       "inputs": {
         "architecture-prompts": "architecture-prompts",
+        "graphynx": "graphynx",
         "nixgl": "nixgl",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"

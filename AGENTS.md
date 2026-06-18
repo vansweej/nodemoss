@@ -199,6 +199,76 @@ Do **not** compile, modify, or add GeometricTools to the Cargo workspace.
 14. **glTF loading and runtime validation** — `rig-gltf`, PBR material mapping,
     cameras/lights, multi-scene selection, morph target loading, CPU skinning
      descriptors, `examples/gltf/demo`, and `examples/gltf/skinned` ✓
+15. **graphynx injection (recipe iii)** — flake input + Cargo workspace
+    `exclude` + Nix-store symlink at `vendor/graphynx`; `nix develop` +
+    `cargo run -p voice_metaballs` works without fragile relative paths ✓
+
+## graphynx injection recipe
+
+### Problem
+
+An external Rust workspace (graphynx) with intra-repo path dependencies
+(`core`, `backends`, `backends-cpu`, `runtime`) lives outside the Cargo
+workspace but must be consumed by a workspace member
+(`examples/procedural/voice_metaballs`). Relative paths (`../../rustycuda/*`)
+are fragile — they break on CI, in Nix builds, and when the directory layout
+changes.
+
+### Three options
+
+| Option | Mechanism | Pros | Cons |
+|--------|-----------|------|------|
+| **(i) Path deps + sibling checkout** | `Cargo.toml` paths point to `../rustycuda/core`, etc. | Zero flake setup; live edits in the sibling are immediately visible. | Fragile; sibling may not exist; CI/Nix build fails. |
+| **(ii) `[patch]` in `.cargo/config.toml`** | Declare path-patch overrides for the four crate names in a local cargo config. | Resolves workspace collision; no `exclude` needed. | Hidden config; confusing when crate name collisions occur. |
+| **(iii) Flake input + symlink + `exclude`** | Pin source in `flake.lock`, symlink into `vendor/`, exclude `vendor/` from workspace. | Reproducible, declarative, no fragile paths; CI-friendly. | Requires Nix; symlink + `exclude` needed to avoid Cargo workspace collision. |
+
+### Implementation (recipe iii)
+
+In the consuming project (`nodemoss`):
+
+1. **`flake.nix`** — add graphynx as a standard flake input:
+   ```nix
+   graphynx = {
+     url = "github:vansweej/graphynx";
+     inputs.nixpkgs.follows = "nixpkgs";
+   };
+   ```
+
+2. **`flake.nix` `shellHook`** — provision the symlink:
+   ```bash
+   mkdir -p vendor
+   ln -sfn "${graphynx}" vendor/graphynx
+   ```
+
+3. **`.gitignore`** — add `/vendor/` so the symlink is never committed
+   (it points into the Nix store, which is machine-specific).
+
+4. **`Cargo.toml`** — add `"vendor"` to the workspace `exclude` list so
+   Cargo does not attempt to merge graphynx's `[workspace]` into the
+   consuming project's workspace.
+
+5. **per-crate `Cargo.toml`** — point path dependencies at the symlink:
+   ```toml
+   graph-core   = { path = "vendor/graphynx/core" }
+   backends     = { path = "vendor/graphynx/backends" }
+   backends-cpu = { path = "vendor/graphynx/backends-cpu" }
+   runtime      = { path = "vendor/graphynx/runtime", features = ["live-audio"] }
+   ```
+
+### Extensions
+
+- **To (i)** — replace the path deps with `../rustycuda/*` and remove the
+  symlink. Useful when doing cross-project refactors (graphynx edits must
+  be picked up without a `nix develop` re-entry).
+- **To (ii)** — if the `exclude` approach fails (e.g. Cargo canonicalises
+  the symlink and still detects the inner workspace), add a
+  `.cargo/config.toml` with `[patch]` entries mapping the four crate
+  names to the `vendor/graphynx/*` paths, and remove the `exclude` entry.
+
+## Deferred (not yet started, triggers documented in plan)
+
+- **Roundtrip 2:** Pure `nix build .#voice_metaballs` via `rustPlatform.buildRustPackage` + `postPatch` copy. Trigger: when reproducible/CI builds of the example binary are wanted.
+- **Roundtrip 3:** CUDA/GPU backend build support for graphynx. Trigger: when graphynx gains a GPU backend and `voice_metaballs` switches from `CpuBackend` to a CUDA backend.
 
 ## Documentation
 

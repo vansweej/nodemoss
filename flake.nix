@@ -15,6 +15,10 @@
       url = "github:nix-community/nixGL";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    graphynx = {
+      url = "github:vansweej/graphynx";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -24,6 +28,7 @@
       rust-overlay,
       architecture-prompts,
       nixgl,
+      graphynx,
     }:
     let
       supportedSystems = [
@@ -122,6 +127,12 @@
                 # This is idempotent — on a hot shell re-entry it completes instantly.
                 git lfs install --local --skip-smudge 2>/dev/null || true
                 git lfs pull 2>/dev/null || true
+
+                # Provide graphynx at a stable in-workspace path, pinned by flake.lock.
+                # Use the flake input (Nix store) — no fallback; the sibling checkout
+                # approach caused Cargo workspace confusion.
+                mkdir -p vendor
+                ln -sfn "${graphynx}" vendor/graphynx
               ''
               + pkgs.lib.optionalString isLinux ''
                 # wgpu loads libvulkan.so.1 via dlopen at runtime

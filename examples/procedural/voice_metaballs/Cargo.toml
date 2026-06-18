@@ -13,8 +13,8 @@ log.workspace = true
 env_logger.workspace = true
 bytemuck.workspace = true
 
-# graphynx — signal processing pipeline (external; path adjusted when example moves)
-graph-core   = { path = "../../../../rustycuda/core" }
-backends     = { path = "../../../../rustycuda/backends" }
-backends-cpu = { path = "../../../../rustycuda/backends-cpu" }
-runtime      = { path = "../../../../rustycuda/runtime", features = ["live-audio"] }
+# graphynx — provided by the Nix flake at vendor/graphynx (pinned in flake.lock)
+graph-core   = { path = "../../../vendor/graphynx/core" }
+backends     = { path = "../../../vendor/graphynx/backends" }
+backends-cpu = { path = "../../../vendor/graphynx/backends-cpu" }
+runtime      = { path = "../../../vendor/graphynx/runtime", features = ["live-audio"] }
