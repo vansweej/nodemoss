@@ -40,6 +40,47 @@
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
       # ------------------------------------------------------------------
+      # Workspace member enumeration (system-independent)
+      # ------------------------------------------------------------------
+      # Read the workspace Cargo.toml to discover all member packages.
+      workspaceCargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+
+      # Expand a member pattern like "crates/*" or "examples/shared" into a
+      # list of concrete relative paths (e.g. "crates/math", "examples/shared").
+      expandMemberPattern = pattern:
+        let
+          # Does the pattern end with "/*"?
+          m = builtins.match "(.+)/\\*" pattern;
+        in
+          if m != null then
+            let
+              dir = builtins.head m;
+              fullDir = toString ./. + "/${dir}";
+              entries = if builtins.pathExists fullDir then builtins.readDir fullDir else {};
+              subdirs = builtins.filter (n: entries.${n} == "directory") (builtins.attrNames entries);
+            in
+              builtins.map (sub: "${dir}/${sub}") subdirs
+          else
+            [ pattern ];
+
+      memberPaths = builtins.concatMap expandMemberPattern workspaceCargoToml.workspace.members;
+
+      # Read a workspace member's Cargo.toml and return { name, path, hasBinary }.
+      readMemberInfo = path:
+        let
+          cargoToml = builtins.fromTOML (builtins.readFile (toString ./. + "/${path}/Cargo.toml"));
+          name = cargoToml.package.name;
+          hasBinary = builtins.pathExists (toString ./. + "/${path}/src/main.rs");
+        in
+          { inherit name path hasBinary; };
+
+      allMemberInfos = builtins.map readMemberInfo memberPaths;
+
+      # Only create separate Nix package outputs for members with binary targets.
+      # Library-only crates are compiled implicitly as dependencies.
+      binaryMembers = builtins.filter (m: m.hasBinary) allMemberInfos;
+
+      # ------------------------------------------------------------------
       # perSystem — shared per-platform environment for devShells & packages
       # ------------------------------------------------------------------
       perSystem = system:
@@ -202,11 +243,21 @@
         system:
         let
           s = perSystem system;
-        in
-        {
-          voice_metaballs = s.mkRigPackage { pname = "voice_metaballs"; };
 
-          default = self.packages.${system}.voice_metaballs;
+          # Auto-generate per-package outputs for every binary workspace member.
+          perPackage = builtins.listToAttrs (builtins.map (m: {
+            name = m.name;
+            value = s.mkRigPackage { pname = m.name; };
+          }) binaryMembers);
+        in
+        perPackage // {
+          # Build the whole workspace in one derivation.
+          workspace = s.mkRigPackage {
+            pname = "rig-workspace";
+            cargoBuildFlags = [ "--workspace" ];
+          };
+
+          default = self.packages.${system}.workspace;
         }
       );
     };
