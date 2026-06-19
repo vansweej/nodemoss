@@ -23,6 +23,6 @@ cargo run -p metaballs
 cargo run -p voice_metaballs
 ```
 
-`voice_metaballs` requires the external `rustycuda`/graphynx project to be present at
-`../../../../rustycuda/` relative to this directory (i.e. a sibling of the workspace
-root). It will be refactored to use the Nix flake system in a future milestone.
+`voice_metaballs` depends on the external `graphynx` project, which is provided by
+the Nix flake at `vendor/graphynx` (pinned in `flake.lock`). Enter the dev shell
+with `nix develop --impure` to provision it automatically.

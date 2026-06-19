@@ -535,8 +535,10 @@ extra ball state.
 
 ### 8.10 Dependencies
 
-Depends on graphynx crates via relative path dependencies (co-located
-development). No CUDA toolchain required — uses `backends-cpu` only.
+Depends on graphynx crates, provided by the Nix flake at `vendor/graphynx`
+(pinned via `flake.lock`). Enter `nix develop --impure` to provision the
+dependency automatically. The current CPU backend (`backends-cpu`) requires
+no CUDA toolchain.
 
 ---
 

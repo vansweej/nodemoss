@@ -15,7 +15,7 @@ members = [
     "examples/procedural/*",
 ]
 default-members = ["crates/*", "tools/*"]
-exclude = ["GeometricTools"]
+exclude = ["GeometricTools", "vendor"]
 
 [workspace.package]
 edition = "2024"

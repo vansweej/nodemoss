@@ -136,8 +136,11 @@ impl Application for LoadingExampleApp {
                     textured_shader,
                     "assets/textures/checker.png",
                 )?;
-                let mesh = ctx.assets.add_mesh(mesh_factory::create_sphere(1.0, 32, 16));
-                let node = add_renderable(ctx, "loaded_texture_sphere", mesh, material, Vec3::ZERO)?;
+                let mesh = ctx
+                    .assets
+                    .add_mesh(mesh_factory::create_sphere(1.0, 32, 16));
+                let node =
+                    add_renderable(ctx, "loaded_texture_sphere", mesh, material, Vec3::ZERO)?;
                 animated_nodes.push(node);
                 finish_scene(
                     ctx,
@@ -153,7 +156,8 @@ impl Application for LoadingExampleApp {
                     ("assets/textures/stripes.jpg", 0.0_f32),
                     ("assets/textures/gradient.tga", 2.4_f32),
                 ] {
-                    let material = add_loaded_texture_material(ctx, &mut importer, textured_shader, path)?;
+                    let material =
+                        add_loaded_texture_material(ctx, &mut importer, textured_shader, path)?;
                     let mesh = ctx.assets.add_mesh(mesh_factory::create_plane(1.6, 1.6));
                     let node = add_renderable(ctx, path, mesh, material, Vec3::new(x, 0.0, 0.0))?;
                     ctx.scene.set_local_transform(
@@ -174,14 +178,15 @@ impl Application for LoadingExampleApp {
                 )
             }
             ExampleKind::ShaderLoad => {
-                let shader = importer.import_shader(&AssetPath::new("assets/shaders/phong.wgsl"), ctx.assets)?;
-                 let material = ctx.assets.add_material(MaterialAsset {
-                     shader,
-                     parameters: MaterialParams::default(),
-                     textures: vec![],
-                     alpha_mode: AlphaMode::Opaque,
-                     double_sided: false,
-                 });
+                let shader = importer
+                    .import_shader(&AssetPath::new("assets/shaders/phong.wgsl"), ctx.assets)?;
+                let material = ctx.assets.add_material(MaterialAsset {
+                    shader,
+                    parameters: MaterialParams::default(),
+                    textures: vec![],
+                    alpha_mode: AlphaMode::Opaque,
+                    double_sided: false,
+                });
                 let mesh = ctx.assets.add_mesh(mesh_factory::create_box(1.8, 1.8, 1.8));
                 let node = add_renderable(ctx, "runtime_shader_cube", mesh, material, Vec3::ZERO)?;
                 animated_nodes.push(node);
@@ -202,7 +207,8 @@ impl Application for LoadingExampleApp {
                     Vec3::new(-2.2, 0.0, 0.0),
                     &mut animated_nodes,
                 )?;
-                let shader = importer.import_shader(&AssetPath::new("assets/shaders/phong.wgsl"), ctx.assets)?;
+                let shader = importer
+                    .import_shader(&AssetPath::new("assets/shaders/phong.wgsl"), ctx.assets)?;
                 let material = ctx.assets.add_material(MaterialAsset {
                     shader,
                     parameters: MaterialParams {
@@ -214,13 +220,20 @@ impl Application for LoadingExampleApp {
                     double_sided: false,
                 });
                 let mesh = ctx.assets.add_mesh(mesh_factory::create_icosahedron());
-                let node = add_renderable(ctx, "shader_loaded_ico", mesh, material, Vec3::new(2.2, 0.0, 0.0))?;
+                let node = add_renderable(
+                    ctx,
+                    "shader_loaded_ico",
+                    mesh,
+                    material,
+                    Vec3::new(2.2, 0.0, 0.0),
+                )?;
                 animated_nodes.push(node);
                 finish_scene(
                     ctx,
                     kind,
                     animated_nodes,
-                    "registry summary: OBJ + texture + runtime shader loaded; cache hits active".into(),
+                    "registry summary: OBJ + texture + runtime shader loaded; cache hits active"
+                        .into(),
                     started,
                 )
             }
@@ -313,7 +326,8 @@ fn add_loaded_texture_material(
     shader: rig_app::rig_assets::ShaderHandle,
     path: &str,
 ) -> Result<rig_app::rig_assets::MaterialHandle> {
-    let texture = importer.import_texture(&AssetPath::new(path), &TextureConfig::default(), ctx.assets)?;
+    let texture =
+        importer.import_texture(&AssetPath::new(path), &TextureConfig::default(), ctx.assets)?;
     let sampler = ctx.assets.add_sampler(Default::default());
     Ok(ctx.assets.add_material(MaterialAsset {
         shader,
@@ -363,7 +377,12 @@ fn finish_scene(
     let stats_id = debug_hud.add_element(
         ctx.overlay,
         Side::Right,
-        format!("{}: {} (startup {} ms)", kind.title(), summary, started.elapsed().as_millis()),
+        format!(
+            "{}: {} (startup {} ms)",
+            kind.title(),
+            summary,
+            started.elapsed().as_millis()
+        ),
     );
     Ok(LoadingExampleApp {
         camera_node,
@@ -375,7 +394,12 @@ fn finish_scene(
         elapsed: 0.0,
         debug_hud,
         stats_id,
-        summary: format!("{}: {} (startup {} ms)", kind.title(), summary, started.elapsed().as_millis()),
+        summary: format!(
+            "{}: {} (startup {} ms)",
+            kind.title(),
+            summary,
+            started.elapsed().as_millis()
+        ),
     })
 }
 
